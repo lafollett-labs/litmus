@@ -50,29 +50,41 @@ export function messagesProvider(id: 'anthropic' | 'bedrock', send: Send): Provi
   }
 }
 
-const FAILS_AGAIN = new Set(['invalid_request_error', 'authentication_error', 'permission_error', 'not_found_error', 'request_too_large'])
+// Error types that say the request itself was wrong: another attempt fails
+// the same way.
+const FAILS_AGAIN = new Set(['invalid_request_error', 'authentication_error', 'permission_error', 'not_found_error', 'request_too_large', 'billing_error'])
 
 export function classify(e: unknown): unknown {
   if (e instanceof APIUserAbortError) return e // cancellation, not a failure
+  // Checked before connection errors: Mantle reports an AWS credential chain
+  // that found nothing as an APIConnectionError caused by it, and no retry
+  // will conjure credentials.
+  if (credentialFailure(e)) return new InfraError(`no usable credentials: ${(e as Error).message}`, { retryable: false, cause: e })
   if (e instanceof APIConnectionError) return new InfraError(`connection failed: ${e.message}`, { cause: e })
   if (e instanceof APIError) {
+    const id = e.requestID ? ` (request ${e.requestID})` : '' // the id Anthropic support asks for
     // An error event mid-stream has no HTTP status, only its body's type
     // (overloaded_error, api_error): the server failed after it had started
     // answering. That is worth another attempt unless the type says the
     // request itself was wrong.
     if (e.status === undefined) {
       const retryable = !FAILS_AGAIN.has(e.type ?? '')
-      return new InfraError(`stream error ${e.type ?? 'error'}: ${e.message}`, { retryable, cause: e })
+      return new InfraError(`stream error ${e.type ?? 'error'}: ${e.message}${id}`, { retryable, cause: e })
     }
     const status = e.status
     const retryable = status === 408 || status === 409 || status === 429 || status >= 500
-    return new InfraError(`${status} ${e.type ?? 'error'}: ${e.message}`, { retryable, cause: e })
+    return new InfraError(`${e.type ?? 'error'}: ${e.message}${id}`, { retryable, cause: e }) // e.message already leads with the status
   }
-  // No credentials at all surfaces as a plain AnthropicError (or, on Bedrock,
-  // the AWS credential chain's own error) before any request is sent. It will
-  // fail the same way on every attempt.
-  if (e instanceof AnthropicError || (e instanceof Error && e.name === 'CredentialsProviderError')) {
-    return new InfraError(`no usable credentials: ${e.message}`, { retryable: false, cause: e })
-  }
+  // Anything else the SDK raises is the stream failing in flight. MessageStream
+  // turns a dropped connection, a body that ended before message_stop, and
+  // malformed SSE into a plain AnthropicError.
+  if (e instanceof AnthropicError) return new InfraError(`stream failed: ${e.message}`, { cause: e })
   return e
+}
+
+function credentialFailure(e: unknown): boolean {
+  for (let c: unknown = e; c instanceof Error; c = c.cause) {
+    if (c.name === 'CredentialsProviderError') return true
+  }
+  return false
 }

@@ -87,13 +87,32 @@ test('throttling, overload, 5xx, timeouts and connection failures are retryable 
 })
 
 test('auth, permission, bad requests, unknown models and missing credentials fail fast without retrying', () => {
-  for (const e of [generate(401, 'authentication_error'), generate(403, 'permission_error'), generate(400, 'invalid_request_error'), generate(404, 'not_found_error'), new AnthropicError('Could not resolve authentication method')]) {
+  for (const e of [generate(401, 'authentication_error'), generate(403, 'permission_error'), generate(400, 'invalid_request_error'), generate(404, 'not_found_error')]) {
     const c = classify(e)
     assert.ok(c instanceof InfraError, String(e))
     assert.equal(c.retryable, false, String(e))
   }
-  const aws = Object.assign(new Error('Could not load credentials'), { name: 'CredentialsProviderError' })
-  assert.equal((classify(aws) as InfraError).retryable, false)
+  // Mantle wraps an empty AWS credential chain as a connection error; no retry finds credentials.
+  const aws = Object.assign(new Error('Could not load credentials from any providers'), { name: 'CredentialsProviderError' })
+  for (const e of [aws, new APIConnectionError({ message: 'Failed to resolve AWS credentials', cause: aws })]) {
+    const c = classify(e) as InfraError
+    assert.equal(c.retryable, false)
+    assert.match(c.message, /no usable credentials/)
+  }
+})
+
+test('any other SDK error is the stream failing in flight, and is retried', () => {
+  const c = classify(new AnthropicError('stream ended without producing a Message with role=assistant')) as InfraError
+  assert.ok(c instanceof InfraError && c.retryable)
+  assert.match(c.message, /^stream failed:/)
+})
+
+test('an API error names its request id, and a billing error mid-stream is not retried', () => {
+  const withId = new APIError(429, { type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } }, undefined, new Headers({ 'request-id': 'req_123' }), 'rate_limit_error')
+  assert.match((classify(withId) as InfraError).message, /\(request req_123\)/)
+  type ErrorType = ConstructorParameters<typeof APIError>[4]
+  const billing = new APIError(undefined, { type: 'error', error: { type: 'billing_error', message: 'no credit' } }, undefined, new Headers(), 'billing_error' as ErrorType)
+  assert.equal((classify(billing) as InfraError).retryable, false)
 })
 
 test('an error event mid-stream has no status: an overload retries, a request the server rejected does not', () => {
