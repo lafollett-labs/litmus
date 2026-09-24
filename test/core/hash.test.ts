@@ -17,6 +17,20 @@ test('any value change does change the hash', () => {
   assert.notEqual(hashJson({ n: 1 }), hashJson({ n: '1' }))
 })
 
+test('values JSON would mangle are refused rather than hashed into a collision', () => {
+  assert.throws(() => hashJson({ at: new Date(1) }), TypeError)
+  assert.throws(() => hashJson({ m: new Map() }), TypeError)
+  assert.throws(() => hashJson({ n: Number.NaN }), TypeError)
+  assert.throws(() => hashJson(undefined), TypeError)
+  assert.throws(() => hashJson([1, undefined]), TypeError)
+})
+
+test('a __proto__ key is hashed as a key, not swallowed', () => {
+  const tricky = JSON.parse('{"__proto__":{"model":"evil"},"x":1}') as unknown
+  assert.notEqual(hashJson(tricky), hashJson({ x: 1 }))
+  assert.equal(stableStringify(tricky), '{"__proto__":{"model":"evil"},"x":1}')
+})
+
 test('undefined fields drop out, and array order is preserved', () => {
   assert.equal(stableStringify({ a: 1, b: undefined }), '{"a":1}')
   assert.notEqual(hashJson([1, 2]), hashJson([2, 1]))
