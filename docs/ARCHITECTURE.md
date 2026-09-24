@@ -574,10 +574,12 @@ scrubbed environment and these settings:
   - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
     `monitors/monitors.json`.
   - It may not contain a symlink anywhere.
-  - Every markdown file in it has its frontmatter parsed as YAML, which must
-    parse and must not declare `hooks`, `mcpServers`, `lspServers`, `monitors`
-    or `statusLine`. The same goes for markdown under a fixture `.claude/`
-    directory at any depth.
+  - Every markdown file in it, its `.git` included, has its frontmatter
+    checked. The frontmatter is read with Claude Code's own fence (the closing
+    `---` need not start a line) and with the strict one, and YAML merge keys
+    are resolved. It must parse, and must not declare `hooks`, `mcpServers`,
+    `lspServers`, `monitors`, `statusLine` or `isolation`. The same goes for
+    markdown under a fixture `.claude/` directory at any depth.
   - A plugin that lies inside a suite root is refused before the session
     starts: the gate would deny every read of its own files.
 - Credentials: `anthropic` requires `ANTHROPIC_API_KEY`, and a claude.ai login
