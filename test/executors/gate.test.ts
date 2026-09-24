@@ -131,6 +131,8 @@ test('a case variant cannot get past the .git refusal or into a suite root', { s
   mkdirSync(join(work, '.git/hooks'), { recursive: true })
   assert.equal(allowed('Write', { file_path: join(work, '.GIT/hooks/post-checkout') }), false)
   assert.equal(allowed('Write', { file_path: '.Git/config' }), false)
+  const reserved = { ...base, protect: ['final_message.txt'] }
+  assert.equal(allowed('Write', { file_path: 'final_me\u017f\u017fage.txt' }, reserved), false) // ſ folds to s
   const p = { ...base, denyRoots: [join(root, 'plugin/skills')] }
   assert.equal(allowed('Read', { file_path: join(root, 'plugin/SKILLS/review/SKILL.md') }, p), false)
 })

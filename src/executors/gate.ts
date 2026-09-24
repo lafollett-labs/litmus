@@ -5,7 +5,8 @@ export type GatePolicy = {
   workdir: string // realpath'd by the caller once
   readRoots: string[] // plugin and subject roots: readable, never writable
   denyRoots: string[] // suite roots: never readable, even inside a read root
-  protect?: string[] // workdir-relative names never written, beside .git (e.g. .claude under project settings)
+  protect?: string[] // workdir-relative names never written, beside .git (final_message.txt, .mcp.json)
+  protectSegments?: string[] // names that may not appear at any depth of a written path (.claude under project settings)
   allowShell: boolean
   allowNetwork: boolean
   allowHooks: boolean
@@ -86,12 +87,20 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
     // on-disk case, and on a case-insensitive volume .CLAUDE is .claude.
     const guarded = writes ? protectedPaths.find(g => inside(fold(real), fold(g))) : undefined
     if (guarded) return deny(`${tool} may not write ${relative(p.workdir, guarded)}: ${raw}`)
+    // Claude Code discovers .claude/skills, agents and commands in every
+    // directory between a touched file and the cwd, so a nested one written
+    // mid-session would load as the session's own config.
+    const segments = writes ? relative(p.workdir, real).split(sep).map(fold) : []
+    const nested = (p.protectSegments ?? []).find(name => segments.includes(fold(name)))
+    if (nested) return deny(`${tool} may not write under a ${nested} directory at any depth: ${raw}`)
   }
   return { allow: true }
 }
 
-const inside = (path: string, root: string) => path === root || path.startsWith(root + sep)
-const fold = (path: string) => path.normalize('NFC').toLowerCase()
+export const inside = (path: string, root: string) => path === root || path.startsWith(root + sep)
+// Upper then lower: a real case fold for what APFS treats as one name
+// (ſ and S, the Kelvin sign and k), which toLowerCase alone misses.
+export const fold = (path: string) => path.normalize('NFC').toUpperCase().toLowerCase()
 
 const deny = (reason: string): Decision => ({ allow: false, reason })
 
