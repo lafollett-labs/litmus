@@ -154,3 +154,13 @@ test('a case variant cannot get past the .git refusal or into a suite root', { s
   const p = { ...base, denyRoots: [join(root, 'plugin/skills')] }
   assert.equal(allowed('Read', { file_path: join(root, 'plugin/SKILLS/review/SKILL.md') }, p), false)
 })
+
+test('a .. segment is refused in every path field: the OS applies it after a link, not before', () => {
+  mkdirSync(join(root, 'case/sub'), { recursive: true })
+  symlinkSync(join(root, 'case/sub'), join(work, 'hop'))
+  // As spelt, hop/../truth.yaml is work/truth.yaml; as opened, case/truth.yaml.
+  assert.equal(allowed('Read', { file_path: 'hop/../truth.yaml' }), false)
+  assert.equal(allowed('Grep', { pattern: 'x', path: 'hop/..' }), false)
+  assert.equal(allowed('Write', { file_path: 'src/../findings.json' }), false)
+  assert.equal(allowed('Read', { file_path: 'src/a..b.ts' }), true)
+})

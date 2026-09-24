@@ -74,6 +74,10 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
     if (raw === undefined || raw === null || raw === '') continue // tool default: the cwd, which is the workdir
     if (typeof raw !== 'string') return deny(`${tool}.${field} is not a path`)
     if (raw.startsWith('~')) return deny(`${tool}.${field} may not start with ~: ${raw}`)
+    // resolve() drops a .. against the path as spelt; the OS applies it after
+    // any link before it, so with link -> /tmp, link/../etc/passwd opens
+    // /etc/passwd. A .. segment is refused, never resolved.
+    if (raw.split('/').includes('..')) return deny(`${tool}.${field} may not climb with ..: ${raw}`)
     // A pattern's reach is judged by its literal prefix, so anything that lets
     // the tool's own glob grammar reach further is refused rather than parsed
     // here: .. or ~ anywhere, or a brace, class or group holding a / (an
