@@ -19,8 +19,11 @@ export function hashJson(value: unknown): string {
 }
 
 function sortKeys(value: unknown): unknown {
-  if (value !== null && typeof value === 'object' && Object.getOwnPropertySymbols(value).length > 0) {
-    throw new TypeError('cannot hash an object or array with symbol keys')
+  // JSON keeps only enumerable string keys (an array also owns its
+  // non-enumerable length), so any other own key would vanish from the output.
+  if (value !== null && typeof value === 'object') {
+    const kept = Object.keys(value).length + (Array.isArray(value) ? 1 : 0)
+    if (Reflect.ownKeys(value).length !== kept) throw new TypeError('cannot hash symbol keys or non-enumerable properties')
   }
   if (Array.isArray(value)) {
     // JSON writes a hole as null and drops a named property, so new Array(1)

@@ -26,6 +26,8 @@ test('values JSON would mangle are refused rather than hashed into a collision',
   assert.throws(() => hashJson(new Array(1)), /sparse array/)
   assert.throws(() => hashJson({ [Symbol('s')]: 1 }), /symbol keys/)
   assert.throws(() => hashJson(Object.assign([1], { [Symbol('s')]: 1 })), /symbol keys/)
+  assert.throws(() => hashJson(Object.defineProperty([], 'note', { value: 'x' })), /non-enumerable/)
+  assert.throws(() => hashJson(Object.defineProperty({}, 'note', { value: 'x' })), /non-enumerable/)
   assert.throws(() => hashJson(Object.assign([1], { note: 'x' })), /named properties/)
   assert.doesNotThrow(() => hashJson([null]))
 })
