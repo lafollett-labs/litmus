@@ -34,9 +34,9 @@ Tests never spend money. They use the fake provider, a mocked SDK, a mocked
 
 | A trial stopped because of | `exit` | Retried | Trial status |
 | - | - | - | - |
-| Throttling (408, 409, 429), 5xx, network | `infra_error` | Up to `retries`, with backoff | `error` once the retries run out, never `fail` |
+| Throttling (408, 409, 429), 5xx, network, or a `model`-executor timeout | `infra_error` | Up to `retries`, with backoff | `error` once the retries run out, never `fail` |
 | Auth failure, other 4xx, missing key | `infra_error` | Never | `error`, never `fail` |
-| Timeout or max turns | `model_failure` | Never | `fail` |
+| A harness timeout or max turns | `model_failure` | Never | `fail` |
 | The operator cancelling | `cancelled` | Never | `cancelled` |
 
 A case verdict comes from all of its trials, following ARCHITECTURE.md
