@@ -20,7 +20,8 @@ export class ModelFailure extends Error {
   override name = 'ModelFailure'
 }
 
-// A bad litmus.config.yaml, suite, case or selector: the operator's to fix, never retried.
+// A bad litmus.config.yaml, suite, case or selector. The operator has to fix
+// it, so it is never retried.
 export class ConfigError extends Error {
   override name = 'ConfigError'
 }
