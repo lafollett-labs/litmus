@@ -408,15 +408,16 @@ ancestors that Claude Code would load: `CLAUDE.md`, `CLAUDE.local.md`,
 2. `git init`, and the tree is committed on `main`.
 3. If the case has a `change.patch`, the branch `litmus/change` is created
    with the patch committed on it. `HEAD` is `litmus/change`.
-4. The post-change tree is scanned again, and any symlink is refused. A patch
-   can create one.
+4. The post-change tree is scanned again, `.git` included, and any symlink is
+   refused. A patch can create one.
 5. The builder takes a snapshot of every file (path, size and hash).
 
 Git runs only while the workdir is being built, before the subject starts. It
 runs with `PATH` alone for its environment, and with `GIT_CONFIG_NOSYSTEM=1`,
-`GIT_CONFIG_GLOBAL=/dev/null`, `core.hooksPath=/dev/null` and
-`core.fsmonitor=false`. The gate also refuses the subject any write under
-`<workdir>/.git/`.
+`GIT_CONFIG_GLOBAL=/dev/null`, `core.hooksPath=/dev/null`,
+`core.fsmonitor=false`, `maintenance.auto=false` and `gc.auto=0`. The last two
+stop a detached git from outliving the build. The gate also refuses the
+subject any write under `<workdir>/.git/`.
 
 After the executor exits, **the files the subject wrote** are found by
 comparing against the snapshot, not by asking git. That way nothing the

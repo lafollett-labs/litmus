@@ -21,9 +21,13 @@ export type Workdir = {
 // Git runs only here, while the workdir is built and before the subject has
 // touched it. After the subject runs, litmus never invokes git in the workdir
 // again, so a .git/config or hook the subject writes (core.fsmonitor,
-// core.hooksPath) has nothing to fire on.
+// core.hooksPath) has nothing to fire on. Auto-maintenance and auto-gc are off:
+// either detaches a git that keeps running in the workdir after commit returns.
 const GIT_ENV = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' }
-const GIT_ARGS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'user.name=litmus', '-c', 'user.email=litmus@localhost']
+const GIT_ARGS = [
+  ...['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0'],
+  ...['-c', 'commit.gpgsign=false', '-c', 'user.name=litmus', '-c', 'user.email=litmus@localhost'],
+]
 
 // `avoid` is every directory a workdir must never sit inside: the results
 // store and the suite roots. The runner passes them.
@@ -74,8 +78,10 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
       git(dir, ['commit', '-q', '--allow-empty', '-m', 'change'])
     }
     // A patch can create a symlink too, and an absolute one can point straight
-    // back at this case's truth.yaml. The post-change tree is checked again.
-    const links = symlinksUnder(dir).filter(p => !fold(p).startsWith('.git/'))
+    // back at this case's truth.yaml. The post-change tree is checked again,
+    // .git included: git refuses a patch into .git today, and nothing here
+    // leans on that.
+    const links = symlinksUnder(dir)
     if (links.length) throw new ConfigError(`${c.id}: change.patch creates symlinks (${links.join(', ')}); a fixture may not contain links`)
     return { root, dir, home, claudeConfig, before: snapshot(dir), cleanup }
   } catch (e) {
