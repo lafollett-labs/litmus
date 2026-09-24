@@ -16,6 +16,11 @@ export type GatePolicy = {
 export type Decision = { allow: true } | { allow: false; reason: string }
 
 const READ: Record<string, string[]> = { Read: ['file_path'], Glob: ['path', 'pattern'], Grep: ['path', 'glob'], LS: ['path'] }
+// The fields a tool expands as a glob; every other path field is literal.
+const PATTERNS = new Set(['pattern', 'glob'])
+// Where a glob stops being literal: wildcards, classes, braces, and groups,
+// extglob (@( !( +( *( ?() or a bare regex group, which some matchers accept.
+const MAGIC = /[*?[{(]/
 // Tools that descend from their base: a suite root anywhere below the base is
 // reached, so it is refused as surely as one named directly.
 const RECURSIVE = new Set(['Glob', 'Grep'])
@@ -71,13 +76,14 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
     if (raw.startsWith('~')) return deny(`${tool}.${field} may not start with ~: ${raw}`)
     // A pattern's reach is judged by its literal prefix, so anything that lets
     // the tool's own glob grammar reach further is refused rather than parsed
-    // here: .. or ~ anywhere, or a brace or class holding a / (an absolute or
-    // climbing alternative).
-    if (/[*?[{]/.test(raw) && (raw.includes('..') || raw.includes('~') || /\{[^}]*\/|\[[^\]]*\//.test(raw))) {
+    // here: .. or ~ anywhere, or a brace, class or group holding a / (an
+    // absolute or climbing alternative, as in @(/etc|src)).
+    const glob = PATTERNS.has(field) && MAGIC.test(raw)
+    if (glob && (raw.includes('..') || raw.includes('~') || /\{[^}]*\/|\[[^\]]*\/|\([^)]*\//.test(raw))) {
       return deny(`${tool}.${field} is a pattern that could reach outside its base: ${raw}`)
     }
-    const target = globBase(raw)
-    const from = field === 'path' || field === 'file_path' || field === 'notebook_path' ? p.workdir : searchBase
+    const target = glob ? globBase(raw) : raw
+    const from = PATTERNS.has(field) ? searchBase : p.workdir
     const real = realpathOf(isAbsolute(target) ? target : resolve(from, target))
     if (real === undefined) return deny(`${tool}.${field} goes through a dangling symlink: ${raw}`)
     if (!roots.some(r => inside(real, r))) {
@@ -98,15 +104,12 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
   return { allow: true }
 }
 
-
-
 const deny = (reason: string): Decision => ({ allow: false, reason })
 
 // A glob's reach is decided by its literal prefix: "/etc/**" reads /etc, and
 // "src/**/*.ts" stays inside src.
 function globBase(pattern: string): string {
-  const i = pattern.search(/[*?[{]/)
-  if (i === -1) return pattern
+  const i = pattern.search(MAGIC)
   const prefix = pattern.slice(0, i)
   return prefix.endsWith('/') || prefix === '' ? prefix || '.' : dirname(prefix)
 }

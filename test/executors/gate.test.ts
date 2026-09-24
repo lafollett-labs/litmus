@@ -118,6 +118,24 @@ test('brace and class forms that could climb or go absolute are refused', () => 
   assert.equal(allowed('Glob', { pattern: 'src/{a,b}.ts' }), true)
 })
 
+test('extglob and regex groups count as pattern syntax, so one holding a / or .. is refused', () => {
+  for (const pattern of ['@(/etc|src)/*', '@(../case|src)', '+(/etc)/hosts', '!(src)/../x', '(/etc|src)/*']) {
+    assert.equal(allowed('Glob', { pattern }), false, pattern)
+    assert.equal(allowed('Grep', { pattern: 'x', glob: pattern }), false, pattern)
+  }
+  assert.equal(allowed('Glob', { pattern: 'src/@(a|b).ts' }), true)
+})
+
+test('a literal path field is judged as written, never as a glob prefix', () => {
+  // As a glob, "x[1]/etc/hosts" has the base "."; as the literal path Read
+  // opens, it goes through the x[1]/etc link and lands in /etc.
+  mkdirSync(join(work, 'x[1]'), { recursive: true })
+  symlinkSync('/etc', join(work, 'x[1]/etc'))
+  assert.equal(allowed('Read', { file_path: 'x[1]/etc/hosts' }), false)
+  assert.equal(allowed('Glob', { path: 'x[1]/etc', pattern: '*' }), false)
+  assert.equal(allowed('Read', { file_path: 'src/a (copy).ts' }), true)
+})
+
 // Only meaningful where the volume ignores case, as default APFS does.
 const caseInsensitive = (() => {
   try {

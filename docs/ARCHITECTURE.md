@@ -637,9 +637,12 @@ case-insensitive volume is judged as the real name.
 
 Paths are resolved the way the tool would resolve them, then judged:
 
+- Only a glob field (Glob's `pattern`, Grep's `glob`) is a pattern. Every
+  other path field is judged literally, as the tool opens it.
 - A pattern is relative to the tool's `path`, and its reach is its literal
-  prefix.
-- A pattern holding `..` or `~`, or a brace or class that holds `/`, is
+  prefix. Wildcards, classes, braces and groups (extglob or a bare `( | )`)
+  all end that prefix.
+- A pattern holding `..` or `~`, or a brace, class or group that holds `/`, is
   refused, and so is a path starting with `~`.
 - A symlink is judged by where it lands. A dangling symlink on the way is
   refused, since writing through it would create its target, wherever that is.
