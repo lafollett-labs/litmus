@@ -51,8 +51,9 @@ stay on the branch, and their messages go into the squash commit's body.
       live credential value, at any depth
   - Suite discovery across several roots, with an error when two suites share
     a name.
-  - Paths resolved relative to the file that names them, and subject content
-    hashes.
+  - Paths resolved relative to the file that names them. File subjects are
+    hashed by bytes and directory subjects by tree. Every failure on an
+    authored path is a config error (exit 2).
   - The selector parser and matcher: suite, case, glob, `tag:` and trial key.
     A selector that matches nothing is an error.
   - A CLI skeleton (`node:util` `parseArgs`) and `litmus list`.

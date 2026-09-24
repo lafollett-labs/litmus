@@ -112,10 +112,13 @@ key there:
 - matches `/key|token|secret|password|passw|auth|credential|cookie|bearer|session/i`
 - is `headers`, since request headers are exactly where a credential would go
 
-The same walk also refuses a string value that equals any credential variable
-litmus knows about. A name-based check can't prove a value is harmless, so
-`params` is for model behaviour (sampling, thinking, output format). Transport
-and auth settings are never allowed there.
+The same walk also refuses a string value that equals the live value of any
+credential variable litmus knows about (the Redaction list below, which
+includes every variable named in `redact`). A name-based check can't prove a
+value is harmless, so `params` is for model behaviour (sampling, the thinking
+type, output format). Transport and auth settings are never allowed there. The
+name check is deliberately broad: `budget_tokens` and `max_tokens` match it
+too, so token budgets go through `effort` and the executor's `max_tokens`.
 
 `compare` values are validated when the config loads:
 
@@ -209,6 +212,27 @@ built-ins (`trials: 3`, `min_trials: ceil(trials / 2)`, `policy: all`,
 `threshold: 0.8`, `timeout_s: 600`). Tags from the suite and the case are
 merged.
 
+Defaults for the rest of the case:
+
+| Key | Default |
+| - | - |
+| `executor.max_tokens` (model) | 8000 |
+| `executor.max_turns` (harness) | 30 |
+| `executor.setting_sources`, `plugins` | `[]` |
+| `executor.allow_shell`, `allow_network`, `allow_hooks` | `false` |
+| `extract.from`, `extract.to` | `final_message`, `findings.json` |
+| grader `target` (regex, judge) | `transcript` |
+| grader `min` (regex, tool-used) | 1 |
+| `command.timeout_s` | 120 |
+| `review-match.artifact`, `window` | `findings.json`, 5 |
+
+Every directory under a suite's `cases/` is a case and must hold a `case.yaml`.
+The exceptions are directories whose names start with `_` or `.`, which can
+hold shared files. A `subject` is a file (a prompt, a skill's `SKILL.md`) or,
+for a harness case, a directory (a plugin), which is hashed by its tree. A
+`prompt_file` or `subject` may not point at any case's `truth.yaml`,
+`fake.yaml`, `fix/` or `proof/`.
+
 `truth.yaml`:
 
 ```yaml
@@ -230,7 +254,9 @@ decoys:
 ```
 
 The `litmus:findings` schema is what a reviewer produces. Line numbers refer
-to the tree the subject saw, which is the post-change tree:
+to the tree the subject saw, which is the post-change tree. It is model output,
+so extra keys (a `confidence`, a top-level `summary`) are allowed and ignored.
+A missing or mistyped required field fails:
 
 ```ts
 type Finding = {
@@ -758,6 +784,7 @@ exact values of these environment variables are replaced with `[REDACTED]`:
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_SESSION_TOKEN`
+- `AWS_BEARER_TOKEN_BEDROCK`
 - every variable named in `redact`
 
 Redaction happens once, where events and records are produced, so events.jsonl,
