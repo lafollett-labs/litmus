@@ -28,6 +28,27 @@ test('a config is rejected for a missing model, an unknown provider, a typo, or 
   for (const b of bad) assert.equal(ConfigFile.safeParse(b).success, false, JSON.stringify(b))
 })
 
+test('compare gets its documented defaults, and out-of-range values are refused', () => {
+  const base = { suites: ['./s'], configs: { fake: { provider: 'fake' } } }
+  const c = ConfigFile.parse(base)
+  assert.deepEqual(c.compare, { tolerance: 0.05, resamples: 2000, seed: 1, warn_ratio: 1.5 })
+  assert.deepEqual(c.redact, [])
+  assert.equal(ConfigFile.parse({ ...base, compare: { tolerance: 0 } }).compare.tolerance, 0)
+  const bad = [{ tolerance: 1 }, { tolerance: -0.1 }, { resamples: 99 }, { resamples: 150.5 }, { seed: 1.5 }, { warn_ratio: 1 }, { tolerence: 0.1 }]
+  for (const compare of bad) assert.equal(ConfigFile.safeParse({ ...base, compare }).success, false, JSON.stringify(compare))
+  assert.equal(ConfigFile.safeParse({ ...base, redact: ['not a var'] }).success, false)
+})
+
+test('effort accepts xhigh', () => {
+  const c = ConfigFile.parse({ suites: ['./s'], configs: { a: { provider: 'anthropic', model: 'm', effort: 'xhigh' } } })
+  assert.equal(c.configs.a?.provider === 'anthropic' && c.configs.a.effort, 'xhigh')
+})
+
+test('a rate threshold is inside (0, 1): 1 could never pass a Wilson lower bound', () => {
+  for (const threshold of [0, 1, 1.2]) assert.equal(SuiteFile.safeParse({ name: 's', defaults: { threshold } }).success, false, String(threshold))
+  assert.equal(SuiteFile.parse({ name: 's', defaults: { threshold: 0.95 } }).defaults.threshold, 0.95)
+})
+
 test('suite defaults are optional and strict', () => {
   assert.deepEqual(SuiteFile.parse({ name: 's' }).defaults, {})
   assert.equal(SuiteFile.safeParse({ name: 's', defaults: { trails: 5 } }).success, false)
@@ -68,6 +89,13 @@ test('a case with no graders, an unknown grader kind, or an unknown harness is r
     CaseFile.safeParse({ ...modelCase, executor: { kind: 'harness', harness: 'codex', prompt: 'x' } }).success,
     false,
   )
+})
+
+test('extract defaults to the final message into findings.json, and needs a named extractor', () => {
+  const c = CaseFile.parse({ ...modelCase, extract: { with: 'default' } })
+  assert.deepEqual(c.extract, { from: 'final_message', to: 'findings.json', with: 'default' })
+  assert.equal(CaseFile.safeParse({ ...modelCase, extract: {} }).success, false)
+  assert.equal(CaseFile.safeParse({ ...modelCase, extract: { with: 'default', into: 'x.json' } }).success, false)
 })
 
 test('review-match gets its window and artifact defaults', () => {

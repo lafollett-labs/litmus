@@ -7,7 +7,7 @@ import { NAME } from '../core/ids.ts'
 
 const name = z.string().regex(NAME, 'must be lowercase letters, digits, . _ - and start alphanumeric')
 const positiveInt = z.int().min(1)
-const effort = z.enum(['low', 'medium', 'high', 'max'])
+const effort = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
 const lineRange = z
   .tuple([positiveInt, positiveInt])
   .refine(([start, end]) => start <= end, 'lines must be [start, end] with start <= end')
@@ -48,13 +48,24 @@ export const ConfigFile = z.strictObject({
   pricing: z
     .record(z.string().min(1), z.strictObject({ input: z.number().min(0), output: z.number().min(0) }))
     .default({}),
+  compare: z
+    .strictObject({
+      tolerance: z.number().min(0).lt(1).default(0.05), // δ
+      resamples: z.int().min(100).default(2000),
+      seed: z.int().default(1),
+      warn_ratio: z.number().gt(1).default(1.5),
+    })
+    .prefault({}),
+  redact: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'must be an environment variable name')).default([]),
 })
 export type ConfigFile = z.infer<typeof ConfigFile>
 
 // ── suite.yaml ───────────────────────────────────────────────────────────────
 
 const policy = z.enum(['all', 'rate'])
-const threshold = z.number().gt(0).max(1)
+// Open at 1: a Wilson lower bound never reaches 1, so a threshold of 1 could
+// never PASS. A case that needs every trial to pass uses policy: all.
+const threshold = z.number().gt(0).lt(1)
 
 const runSettings = {
   trials: positiveInt.optional(),
