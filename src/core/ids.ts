@@ -20,6 +20,7 @@ export function caseId(suite: string, name: string): string {
 }
 
 export function trialKey(ref: TrialRef): string {
+  if (!Number.isSafeInteger(ref.trial) || ref.trial < 1) throw new RangeError(`trial must be a positive safe integer, got ${ref.trial}`)
   return `${ref.suite}/${ref.case}@${ref.config}#${ref.trial}`
 }
 
@@ -33,7 +34,11 @@ export const RUN_ID = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-[0-9a-f]{4}$/
 export function parseTrialKey(key: string): TrialRef | undefined {
   const m = TRIAL_KEY.exec(key)
   if (!m) return undefined
-  return { suite: m[1]!, case: m[2]!, config: m[3]!, trial: Number(m[4]) }
+  // The grammar admits any digit string; past 2^53 Number() rounds, and the
+  // ref would name a different trial than the key.
+  const trial = Number(m[4])
+  if (!Number.isSafeInteger(trial)) return undefined
+  return { suite: m[1]!, case: m[2]!, config: m[3]!, trial }
 }
 
 // 2026-09-24T15-04-05Z-a1b2: sorts chronologically to the second as a plain

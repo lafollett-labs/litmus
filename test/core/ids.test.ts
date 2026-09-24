@@ -16,6 +16,15 @@ test('a malformed trial key parses to undefined rather than a partial ref', () =
   }
 })
 
+test('a trial number past the safe-integer range is refused both ways, so a key always names one trial', () => {
+  assert.equal(parseTrialKey(`a/b@c#${Number.MAX_SAFE_INTEGER}`)?.trial, Number.MAX_SAFE_INTEGER)
+  assert.equal(parseTrialKey('a/b@c#9007199254740993'), undefined)
+  assert.equal(parseTrialKey(`a/b@c#${'9'.repeat(400)}`), undefined)
+  for (const trial of [0, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.POSITIVE_INFINITY]) {
+    assert.throws(() => trialKey({ suite: 'a', case: 'b', config: 'c', trial }), RangeError, String(trial))
+  }
+})
+
 test('case ids join suite and case with a slash', () => {
   assert.equal(caseId('smoke', 'always-passes'), 'smoke/always-passes')
 })
