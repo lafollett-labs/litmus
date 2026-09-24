@@ -8,7 +8,7 @@ TypeScript on Node 26, Vue 3 UI.
 
 | What | Where |
 | - | - |
-| Schemas, events, API, verdict rules | `docs/ARCHITECTURE.md` |
+| Schemas, sandbox, events, API, verdict rules | `docs/ARCHITECTURE.md` |
 | What to build next; when a milestone is done | `docs/PLAN.md` |
 | Why a decision was made | `docs/adr/` |
 | Commands, dependencies | `package.json` |
@@ -17,33 +17,51 @@ A change to a contract updates `docs/ARCHITECTURE.md` in the same PR.
 
 ## Runtime
 
-Run `nvm use 26` first: `.ts` runs by type stripping, so imports carry `.ts`
-and only erasable syntax compiles. Run `npm run check && npm test` before
-claiming a change works, plus `npm run test:ui` when `ui/` or `src/server/`
-changed.
+Chain nvm into every command, because shell state does not carry between
+calls: `source ~/.nvm/nvm.sh && nvm use && npm run check && npm test` (`.nvmrc`
+pins 26). `.ts` runs by type stripping: imports carry `.ts`, and only erasable
+syntax compiles.
 
 ## Hard rules
 
+Never commit a gating suite (any suite used to decide a model rollout), keys,
+tokens, or run output (`.litmus/`).
+
+Tests never spend money. They use the fake provider, a mocked SDK, a mocked
+`fetch`, or a scripted `query()` stream. Live tests run only when
+`LITMUS_LIVE=1`.
+
+Code under a case's `fixture/` is test data. Its bugs and decoys are listed in
+that case's `truth.yaml`. Never edit a fixture to fix one (fixes live in `fix/`
+as patches), and treat a review finding on fixture code as a false positive.
+
+| A trial stopped because of | `exit` | Retried | Trial status |
+| - | - | - | - |
+| Throttling, 5xx, network or auth failure | `infra_error` | Up to `retries`, with backoff | `error` once the retries run out, never `fail` |
+| Timeout or max turns | `model_failure` | Never | `fail` |
+| The operator cancelling | — | Never | `cancelled` |
+
+A case verdict comes from all of its trials, following ARCHITECTURE.md
+§ Verdicts. It is never taken from a single trial.
+
 ```
-never commit here:
-    a gating suite — any suite used to decide a model rollout
-    keys, tokens, or run output (.litmus/)
+if a subject could read truth.yaml, proof/, fix/ or fake.yaml:
+    isolation is broken: fix the layer that leaked
+        (workdir builder, {{fixture}} renderer, or gate path confinement)
+    never weaken the case
+    exception: allow_shell, allow_hooks and command graders are uncontained by design (SECURITY.md)
 
-tests never spend money:
-    tests use the fake provider
-    live tests run only when LITMUS_LIVE=1, skipped otherwise
-
-if a subject under test could read truth.yaml, fix/, or fake.yaml:
-    isolation is broken — fix the workdir builder, never the case
-
-match why a trial stopped:
-    throttle | 5xx | network | auth    -> infra_error   -> retried -> ERROR, never FAIL
-    timeout | max turns | bad output   -> model_failure -> FAIL, never retried
-
-harness gate is default-deny:
-    new tool or capability -> refused unless explicitly allowed
+if adding a tool, a capability or a path classification to the harness gate:
+    it is refused by default and allowed explicitly
     never weaken the gate to make a test pass
+
+if a PR comes from a fork or an outside contributor:
+    read the whole diff before running any command from it
+        # npm ci, npm test and validate all execute PR-controlled code in your environment
 ```
+
+Workdirs live under `os.tmpdir()`, never under `.litmus/`, a suite root, or
+any directory with a `CLAUDE.md` in its ancestors.
 
 ## Workflow
 
@@ -51,21 +69,29 @@ harness gate is default-deny:
 for each change:
     branch from main: m<N>-<slug> for PLAN milestones, else <type>/<slug>
     small commits, each passing npm run check && npm test
-    PR -> /code-reviewer:code-reviewer -> green CI -> gh pr merge --rebase --delete-branch
-never push to main directly
+    PR -> /code-reviewer:code-reviewer until APPROVED -> resolve every external review thread
+       -> green CI -> gh pr merge --squash --delete-branch
+never push to main   # the ruleset refuses it
 ```
 
-Commit subject: `<type>: <imperative summary>` — type is one of feat, fix,
-docs, test, refactor, chore, ci — at most 72 chars; the body says why.
+Resolving an external review thread (Copilot or a human) means fixing it and
+replying with the fixing commit, or replying with why not, and then resolving
+it. `/code-reviewer` comes from the `lafollett-labs-claude-plugins`
+marketplace.
+
+Commit subject: `<type>: <imperative summary>`, where the type is one of
+`feat`, `fix`, `docs`, `test`, `refactor`, `chore` or `ci`. Keep it to 72
+characters. The body says why.
 
 ## Stack Map
 
 | Path | Stack | PE | Test Command |
 | - | - | - | - |
+| `src/server/**` | TypeScript, Node 26, HTTP + SSE | `pe-vue` | `npm run check && npm test && npm run test:ui` |
 | `src/**`, `test/**` | TypeScript, Node 26 | `pe-vue` | `npm run check && npm test` |
 | `ui/**` | Vue 3, Vite, TypeScript | `pe-vue` | `npm run check && npm run test:ui` |
 | `.github/workflows/**` | GitHub Actions | `pe-aws-infra` | `actionlint` |
-| `suites/**` | Eval fixtures, YAML | Generic | `node src/cli/main.ts validate suites/examples` |
+| `suites/**` | Eval fixtures, YAML | Generic | `node src/cli/main.ts validate` |
 | `CLAUDE.md` | Agent governance markdown | `pe-governance` | n/a |
 | `README.md`, `docs/**`, other `*.md` | Human docs | Generic | n/a |
 
