@@ -32,7 +32,6 @@ export function openrouterProvider(deps: Deps = {}): Provider {
         stream: false, // one JSON body; an SSE reply would only burn retries as "unparseable"
       }
       let res: Response
-      let text: string
       try {
         res = await doFetch(URL, {
           method: 'POST',
@@ -40,12 +39,20 @@ export function openrouterProvider(deps: Deps = {}): Provider {
           body: JSON.stringify(body),
           signal: req.signal,
         })
-        // OpenRouter sends the 200 before generation ends, so reading the body
-        // lasts as long as the answer, and a reset can land in either step.
-        text = await res.text()
       } catch (e) {
         if (req.signal.aborted) throw e
         throw new InfraError(`connection failed: ${(e as Error).message}`, { cause: e })
+      }
+      // OpenRouter sends the 200 before generation ends, so reading the body
+      // lasts as long as the answer. A read that fails after an error status
+      // is still classified by that status.
+      let text: string
+      try {
+        text = await res.text()
+      } catch (e) {
+        if (req.signal.aborted) throw e
+        const retryable = res.ok || retryableStatus(res.status)
+        throw new InfraError(`${res.status}: response body failed: ${(e as Error).message}`, { retryable, cause: e })
       }
       if (!res.ok) throw new InfraError(`${res.status}: ${text.slice(0, 500)}`, { retryable: retryableStatus(res.status) })
       let data: unknown
@@ -63,27 +70,40 @@ export function openrouterProvider(deps: Deps = {}): Provider {
       const failed = choice?.error ?? error
       if (failed || choice?.finish_reason === 'error') throw upstream(failed)
       if (!choice?.message) throw new InfraError(`response carried no answer: ${text.slice(0, 200)}`)
-      // For a bring-your-own-key request, cost is only OpenRouter's fee; the
-      // provider's own charge is reported beside it.
-      const byok = usage?.is_byok === true ? (usage.cost_details?.upstream_inference_cost ?? 0) : 0
+      const answer = answerText(choice.message)
+      // An empty answer is the model's result only when the finish reason says
+      // why: it spent its budget ("length", often all on reasoning) or was
+      // filtered. Empty with "stop" or no reason is how an upstream hiccup
+      // looks through OpenRouter, and grading it FAIL would be a false regression.
+      if (answer === '' && !EMPTY_IS_A_RESULT.has(choice.finish_reason ?? '')) {
+        throw new InfraError(`empty answer with finish_reason ${choice.finish_reason ?? 'null'}`)
+      }
       return {
-        text: answerText(choice.message),
+        text: answer,
         stop_reason: choice.finish_reason ?? null,
-        usage: {
-          input_tokens: usage?.prompt_tokens ?? 0,
-          output_tokens: usage?.completion_tokens ?? 0,
-          ...(typeof usage?.cost === 'number' ? { cost_usd: usage.cost + byok } : {}),
-        },
+        usage: { input_tokens: usage?.prompt_tokens ?? 0, output_tokens: usage?.completion_tokens ?? 0, ...cost(usage) },
         raw: data,
       }
     },
   }
 }
 
+const EMPTY_IS_A_RESULT = new Set(['length', 'content_filter'])
+
+// For a bring-your-own-key request, cost is only OpenRouter's fee and the
+// provider's charge is reported beside it. With that charge missing, the
+// reported cost would be a known under-count, so none is reported and the
+// pricing fallback estimates it instead.
+function cost(u: ChatResponse['usage']): { cost_usd?: number } {
+  if (typeof u?.cost !== 'number') return {}
+  if (u.is_byok !== true) return { cost_usd: u.cost }
+  const upstream = u.cost_details?.upstream_inference_cost
+  return typeof upstream === 'number' ? { cost_usd: u.cost + upstream } : {}
+}
+
 // The model's text, whatever shape it came in. Content may be a string or an
 // array of parts, and a refusal arrives in its own field. Either way it is
-// output for the graders. An empty answer (reasoning that spent the whole
-// budget, finish_reason "length") is the model's result too, not an error.
+// output for the graders.
 function answerText(m: { content?: string | { type?: string; text?: string }[] | null; refusal?: string | null }): string {
   const content = Array.isArray(m.content) ? m.content.flatMap(p => (p.type === 'text' && typeof p.text === 'string' ? [p.text] : [])).join('') : (m.content ?? '')
   return content || (m.refusal ?? '')

@@ -52,6 +52,20 @@ test('content as parts or a refusal is the answer; an empty answer after a lengt
   assert.equal((await answer({ content: null, refusal: 'I can\'t help with that.' })).text, 'I can\'t help with that.')
   const truncated = await answer({ content: '' }, 'length')
   assert.deepEqual([truncated.text, truncated.stop_reason], ['', 'length'])
+  assert.equal((await answer({ content: null }, 'content_filter')).text, '')
+})
+
+test('an empty answer that does not say why is a retryable infra error, not a graded FAIL', async () => {
+  for (const [message, finish] of [[{ content: '' }, 'stop'], [{ content: null }, 'stop'], [{}, null], [{ content: [{ type: 'image_url' }] }, 'stop']] as const) {
+    const { fetch } = fakeFetch(200, { choices: [{ message, finish_reason: finish }] })
+    await assert.rejects(openrouterProvider({ fetch, apiKey: 'k' }).complete(req), (e: unknown) => e instanceof InfraError && e.retryable && /empty answer/.test(e.message), JSON.stringify([message, finish]))
+  }
+})
+
+test('a body read that fails after an error status is classified by the status', async () => {
+  const broken = (status: number) => (async () => new Response(new ReadableStream({ start: c => c.error(new TypeError('terminated')) }), { status })) as unknown as typeof fetch
+  await assert.rejects(openrouterProvider({ fetch: broken(401), apiKey: 'k' }).complete(req), (e: unknown) => e instanceof InfraError && !e.retryable)
+  await assert.rejects(openrouterProvider({ fetch: broken(503), apiKey: 'k' }).complete(req), (e: unknown) => e instanceof InfraError && e.retryable)
 })
 
 test('a body that fails after the headers is a retryable infra error, not a TypeError', async () => {
@@ -67,6 +81,8 @@ test('a bring-your-own-key cost adds the upstream charge to OpenRouter\'s fee', 
   })
   const r = await openrouterProvider({ fetch, apiKey: 'k' }).complete(req)
   assert.equal(r.usage.cost_usd, 0.021)
+  const missing = fakeFetch(200, { choices: [{ message: { content: 'a' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, cost: 0.001, is_byok: true } })
+  assert.equal((await openrouterProvider({ fetch: missing.fetch, apiKey: 'k' }).complete(req)).usage.cost_usd, undefined) // left to the pricing fallback
 })
 
 test('text, finish reason, tokens and the reported cost map onto the response', async () => {

@@ -481,7 +481,10 @@ expired SSO session's `aws sso login` hint.
 
 An OpenRouter answer's content may be a string or an array of parts. A
 refusal arrives in its own field, and it is the answer when there is no
-content. OpenRouter can report a failure inside a 200: a top-level `error`, an `error`
+content. An empty answer is the model's result only when its finish reason says
+why (`length` or `content_filter`). Otherwise it is a retryable infra error,
+since that is how an upstream hiccup looks through OpenRouter. OpenRouter can
+also report a failure inside a 200: a top-level `error`, an `error`
 on the choice, `finish_reason: "error"`, or no choice at all. None of these is
 an answer to grade, so each is an `InfraError`, classified by its code as an
 HTTP status would be (with no code, retryable).
@@ -500,6 +503,8 @@ a provider reports no cost, the pricing fallback prices all of them at the full
 input rate. That is approximate: cache reads are overpriced (they bill at about
 0.1×), and cache writes are underpriced by up to 2×. For a bring-your-own-key
 OpenRouter request, cost is OpenRouter's fee plus the upstream charge it reports.
+If the upstream charge is missing, no cost is recorded and the pricing fallback
+estimates it.
 
 ### Executor
 
