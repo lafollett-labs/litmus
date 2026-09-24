@@ -23,7 +23,8 @@ function job(yaml: string, files: Record<string, string>, signal = new AbortCont
     config: { provider: 'fake', model: 'fake' },
     trial: 1,
     attempt: 1,
-    workdir: buildWorkdir(c, { run: 'r', key: 's/c@fake#1', attempt: 1 }, base),
+    workdir: buildWorkdir(c, { run: '2026-09-24T12-00-00Z-a1b2', key: 's/c@fake#1', attempt: 1 }, base),
+    suiteRoots: [],
     out: { artifacts: join(out, 'artifacts'), transcript: join(out, 'transcript.jsonl') },
     pricing: {},
     emit: e => events.push(e),
@@ -58,7 +59,7 @@ test('an answer with no JSON is still ok; the graders decide what it is worth', 
   assert.equal(r.artifacts['findings.json'], undefined)
 })
 
-test('an infra error carries its retryability, and a timeout is a model failure', async () => {
+test('an infra error carries its retryability, and a timeout of the one call is a retryable infra error', async () => {
   const { j } = job(REVIEW, { 'skill.md': 's', 'fake.yaml': 'responses: [{ fatal: revoked }]\n' })
   const fatal = await runModel(j, fakeProvider())
   assert.equal(fatal.exit, 'infra_error')
@@ -66,7 +67,7 @@ test('an infra error carries its retryability, and a timeout is a model failure'
 
   const slow = job(REVIEW.replace('timeout_s: 5', 'timeout_s: 1'), { 'skill.md': 's', 'fake.yaml': 'responses: [{ delay_ms: 5000, text: late }]\n' })
   const t = await runModel(slow.j, fakeProvider())
-  assert.equal(t.exit, 'model_failure')
+  assert.deepEqual([t.exit, t.retryable], ['infra_error', true])
   assert.match(t.reason ?? '', /timeout/)
 })
 

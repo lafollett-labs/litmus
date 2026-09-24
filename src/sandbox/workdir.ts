@@ -3,6 +3,7 @@ import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync,
 import { tmpdir } from 'node:os'
 import { dirname, join, parse, resolve } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
+import { RUN_ID } from '../core/ids.ts'
 import type { LoadedCase } from '../suite/load.ts'
 import { snapshot, symlinksUnder, type Snapshot } from './snapshot.ts'
 
@@ -23,6 +24,10 @@ const GIT_ENV = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_
 const GIT_ARGS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'user.name=litmus', '-c', 'user.email=litmus@localhost']
 
 export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; attempt: number }, base: string = tmpdir()): Workdir {
+  // root is removed recursively below, so every part of its path is checked
+  // first: a run id or attempt that is not what the grammar says never reaches rmSync.
+  if (!RUN_ID.test(where.run)) throw new Error(`not a run id: ${where.run}`)
+  if (!Number.isSafeInteger(where.attempt) || where.attempt < 1) throw new Error(`not an attempt number: ${where.attempt}`)
   const root = join(resolve(base), 'litmus', where.run, `${slug(where.key)}-${where.attempt}`)
   rmSync(root, { recursive: true, force: true }) // fresh on every attempt, never reused
   const dir = join(root, 'work')
@@ -32,9 +37,9 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
   const cleanup = () => rmSync(root, { recursive: true, force: true })
 
   try {
-    // Claude Code loads CLAUDE.md (and AGENTS.md) from every ancestor of its
-    // cwd, so a workdir under a repo would hand that repo's instructions to
-    // the subject.
+    // Claude Code loads CLAUDE.md, CLAUDE.local.md and AGENTS.md from every
+    // ancestor of its cwd, so a workdir under a repo would hand that repo's
+    // instructions to the subject.
     const leak = instructionFileAbove(dir)
     if (leak) throw new InfraError(`workdir ${dir} sits under ${leak}; point TMPDIR somewhere outside any repo`, { retryable: false })
 
@@ -58,9 +63,10 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
   }
 }
 
-// Only regular files and directories are copied. A symlink could resolve to
-// ground truth (or anywhere) outside the workdir; a .git directory would bring
-// its own config and hooks into the one git step litmus does run.
+// Only regular files and directories are copied, and anything else is refused.
+// A symlink could resolve to ground truth (or anywhere) outside the workdir; a
+// .git directory would bring its own config and hooks into the one git step
+// litmus does run; a FIFO or socket would hang or reach out when read.
 function copyTree(from: string, to: string, caseId: string): void {
   for (const name of readdirSync(from).sort()) {
     const src = join(from, name)
@@ -74,6 +80,8 @@ function copyTree(from: string, to: string, caseId: string): void {
     } else if (st.isFile()) {
       copyFileSync(src, dst)
       chmodSync(dst, st.mode & 0o777)
+    } else {
+      throw new ConfigError(`${caseId}: fixture contains ${src}, which is neither a regular file nor a directory`)
     }
   }
 }
@@ -95,7 +103,7 @@ function instructionFileAbove(dir: string): string | undefined {
   let d = dirname(dir)
   const { root } = parse(d)
   while (true) {
-    for (const f of ['CLAUDE.md', 'AGENTS.md']) if (existsSync(join(d, f))) return join(d, f)
+    for (const f of ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md']) if (existsSync(join(d, f))) return join(d, f)
     if (d === root) return undefined
     d = dirname(d)
   }

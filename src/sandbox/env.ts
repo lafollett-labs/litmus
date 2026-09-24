@@ -17,6 +17,3 @@ export function scrubbedEnv(
   env['HOME'] = opts.home
   return { ...env, ...opts.extra }
 }
-
-// Values of these variables are scrubbed from everything litmus writes.
-export const SECRET_VARS = ['ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']

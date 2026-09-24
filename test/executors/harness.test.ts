@@ -32,7 +32,8 @@ function job(yaml: string, files: Record<string, string> = {}, config: ConfigDef
     config,
     trial: 1,
     attempt: 1,
-    workdir: buildWorkdir(c, { run: 'r', key: 's/c@opus#1', attempt: 1 }, base),
+    workdir: buildWorkdir(c, { run: '2026-09-24T12-00-00Z-a1b2', key: 's/c@opus#1', attempt: 1 }, base),
+    suiteRoots: [],
     out: { artifacts: join(out, 'artifacts'), transcript: join(out, 'transcript.jsonl') },
     pricing: {},
     emit: () => {},
@@ -128,12 +129,35 @@ test('messages map onto the transcript, and the result onto usage, cost, final m
   assert.deepEqual(kinds, ['message', 'tool_call', 'tool_result', 'usage'])
 })
 
-test('max turns is a model failure; an API 401 fails fast and a 529 retries', async () => {
-  assert.equal((await runHarness(job(HARNESS()), scripted([result({ subtype: 'error_max_turns' })]).query)).exit, 'model_failure')
-  const auth = await runHarness(job(HARNESS()), scripted([result({ subtype: 'error_during_execution', is_error: true, api_error_status: 401 })]).query)
+test('max turns is a model failure; an API error turn is an infra error by its status, never a graded answer', async () => {
+  assert.equal((await runHarness(job(HARNESS()), scripted([result({ subtype: 'error_max_turns', errors: [] })]).query)).exit, 'model_failure')
+  // The SDK reports an API error turn as a success result with is_error set and the error as its result text.
+  const apiError = (status: number) => result({ is_error: true, api_error_status: status, result: `API Error: ${status} {"type":"error"}` })
+  const auth = await runHarness(job(HARNESS()), scripted([apiError(401)]).query)
   assert.deepEqual([auth.exit, auth.retryable], ['infra_error', false])
-  const busy = await runHarness(job(HARNESS()), scripted([result({ subtype: 'error_during_execution', is_error: true, api_error_status: 529 })]).query)
+  const busy = await runHarness(job(HARNESS()), scripted([apiError(529)]).query)
   assert.deepEqual([busy.exit, busy.retryable], ['infra_error', true])
+  assert.match(busy.reason ?? '', /api error 529\): API Error: 529/)
+  assert.notEqual(readFileSync(busy.artifacts['final_message.txt']!, 'utf8'), 'API Error: 529 {"type":"error"}')
+  const crashed = await runHarness(job(HARNESS()), scripted([result({ subtype: 'error_during_execution', is_error: true, errors: ['spawn failed'] })]).query)
+  assert.deepEqual([crashed.exit, crashed.retryable], ['infra_error', true])
+  assert.match(crashed.reason ?? '', /spawn failed/)
+})
+
+test('tokens are counted across every model in the session, subagents included', async () => {
+  const r = await runHarness(
+    job(HARNESS()),
+    scripted([
+      result({
+        total_cost_usd: 0.5,
+        modelUsage: {
+          'claude-opus-5-5': { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 10, cacheCreationInputTokens: 5, costUSD: 0.4 },
+          'claude-haiku-4-5': { inputTokens: 300, outputTokens: 60, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.1 },
+        },
+      }),
+    ]).query,
+  )
+  assert.deepEqual(r.usage, { input_tokens: 415, output_tokens: 80, cost_usd: 0.5 })
 })
 
 test('without an API key, or on a provider the harness cannot use, nothing runs', async () => {
@@ -158,10 +182,58 @@ test('a plugin that declares hooks is refused unless the case sets allow_hooks',
   assert.equal(calls[0]!.plugins![0]!.path.endsWith('/plugin'), true)
 })
 
-test('a fixture with project hooks is refused when its project settings would load them', async () => {
-  const { query } = scripted([result()])
-  const r = await runHarness(job(HARNESS('  setting_sources: [project]\n'), { 'fixture/.claude/settings.json': '{"hooks":{}}' }), query)
-  assert.match(r.reason ?? '', /the fixture declares hooks/)
+test('under project settings, a fixture\'s settings may set only $schema', async () => {
+  const project = HARNESS('  setting_sources: [project]\n')
+  const run = (settings: string, file = 'fixture/.claude/settings.json') => runHarness(job(project, { [file]: settings }), scripted([result()]).query)
+  assert.equal((await run('{"$schema":"https://json.schemastore.org/claude-code-settings.json"}')).exit, 'ok')
+  for (const [settings, re] of [
+    ['{"hooks":{}}', /sets hooks; .* may set only \$schema/],
+    ['{"permissions":{"allow":["Bash"]}}', /sets permissions/],
+    ['{"env":{"X":"1"}}', /sets env/],
+    ['not json', /not valid JSON/],
+  ] as const) {
+    const r = await run(settings)
+    assert.deepEqual([r.exit, r.retryable], ['infra_error', false], settings)
+    assert.match(r.reason ?? '', re, settings)
+  }
+  assert.match((await run('{"env":{}}', 'fixture/.claude/settings.local.json')).reason ?? '', /settings\.local\.json sets env/)
+})
+
+test('the session sets permissionMode default and removes the tool classes the case has not allowed', async () => {
+  const { query, calls } = scripted([result()])
+  await runHarness(job(HARNESS()), query)
+  assert.equal(calls[0]!.permissionMode, 'default')
+  assert.deepEqual(calls[0]!.disallowedTools, ['Bash', 'BashOutput', 'KillShell', 'KillBash', 'WebFetch', 'WebSearch'])
+  await runHarness(job(HARNESS('  allow_shell: true\n')), query)
+  assert.deepEqual(calls[1]!.disallowedTools, ['WebFetch', 'WebSearch'])
+})
+
+test('the harness prompt is rendered with the model prompt\'s placeholders', async () => {
+  const yaml = HARNESS().replace('prompt: /review', 'prompt: "/review {{file:a.go}}"')
+  const prompts: string[] = []
+  const q: Query = ({ prompt, options }) => (prompts.push(prompt), scripted([result()]).query({ prompt, options }))
+  await runHarness(job(yaml), q)
+  assert.match(prompts[0]!, /^\/review === a\.go ===\n1 \| package a/)
+})
+
+test('a suite root is never readable, even inside a plugin, and a directory subject is its own read root', async () => {
+  let policyChecks: { allow: boolean }[] = []
+  const { query } = scripted([result()], async o => {
+    const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
+    const ask = async (file_path: string) => {
+      const out = (await hook({ tool_name: 'Read', tool_input: { file_path } } as never, undefined, { signal: new AbortController().signal })) as { hookSpecificOutput: { permissionDecision: string } }
+      policyChecks.push({ allow: out.hookSpecificOutput.permissionDecision === 'allow' })
+    }
+    await ask(join(o.plugins![0]!.path, 'SKILL.md'))
+    await ask(join(o.plugins![0]!.path, 'evals/private/case.yaml'))
+    await ask(join(o.plugins![0]!.path, '../sibling/x.md'))
+  })
+  const files = { 'plugin/SKILL.md': 's', 'plugin/evals/private/case.yaml': 'secret', 'sibling/x.md': 'not the subject' }
+  const j = job(HARNESS('  plugins: [plugin]\n').replace('name: c\n', 'name: c\nsubject: plugin\n'), files)
+  j.suiteRoots = [join(j.case.dir, 'plugin/evals')]
+  await runHarness(j, query)
+  assert.deepEqual(policyChecks.map(p => p.allow), [true, false, false])
+  policyChecks = []
 })
 
 const hang: Query = ({ options }) =>

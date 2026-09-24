@@ -28,7 +28,8 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
   })
 
   const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch)
-  const system = job.case.subject?.content
+  // A directory subject is refused for model cases at load; only a file is text.
+  const system = job.case.subject?.kind === 'file' ? job.case.subject.content : undefined
   if (system !== undefined) tx.message('system', system)
   tx.message('user', prompt)
 
@@ -60,7 +61,11 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
   } catch (e) {
     const why = clock.stopped()
     if (why === 'cancelled') return done('cancelled')
-    if (why === 'timeout') return done('model_failure', { reason: `timeout after ${job.case.settings.timeout_s}s` })
+    // One provider call that outlives the deadline is a slow or stuck
+    // connection, not a model spiralling, so it is retried (ARCHITECTURE
+    // § Flow). The harness keeps timeout as a model failure: there it is the
+    // subject's own session that ran long.
+    if (why === 'timeout') return done('infra_error', { reason: `timeout after ${job.case.settings.timeout_s}s`, retryable: true })
     if (e instanceof InfraError) return done('infra_error', { reason: e.message, retryable: e.retryable })
     throw e
   } finally {

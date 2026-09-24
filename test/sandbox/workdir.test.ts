@@ -11,7 +11,7 @@ import { oneCase } from '../helpers/cases.ts'
 import { tree } from '../helpers/tmp.ts'
 
 const CASE = 'name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, pattern: x }]\n'
-const where = { run: 'r1', key: 's/c@fake#1', attempt: 1 }
+const where = { run: '2026-09-24T12-00-00Z-a1b2', key: 's/c@fake#1', attempt: 1 }
 const git = (cwd: string, ...args: string[]) => spawnSync('git', args, { cwd, encoding: 'utf8' }).stdout.trim()
 
 test('only the fixture reaches the workdir: truth, proof, fix, fake and case.yaml stay behind', () => {
@@ -72,12 +72,24 @@ test('a patch that does not apply is a config error that names the case', () => 
   assert.throws(() => buildWorkdir(c, where, base), (e: Error) => e instanceof ConfigError && /s\/c: change.patch does not apply/.test(e.message))
 })
 
-test('a workdir under a directory holding CLAUDE.md or AGENTS.md is refused', () => {
-  for (const f of ['CLAUDE.md', 'AGENTS.md']) {
+test('a workdir under a directory holding CLAUDE.md, CLAUDE.local.md or AGENTS.md is refused', () => {
+  for (const f of ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md']) {
     const { c } = oneCase(CASE, { 'fixture/a.txt': 'x' })
     const repo = tree({ [f]: '# rules' })
     assert.throws(() => buildWorkdir(c, where, repo), (e: Error) => e instanceof InfraError && !e.retryable && new RegExp(f).test(e.message), f)
   }
+})
+
+test('a FIFO or other special file in the fixture is refused', () => {
+  const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  spawnSync('mkfifo', [join(c.fixtureDir!, 'pipe')])
+  assert.throws(() => buildWorkdir(c, where, base), (e: Error) => e instanceof ConfigError && /pipe, which is neither a regular file nor a directory/.test(e.message))
+})
+
+test('a run id or attempt outside its grammar never reaches the recursive delete', () => {
+  const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  assert.throws(() => buildWorkdir(c, { ...where, run: '../..' }, base), /not a run id/)
+  assert.throws(() => buildWorkdir(c, { ...where, attempt: 0 }, base), /not an attempt number/)
 })
 
 test('every attempt gets a fresh workdir, even for the same trial', () => {

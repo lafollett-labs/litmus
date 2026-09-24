@@ -17,11 +17,11 @@ test('claude-code writes a file in its workdir and nowhere else', { skip, timeou
     { 'fixture/README.md': 'empty repo\n' },
   )
   const out = tree({ '.keep': '' })
-  const workdir = buildWorkdir(c, { run: 'live', key: 's/c@haiku#1', attempt: 1 }, base)
+  const workdir = buildWorkdir(c, { run: '2026-09-24T12-00-00Z-a1b2', key: 's/c@haiku#1', attempt: 1 }, base)
   try {
     const r = await runHarness({
       key: 's/c@haiku#1', case: c, configName: 'haiku', config: { provider: 'anthropic', model: 'claude-haiku-4-5' },
-      trial: 1, attempt: 1, workdir, out: { artifacts: join(out, 'a'), transcript: join(out, 't.jsonl') },
+      trial: 1, attempt: 1, workdir, suiteRoots: [], out: { artifacts: join(out, 'a'), transcript: join(out, 't.jsonl') },
       pricing: {}, emit: () => {}, signal: new AbortController().signal,
     })
     assert.equal(r.exit, 'ok', r.reason ?? 'no reason')

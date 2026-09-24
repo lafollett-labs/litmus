@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
+import { ConfigError } from '../core/errors.ts'
 import { walk } from '../sandbox/snapshot.ts'
 
 // {{fixture}}, {{diff}} and {{file:<path>}} (docs/ARCHITECTURE.md § Executor).
@@ -12,9 +13,14 @@ export function renderPrompt(template: string, workdir: string, changePatch?: st
     if (what === 'diff') return changePatch ? readFileSync(changePatch, 'utf8') : ''
     const abs = resolve(workdir, path!.trim())
     // A template may only name files inside the workdir; "../truth.yaml" is
-    // exactly the leak the sandbox exists to prevent.
-    if (abs !== workdir && !abs.startsWith(workdir + sep)) throw new Error(`{{file:${path}}} points outside the workdir`)
-    return numbered(path!.trim(), abs)
+    // exactly the leak the sandbox exists to prevent. Either mistake is the
+    // case author's, so it is a config error, not a crash.
+    if (abs !== workdir && !abs.startsWith(workdir + sep)) throw new ConfigError(`{{file:${path}}} points outside the workdir`)
+    try {
+      return numbered(path!.trim(), abs)
+    } catch (e) {
+      throw new ConfigError(`{{file:${path}}}: ${(e as Error).message}`)
+    }
   })
 }
 

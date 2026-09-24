@@ -1,12 +1,13 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
 import { scrubbedEnv } from '../sandbox/env.ts'
 import { snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
-import { decide, type GatePolicy } from './gate.ts'
+import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
+import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
 import type { ExecJob } from './types.ts'
 
@@ -36,17 +37,26 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const creds = credentials(job)
   if (typeof creds === 'string') return refuse(creds)
 
-  const plugins = exec.plugins.map(p => resolve(job.case.dir, p))
+  const plugins = job.case.plugins // absolute, and checked to exist, at load
   if (!exec.allow_hooks) {
-    const hooked = [...plugins.filter(declaresHooks), ...(exec.setting_sources.includes('project') && projectHooks(job.workdir.dir) ? ['the fixture'] : [])]
+    const hooked = [...plugins.filter(declaresHooks), ...(exec.setting_sources.includes('project') && existsSync(join(job.workdir.dir, '.mcp.json')) ? ['the fixture'] : [])]
     // Hooks and MCP servers run as host processes, outside the gate; a case
     // has to say it accepts that before any of them load.
     if (hooked.length) return refuse(`${hooked.join(', ')} declares hooks or MCP servers; set allow_hooks: true to run them uncontained`)
   }
+  if (exec.setting_sources.includes('project')) {
+    const bad = fixtureSettings(job.workdir.dir)
+    if (bad) return refuse(bad)
+  }
 
+  // A directory subject is its own root; a file subject's root is the folder
+  // it lives in (a skill's SKILL.md beside its references).
+  const subjectRoot = job.case.subject ? (job.case.subject.kind === 'dir' ? job.case.subject.path : dirname(job.case.subject.path)) : undefined
+  const real = (paths: string[]) => paths.filter(existsSync).map(p => realpathSync(p))
   const policy: GatePolicy = {
     workdir: realpathSync(job.workdir.dir),
-    readRoots: [...plugins, ...(job.case.subject ? [dirname(job.case.subject.path)] : [])].filter(existsSync).map(p => realpathSync(p)),
+    readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]),
+    denyRoots: real(job.suiteRoots),
     allowShell: exec.allow_shell,
     allowNetwork: exec.allow_network,
     allowHooks: exec.allow_hooks,
@@ -57,9 +67,15 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     return d
   }
 
+  const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch)
   const clock = deadline(job.signal, job.case.settings.timeout_s * 1000)
   const options: Options = {
     cwd: job.workdir.dir,
+    // Explicit, so a fixture or a default can never widen it. Tool classes the
+    // case has not allowed are removed from the model's context as well as
+    // refused by the gate.
+    permissionMode: 'default',
+    disallowedTools: [...(exec.allow_shell ? [] : SHELL_TOOLS), ...(exec.allow_network ? [] : NETWORK_TOOLS)],
     model: 'model' in job.config ? job.config.model : 'fake',
     ...('effort' in job.config && job.config.effort ? { effort: job.config.effort } : {}),
     maxTurns: exec.max_turns,
@@ -113,7 +129,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   let final = ''
   let result: Extract<SDKMessage, { type: 'result' }> | undefined
   try {
-    for await (const m of query({ prompt: job.case.prompt, options })) {
+    for await (const m of query({ prompt, options })) {
       if (m.type === 'assistant') {
         for (const block of m.message.content) {
           if (block.type === 'text') {
@@ -144,24 +160,45 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   }
 
   if (!result) return done('infra_error', { reason: 'harness ended without a result message', retryable: true })
-  const u = result.usage
-  const usage: Usage = {
-    input_tokens: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
-    output_tokens: u.output_tokens ?? 0,
-    cost_usd: result.total_cost_usd,
-  }
+  const usage = usageOf(result)
   tx.usage(usage)
-  if (result.subtype === 'success') final = result.result
+  // A turn that ended on an API error ("API Error: 529 ...") arrives as a
+  // success result with is_error set, and its result text is the error, not
+  // an answer. Grading it would turn an overload into a FAIL.
+  const apiError = result.subtype === 'success' && result.is_error
+  if (result.subtype === 'success' && !apiError) final = result.result
 
   const artifacts = collect(job, final)
-  if (result.subtype === 'success') return done('ok', { artifacts, usage })
+  if (result.subtype === 'success' && !apiError) return done('ok', { artifacts, usage })
   if (result.subtype === 'error_max_turns') return done('model_failure', { reason: `stopped at max_turns (${exec.max_turns})`, artifacts, usage })
   if (result.subtype === 'error_max_budget_usd') return done('model_failure', { reason: 'stopped at the budget cap', artifacts, usage })
-  const raw = (result as { api_error_status?: unknown }).api_error_status
-  const status = typeof raw === 'number' ? raw : null
+  const status = result.subtype === 'success' && typeof result.api_error_status === 'number' ? result.api_error_status : null
   // No status means the harness itself broke, not the model: retry it.
-  const retryable = status === null || status === 408 || status === 409 || status === 429 || status >= 500
-  return done('infra_error', { reason: `harness error (${result.subtype}${status ? ` ${status}` : ''})`, retryable, artifacts, usage })
+  const retryable = status === null || status === 408 || status === 409 || status === 429 || (status >= 500 && status < 600)
+  const detail = result.subtype === 'success' ? result.result : result.errors.join('; ')
+  const reason = `harness error (${apiError ? 'api error' : result.subtype}${status ? ` ${status}` : ''})${detail ? `: ${detail.slice(0, 300)}` : ''}`
+  return done('infra_error', { reason, retryable, artifacts, usage })
+}
+
+// Tokens from modelUsage, which covers every model call in the session:
+// subagents included. `usage` is the main loop only, and a review skill that
+// fans out to reviewers spends most of its tokens outside it.
+function usageOf(result: Extract<SDKMessage, { type: 'result' }>): Usage {
+  const models = Object.values(result.modelUsage ?? {})
+  if (models.length === 0) {
+    const u = result.usage
+    return {
+      input_tokens: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
+      output_tokens: u.output_tokens ?? 0,
+      cost_usd: result.total_cost_usd,
+    }
+  }
+  const sum = (f: (m: (typeof models)[number]) => number) => models.reduce((n, m) => n + (f(m) ?? 0), 0)
+  return {
+    input_tokens: sum(m => m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens),
+    output_tokens: sum(m => m.outputTokens),
+    cost_usd: result.total_cost_usd,
+  }
 }
 
 // The files the subject wrote (by snapshot, never by asking git) plus its last
@@ -192,7 +229,7 @@ function credentials(job: ExecJob): Record<string, string> | string {
       const region = job.config.region ?? env['AWS_REGION'] ?? env['AWS_DEFAULT_REGION']
       if (!region) return 'the claude-code harness on bedrock needs a region (config.region or AWS_REGION)'
       out['AWS_REGION'] = region
-      for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_PROFILE']) if (env[k]) out[k] = env[k]!
+      for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK', 'AWS_PROFILE']) if (env[k]) out[k] = env[k]!
       // HOME is redirected, so a named profile needs its files pointed at.
       if (out['AWS_PROFILE']) {
         out['AWS_CONFIG_FILE'] = env['AWS_CONFIG_FILE'] ?? join(homedir(), '.aws/config')
@@ -217,16 +254,21 @@ export function declaresHooks(pluginDir: string): boolean {
   }
 }
 
-function projectHooks(dir: string): boolean {
-  if (existsSync(join(dir, '.mcp.json'))) return true
+// Under setting_sources [project], a fixture's settings may set only $schema.
+// Permissions, env, hooks and helper commands would otherwise run, or approve
+// things, outside the gate. Returns why the fixture is refused, if it is.
+function fixtureSettings(dir: string): string | undefined {
   for (const f of ['.claude/settings.json', '.claude/settings.local.json']) {
     const path = join(dir, f)
     if (!existsSync(path)) continue
+    let parsed: unknown
     try {
-      if ('hooks' in (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>)) return true
+      parsed = JSON.parse(readFileSync(path, 'utf8'))
     } catch {
-      return true
+      return `the fixture's ${f} is not valid JSON`
     }
+    const keys = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? Object.keys(parsed).filter(k => k !== '$schema') : ['(not an object)']
+    if (keys.length) return `the fixture's ${f} sets ${keys.join(', ')}; under setting_sources [project] it may set only $schema`
   }
-  return false
+  return undefined
 }

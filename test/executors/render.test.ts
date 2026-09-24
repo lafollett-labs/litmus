@@ -1,4 +1,5 @@
 import { test } from 'node:test'
+import { ConfigError } from '../../src/core/errors.ts'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { extractJson, renderPrompt } from '../../src/executors/render.ts'
@@ -21,8 +22,9 @@ test('{{diff}} renders the change, and {{file:...}} a single file', () => {
   assert.match(renderPrompt('{{ file:src/a.ts }}', dir), /=== src\/a\.ts ===\n1 \| one/)
 })
 
-test('{{file:...}} cannot reach outside the workdir', () => {
-  assert.throws(() => renderPrompt('{{file:../truth.yaml}}', dir), /outside the workdir/)
+test('{{file:...}} cannot reach outside the workdir, and a missing file is a config error, not a crash', () => {
+  assert.throws(() => renderPrompt('{{file:../truth.yaml}}', dir), (e: unknown) => e instanceof ConfigError && /outside the workdir/.test(e.message))
+  assert.throws(() => renderPrompt('{{file:nope.go}}', dir), (e: unknown) => e instanceof ConfigError && /nope\.go/.test(e.message))
 })
 
 test('the last json fence wins, a bare object parses, and anything else is no object', () => {

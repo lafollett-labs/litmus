@@ -12,7 +12,7 @@ mkdirSync(join(work, 'nested'), { recursive: true })
 symlinkSync('/etc', join(work, 'nested/etc'))
 writeFileSync(join(root, 'outside.txt'), 'z')
 
-const base: GatePolicy = { workdir: work, readRoots: [join(root, 'plugin')], allowShell: false, allowNetwork: false, allowHooks: false }
+const base: GatePolicy = { workdir: work, readRoots: [join(root, 'plugin')], denyRoots: [], allowShell: false, allowNetwork: false, allowHooks: false }
 const allowed = (tool: string, input: Record<string, unknown>, p = base) => decide(tool, input, p).allow
 
 test('reads and writes inside the workdir are allowed, by relative or absolute path', () => {
@@ -58,6 +58,42 @@ test('subagents and bookkeeping tools are allowed; a tool the gate does not know
   const d = decide('SomeNewTool', {}, base)
   assert.equal(d.allow, false)
   assert.match(!d.allow ? d.reason : '', /not a tool litmus allows/)
+})
+
+test('a pattern is judged from the tool\'s own search path', () => {
+  assert.equal(allowed('Glob', { path: join(root, 'plugin'), pattern: '../case/*' }), false)
+  assert.equal(allowed('Glob', { path: join(root, 'plugin'), pattern: 'skills/*' }), true)
+})
+
+test('a suite root is never readable, even inside a plugin root', () => {
+  const p = { ...base, denyRoots: [join(root, 'plugin/skills')] }
+  assert.equal(allowed('Read', { file_path: join(root, 'plugin/skills/review/SKILL.md') }, p), false)
+  // A search that would descend into a suite root is refused too, from any base above it.
+  assert.equal(allowed('Grep', { path: join(root, 'plugin'), pattern: 'secret' }, p), false)
+  assert.equal(allowed('Glob', { path: join(root, 'plugin'), pattern: 'skills/**' }, p), false)
+  assert.equal(allowed('Glob', { path: join(root, 'plugin'), pattern: '**/*.md' }, p), false)
+  assert.equal(allowed('LS', { path: join(root, 'plugin') }, p), true) // one level of names, not a descent
+  assert.equal(allowed('Read', { file_path: join(root, 'plugin/skills/review/SKILL.md') }), true)
+})
+
+test('nothing may write under the workdir .git, though it may be read', () => {
+  mkdirSync(join(work, '.git'), { recursive: true })
+  assert.equal(allowed('Write', { file_path: join(work, '.git/hooks/post-checkout') }), false)
+  assert.equal(allowed('Edit', { file_path: '.git/config' }), false)
+  assert.equal(allowed('Read', { file_path: '.git/HEAD' }), true)
+})
+
+test('a pattern that climbs with .. after a wildcard, or a ~ path, is refused', () => {
+  assert.equal(allowed('Glob', { pattern: '*/../../etc/passwd' }), false)
+  assert.equal(allowed('Grep', { pattern: 'x', glob: '**/../../../**' }), false)
+  assert.equal(allowed('Read', { file_path: '~/.aws/credentials' }), false)
+  assert.equal(allowed('Glob', { pattern: 'src/**/*.ts' }), true)
+})
+
+test('writing through a dangling symlink is refused: it would create the target, wherever it is', () => {
+  symlinkSync(join(root, 'created-outside.txt'), join(work, 'dangling'))
+  assert.equal(allowed('Write', { file_path: join(work, 'dangling') }), false)
+  assert.equal(allowed('Write', { file_path: 'dangling/child.txt' }), false)
 })
 
 test('a non-string path is refused rather than guessed at', () => {

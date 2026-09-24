@@ -11,6 +11,7 @@ export type ExecJob = {
   trial: number
   attempt: number
   workdir: Workdir
+  suiteRoots: string[] // every configured suite root: the gate never lets a subject reach one
   out: { artifacts: string; transcript: string } // owned by the store; the executor writes here
   pricing: ConfigFile['pricing']
   emit: (e: RunEvent) => void
