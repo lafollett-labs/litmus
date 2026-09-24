@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { assertName, caseId, parseTrialKey, runId, trialKey } from '../../src/core/ids.ts'
+import { RUN_ID, assertName, caseId, parseTrialKey, runId, trialKey } from '../../src/core/ids.ts'
 import { ConfigError } from '../../src/core/errors.ts'
 
 test('a trial key round-trips through parse', () => {
@@ -32,5 +32,6 @@ test('a run id is a colon-free UTC stamp that sorts chronologically', () => {
   const b = runId(new Date('2026-09-24T15:04:06.000Z'), '0000')
   assert.equal(a, '2026-09-24T15-04-05Z-a1b2')
   assert.ok(a < b)
-  assert.match(runId(), /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z-[0-9a-f]{4}$/)
+  assert.match(runId(), RUN_ID)
+  assert.match(a, RUN_ID)
 })
