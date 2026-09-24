@@ -5,23 +5,31 @@ on:
     branches: [main]
   pull_request:
 
-# A second push to the same branch makes the first run pointless.
+# A second push to a PR branch makes the first run pointless. On main every
+# squash commit is its own verification, so those runs are never cancelled.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  # The main ruleset requires this job by its id. Renaming it, giving it a
+  # `name:`, adding a matrix, or adding a `paths:` filter to the triggers would
+  # leave every PR waiting forever on a status that never reports.
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
         with:
-          # 26 or newer: litmus runs straight from TypeScript by type stripping.
-          node-version: '26'
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          # .nvmrc is the one Node pin (26+): litmus runs straight from
+          # TypeScript by type stripping.
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm run check
