@@ -23,6 +23,9 @@ test('values JSON would mangle are refused rather than hashed into a collision',
   assert.throws(() => hashJson({ n: Number.NaN }), TypeError)
   assert.throws(() => hashJson(undefined), TypeError)
   assert.throws(() => hashJson([1, undefined]), TypeError)
+  assert.throws(() => hashJson(new Array(1)), /sparse array/)
+  assert.throws(() => hashJson({ [Symbol('s')]: 1 }), /symbol keys/)
+  assert.doesNotThrow(() => hashJson([null]))
 })
 
 test('a __proto__ key is hashed as a key, not swallowed', () => {

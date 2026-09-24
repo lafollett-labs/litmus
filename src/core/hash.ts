@@ -8,8 +8,8 @@ export function sha256(content: string | Uint8Array): string {
 // the same. Judges and extractors are identified by this hash; an unstable one
 // would make every comparison across runs refuse as "judge changed", and a
 // collision would let results from different judges be compared silently.
-// So anything JSON would quietly mangle (a Date, a Map, NaN, a __proto__ key)
-// is refused rather than hashed.
+// So anything JSON would quietly mangle (a Date, a Map, NaN, a __proto__ key,
+// a sparse array, a symbol key) is refused rather than hashed.
 export function stableStringify(value: unknown): string {
   return JSON.stringify(sortKeys(value))
 }
@@ -19,7 +19,11 @@ export function hashJson(value: unknown): string {
 }
 
 function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys)
+  if (Array.isArray(value)) {
+    // JSON writes a hole as null, so new Array(1) would collide with [null].
+    for (let i = 0; i < value.length; i++) if (!(i in value)) throw new TypeError('cannot hash a sparse array')
+    return value.map(sortKeys)
+  }
   if (typeof value === 'number' && !Number.isFinite(value)) throw new TypeError(`cannot hash the non-finite number ${value}`)
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint') {
     throw new TypeError(`cannot hash a ${typeof value}`)
@@ -27,6 +31,7 @@ function sortKeys(value: unknown): unknown {
   if (value !== null && typeof value === 'object') {
     const proto: unknown = Object.getPrototypeOf(value)
     if (proto !== Object.prototype && proto !== null) throw new TypeError('cannot hash an object that is not plain JSON')
+    if (Object.getOwnPropertySymbols(value).length > 0) throw new TypeError('cannot hash an object with symbol keys')
     // A null-prototype target, so a "__proto__" key is stored as a key instead
     // of replacing the prototype and vanishing from the output.
     const out: Record<string, unknown> = Object.create(null)
