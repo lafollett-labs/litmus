@@ -97,6 +97,13 @@ test('two trial keys that slug the same still get distinct workdirs', () => {
 test('a workdir never sits inside the results store or a suite root', () => {
   const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
   assert.throws(() => buildWorkdir(c, where, base, [base]), (e: Error) => e instanceof InfraError && /would sit inside/.test(e.message))
+  const link = join(tree({ '.keep': '' }), 'tmp-link')
+  symlinkSync(base, link)
+  assert.throws(() => buildWorkdir(c, where, link, [base]), /would sit inside/, 'through a symlinked TMPDIR')
+  if (existsSync(base.toUpperCase())) {
+    // a case-insensitive volume (default APFS): the other spelling is the same directory
+    assert.throws(() => buildWorkdir(c, where, base, [base.toUpperCase()]), /would sit inside/, 'spelt in another case')
+  }
 })
 
 test('a run id or attempt outside its grammar never reaches the recursive delete', () => {

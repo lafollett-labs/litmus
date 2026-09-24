@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, parse, resolve, sep } from 'node:path'
+import { basename, dirname, join, parse, resolve, sep } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
 import { sha256 } from '../core/hash.ts'
 import { RUN_ID } from '../core/ids.ts'
@@ -35,7 +35,13 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
   // a_b_c_x_1), and the rmSync below would then delete a live sibling. The
   // key's hash makes the name unique.
   const root = join(resolve(base), 'litmus', where.run, `${slug(where.key)}-${sha256(where.key).slice(0, 12)}-${where.attempt}`)
-  const under = avoid.map(a => resolve(a)).find(a => root === a || root.startsWith(a + sep))
+  // Compared by real, case-folded path: a TMPDIR reached through a symlink,
+  // or spelt in another case, still lands where it lands.
+  const realRoot = fold(join(realExisting(resolve(base)), 'litmus', where.run))
+  const under = avoid.find(a => {
+    const r = fold(realExisting(resolve(a)))
+    return realRoot === r || realRoot.startsWith(r + sep)
+  })
   if (under) throw new InfraError(`workdir ${root} would sit inside ${under}; point TMPDIR outside the results store and every suite root`, { retryable: false })
   rmSync(root, { recursive: true, force: true }) // fresh on every attempt, never reused
   const dir = join(root, 'work')
@@ -120,3 +126,15 @@ function instructionFileAbove(dir: string): string | undefined {
 }
 
 const slug = (key: string) => key.replace(/[^a-z0-9._-]+/gi, '_')
+const fold = (path: string) => path.normalize('NFC').toUpperCase().toLowerCase()
+
+// The real path of the deepest existing ancestor, with the rest appended.
+function realExisting(path: string): string {
+  let head = path
+  const tail: string[] = []
+  while (!existsSync(head) && dirname(head) !== head) {
+    tail.unshift(basename(head))
+    head = dirname(head)
+  }
+  return join(realpathSync.native(head), ...tail)
+}
