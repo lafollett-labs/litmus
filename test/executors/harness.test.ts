@@ -1,6 +1,6 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
@@ -18,6 +18,9 @@ before(() => {
 after(() => {
   process.env = saved
 })
+
+// A plugin in its own tree, outside every suite, as a real plugin repo is.
+const pluginTree = (files: Record<string, string>) => realpathSync(tree({ '.keep': '', ...files }))
 
 const HARNESS = (extra = '') =>
   `name: c\nexecutor:\n  kind: harness\n  harness: claude-code\n  prompt: /review\n  max_turns: 7\n${extra}graders: [{ kind: regex, pattern: x }]\ntimeout_s: 5\n`
@@ -172,14 +175,14 @@ test('without an API key, or on a provider the harness cannot use, nothing runs'
 })
 
 test('a plugin that declares hooks is refused unless the case sets allow_hooks', async () => {
-  const files = { 'plugin/hooks/hooks.json': '{}', 'plugin/.claude-plugin/plugin.json': '{"name":"p"}' }
+  const plugin = pluginTree({ 'hooks/hooks.json': '{}', '.claude-plugin/plugin.json': '{"name":"p"}' })
   const { query, calls } = scripted([result()])
-  const refused = await runHarness(job(HARNESS('  plugins: [plugin]\n'), files), query)
+  const refused = await runHarness(job(HARNESS(`  plugins: [${plugin}]\n`)), query)
   assert.match(refused.reason ?? '', /has hooks\/hooks\.json; set allow_hooks: true/)
   assert.equal(calls.length, 0)
-  const allowed = await runHarness(job(HARNESS('  plugins: [plugin]\n  allow_hooks: true\n'), files), query)
+  const allowed = await runHarness(job(HARNESS(`  plugins: [${plugin}]\n  allow_hooks: true\n`)), query)
   assert.equal(allowed.exit, 'ok')
-  assert.equal(calls[0]!.plugins![0]!.path.endsWith('/plugin'), true)
+  assert.equal(calls[0]!.plugins![0]!.path, plugin)
 })
 
 test('under project settings, a fixture\'s settings may set only $schema', async () => {
@@ -276,14 +279,14 @@ test('under project settings the subject may not write .claude, .mcp.json or the
 })
 
 test('a plugin manifest key outside the allowlist, or hooks in component frontmatter, needs allow_hooks', async () => {
-  const run = (files: Record<string, string>, extra = '') => runHarness(job(HARNESS(`  plugins: [plugin]\n${extra}`), files), scripted([result()]).query)
-  assert.match((await run({ 'plugin/.claude-plugin/plugin.json': '{"name":"p","lspServers":{}}' })).reason ?? '', /plugin\.json declares lspServers/)
-  assert.match((await run({ 'plugin/.lsp.json': '{}' })).reason ?? '', /has \.lsp\.json/)
-  assert.match((await run({ 'plugin/skills/review/SKILL.md': '---\nname: review\nhooks:\n  PreToolUse: []\n---\nbody' })).reason ?? '', /skills\/review\/SKILL\.md declares hooks in its frontmatter/)
-  assert.equal((await run({ 'plugin/.claude-plugin/plugin.json': '{"name":"p","version":"1","author":{"name":"a"},"keywords":[]}', 'plugin/skills/r/SKILL.md': '---\nname: r\n---\nx' })).exit, 'ok')
-  assert.equal((await run({ 'plugin/.lsp.json': '{}' }, '  allow_hooks: true\n')).exit, 'ok')
+  const run = (files: Record<string, string>, extra = '') => runHarness(job(HARNESS(`  plugins: [${pluginTree(files)}]\n${extra}`)), scripted([result()]).query)
+  assert.match((await run({ '.claude-plugin/plugin.json': '{"name":"p","lspServers":{}}' })).reason ?? '', /plugin\.json declares lspServers/)
+  assert.match((await run({ '.lsp.json': '{}' })).reason ?? '', /has \.lsp\.json/)
+  assert.match((await run({ 'skills/review/SKILL.md': '---\nname: review\nhooks:\n  PreToolUse: []\n---\nbody' })).reason ?? '', /skills\/review\/SKILL\.md declares hooks in its frontmatter/)
+  assert.equal((await run({ '.claude-plugin/plugin.json': '{"name":"p","version":"1","author":{"name":"a"},"keywords":[]}', 'skills/r/SKILL.md': '---\nname: r\n---\nx' })).exit, 'ok')
+  assert.equal((await run({ '.lsp.json': '{}' }, '  allow_hooks: true\n')).exit, 'ok')
   const fixture = await runHarness(job(HARNESS('  setting_sources: [project]\n'), { 'fixture/.claude/agents/a.md': '---\nmcpServers: {}\n---\n' }), scripted([result()]).query)
-  assert.match(fixture.reason ?? '', /the fixture: agents\/a\.md declares mcpServers/)
+  assert.match(fixture.reason ?? '', /the fixture: \.claude\/agents\/a\.md declares mcpServers/)
 })
 
 test('a stream that ends quietly after the clock stops is classified by the clock', async () => {
@@ -306,4 +309,40 @@ test('an API-error turn with no status retries, unless its text says auth or bil
   assert.equal((await noStatus('API Error: Connection error.')).retryable, true)
   assert.equal((await noStatus('Invalid API key · Please run /login')).retryable, false)
   assert.equal((await noStatus('Credit balance is too low')).retryable, false)
+})
+
+test('the process scan sees every way a plugin can start a host process', async () => {
+  const refusedFor = async (files: Record<string, string>, link?: (root: string) => void) => {
+    const plugin = pluginTree(files)
+    link?.(plugin)
+    return (await runHarness(job(HARNESS(`  plugins: [${plugin}]\n`)), scripted([result()]).query)).reason ?? ''
+  }
+  assert.match(await refusedFor({ 'monitors/monitors.json': '{}' }), /has monitors\/monitors\.json/)
+  assert.match(await refusedFor({ '.claude-plugin/plugin.json': '{"name":"p","agents":["./extra/a.md"]}', 'extra/a.md': '---\nhooks: {}\n---\n' }), /extra\/a\.md declares hooks/)
+  assert.match(await refusedFor({ 'agents/a.md': '---\n"hooks": {}\n---\n' }), /declares hooks/)
+  assert.match(await refusedFor({ 'agents/a.md': '---\n{name: a, mcpServers: {x: {}}}\n---\n' }), /declares mcpServers/)
+  assert.match(await refusedFor({ 'skills/r/SKILL.MD': '---\nhooks: {}\n---\n' }), /SKILL\.MD declares hooks/)
+  assert.match(await refusedFor({ 'agents/a.md': '﻿---\nhooks: {}\n---\n' }), /declares hooks/)
+  assert.match(await refusedFor({ 'agents/a.md': '---\nname: [unclosed\n---\n' }), /not valid YAML/)
+  const outside = realpathSync(tree({ 'r/SKILL.md': '---\nhooks: {}\n---\n' })) // never read by the scan; the link itself is refused
+  assert.match(await refusedFor({ 'README.md': '# p' }, root => symlinkSync(outside, join(root, 'skills'))), /skills is a symlink/)
+})
+
+test('under project settings a fixture .claude directory at any depth is scanned and write-protected', async () => {
+  const project = HARNESS('  setting_sources: [project]\n')
+  const nested = await runHarness(job(project, { 'fixture/src/.claude/skills/x/SKILL.md': '---\nhooks: {}\n---\n' }), scripted([result()]).query)
+  assert.match(nested.reason ?? '', /the fixture: src\/\.claude\/skills\/x\/SKILL\.md declares hooks/)
+  const decisions: string[] = []
+  const { query } = scripted([result()], async o => {
+    for (const file_path of ['src/.claude/skills/evil/SKILL.md', 'src/deep/.Claude/agents/a.md', 'src/claude.md']) decisions.push(await ask(o, 'Write', { file_path }))
+  })
+  await runHarness(job(project), query)
+  assert.deepEqual(decisions, ['deny', 'deny', 'allow'])
+})
+
+test('a plugin inside a suite is refused up front, not loaded blind', async () => {
+  const j = job(HARNESS('  plugins: [inner]\n'), { 'inner/skills/r/SKILL.md': '---\nname: r\n---\nx' })
+  const r = await runHarness(j, scripted([result()]).query)
+  assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
+  assert.match(r.reason ?? '', /lies inside .*where the gate denies every read; move it outside the suite/)
 })

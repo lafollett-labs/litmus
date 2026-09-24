@@ -1,12 +1,13 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
+import { parse } from 'yaml'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
 import { scrubbedEnv } from '../sandbox/env.ts'
-import { snapshot, walk, written } from '../sandbox/snapshot.ts'
+import { snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
-import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
+import { decide, fold, inside, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
 import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
 import type { ExecJob } from './types.ts'
@@ -58,14 +59,26 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   // The case's own directory, its suite and its root are denied whatever the
   // caller passes: the ground truth is always somewhere in there.
   const suiteDir = dirname(dirname(job.case.dir))
+  const denyRoots = real([...job.suiteRoots, job.case.dir, suiteDir, dirname(suiteDir)])
+  const trapped = (r: string) => denyRoots.find(d => inside(r, d))
+  // A plugin inside a suite would load but could not read a single one of its
+  // own files, and the skill failing would read as the model's fault.
+  for (const plugin of real(plugins)) {
+    const under = trapped(plugin)
+    if (under) return refuse(`plugin ${plugin} lies inside ${under}, where the gate denies every read; move it outside the suite`)
+  }
   const policy: GatePolicy = {
     workdir: realpathSync.native(job.workdir.dir),
-    readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]),
-    denyRoots: real([...job.suiteRoots, job.case.dir, suiteDir, dirname(suiteDir)]),
-    // Written mid-session, these would be read back as the session's own
-    // config (project settings, MCP, skills and agents) or overwrite an
-    // artifact litmus writes itself.
-    protect: ['final_message.txt', ...(project ? ['.claude', '.mcp.json'] : [])],
+    // A subject root inside a deny root is only a version for the harness, so
+    // it simply is not readable.
+    readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]).filter(r => !trapped(r)),
+    denyRoots,
+    // Written mid-session, these would overwrite an artifact litmus writes
+    // itself, or be read back as the session's own MCP config.
+    protect: ['final_message.txt', ...(project ? ['.mcp.json'] : [])],
+    // Under project settings, a .claude directory at any depth is config the
+    // session would discover and load.
+    protectSegments: project ? ['.claude'] : [],
     allowShell: exec.allow_shell,
     allowNetwork: exec.allow_network,
     allowHooks: exec.allow_hooks,
@@ -277,13 +290,15 @@ function credentials(job: ExecJob): Record<string, string> | string {
 }
 
 // A plugin may carry prompts: skills, agents and commands. Anything that makes
-// Claude Code start a host process (hooks, MCP or LSP servers) needs
-// allow_hooks. The manifest is judged by an allowlist, so a component type
-// Claude Code adds later is refused until it is classified here. Returns why a
-// plugin is refused, if it is.
+// Claude Code start a host process (hooks, MCP, LSP or monitor servers) needs
+// allow_hooks. The manifest is an allowlist, so a component type Claude Code
+// adds later is refused until it is classified here. Every markdown file in the
+// tree is checked, wherever the manifest points its components, and a symlink
+// anywhere is refused because it could point a component at a file this check
+// never reads. Returns why a plugin is refused, if it is.
 const SAFE_MANIFEST_KEYS = new Set(['$schema', 'name', 'version', 'description', 'author', 'homepage', 'repository', 'license', 'keywords', 'commands', 'agents', 'skills'])
-const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json']
-const COMPONENT_DIRS = ['agents', 'skills', 'commands']
+const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json', 'monitors/monitors.json']
+const PROCESS_KEYS = new Set(['hooks', 'mcpservers', 'lspservers', 'monitors', 'statusline'])
 
 export function pluginRunsProcesses(dir: string): string | undefined {
   for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return `plugin ${dir} has ${f}`
@@ -299,28 +314,52 @@ export function pluginRunsProcesses(dir: string): string | undefined {
     const extra = Object.keys(m).filter(k => !SAFE_MANIFEST_KEYS.has(k))
     if (extra.length) return `plugin ${dir}'s plugin.json declares ${extra.join(', ')}`
   }
-  return componentsRunProcesses(dir, `plugin ${dir}`)
+  return treeRunsProcesses(dir, `plugin ${dir}`, () => true)
 }
 
+// Under project settings Claude Code discovers .claude/skills, agents and
+// commands at every depth of the fixture, not only at its root.
 function fixtureRunsProcesses(dir: string): string | undefined {
   if (existsSync(join(dir, '.mcp.json'))) return 'the fixture has .mcp.json'
-  return componentsRunProcesses(join(dir, '.claude'), 'the fixture')
+  return treeRunsProcesses(dir, 'the fixture', rel => rel.split('/').some(seg => fold(seg) === '.claude'))
 }
 
-// A skill, agent or command can declare its own hooks or servers in its
-// frontmatter, and those run as host processes too.
-function componentsRunProcesses(root: string, who: string): string | undefined {
-  for (const d of COMPONENT_DIRS) {
-    const base = join(root, d)
-    if (!existsSync(base)) continue
-    for (const file of walk(base, () => false)) {
-      if (!file.endsWith('.md')) continue
-      const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(file, 'utf8'))?.[1] ?? ''
-      const key = /^\s*(hooks|mcpServers|lspServers)\s*:/m.exec(front)?.[1]
-      if (key) return `${who}: ${relative(root, file)} declares ${key} in its frontmatter`
+function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean): string | undefined {
+  const visit = (d: string): string | undefined => {
+    for (const name of readdirSync(d).sort()) {
+      if (name === '.git') continue
+      const path = join(d, name)
+      const rel = relative(root, path).split(sep).join('/')
+      const st = lstatSync(path)
+      if (st.isSymbolicLink()) return `${who}: ${rel} is a symlink, which could point a component at a file this check never reads`
+      if (st.isDirectory()) {
+        const found = visit(path)
+        if (found) return found
+      } else if (st.isFile() && /\.md$/i.test(name) && inScope(rel)) {
+        const why = frontmatterRunsProcesses(readFileSync(path, 'utf8'))
+        if (why) return `${who}: ${rel} ${why}`
+      }
     }
+    return undefined
   }
-  return undefined
+  return visit(root)
+}
+
+// Parsed as YAML, the way the loader reads it, so a quoted key or a flow
+// mapping is seen. Frontmatter that does not parse is refused rather than
+// guessed at.
+function frontmatterRunsProcesses(text: string): string | undefined {
+  const m = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
+  if (!m) return undefined
+  let front: unknown
+  try {
+    front = parse(m[1]!)
+  } catch {
+    return 'has frontmatter that is not valid YAML'
+  }
+  if (front === null || typeof front !== 'object' || Array.isArray(front)) return undefined
+  const key = Object.keys(front).find(k => PROCESS_KEYS.has(fold(k)))
+  return key ? `declares ${key} in its frontmatter` : undefined
 }
 
 // Under setting_sources [project], a fixture's settings may set only $schema.
