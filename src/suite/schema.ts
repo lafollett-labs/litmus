@@ -29,13 +29,10 @@ export const ConfigDef = z.discriminatedUnion('provider', [
 ])
 export type ConfigDef = z.infer<typeof ConfigDef>
 
-export const JudgeDef = z.strictObject({
-  provider: z.enum(['anthropic', 'bedrock', 'openrouter', 'fake']),
-  model: z.string().min(1),
-  effort: effort.optional(),
-  region: z.string().min(1).optional(),
-  params: z.record(z.string(), z.unknown()).optional(),
-})
+// Judges and extractors are models too, and take exactly what a config takes:
+// a key that is wrong for the provider is refused, not silently ignored and
+// still folded into the judge's hash.
+export const JudgeDef = ConfigDef
 export type JudgeDef = z.infer<typeof JudgeDef>
 
 export const ConfigFile = z.strictObject({
@@ -123,26 +120,50 @@ export type Executor = z.infer<typeof Executor>
 const bounds = { min: z.int().min(0).optional(), max: z.int().min(0).optional() }
 const target = z.string().min(1).default('transcript') // an artifact name, or "transcript"
 
+// min defaults to 1 (never pass on zero), so a lone `max: 0` could never pass.
+// Refused here, at load, instead of failing every trial after the money is spent.
+const boundsOrdered = (b: { min?: number | undefined; max?: number | undefined }) => b.max === undefined || (b.min ?? 1) <= b.max
+const boundsMessage = 'max is below min (min defaults to 1; set min: 0 to allow zero)'
+
+function compiles(pattern: string, flags: string | undefined): boolean {
+  try {
+    new RegExp(pattern, flags)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const Grader = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('regex'), target, pattern: z.string().min(1), flags: z.string().optional(), ...bounds }),
+  z
+    .strictObject({ kind: z.literal('regex'), target, pattern: z.string().min(1), flags: z.string().optional(), ...bounds })
+    .refine(boundsOrdered, boundsMessage)
+    .refine(g => compiles(g.pattern, g.flags), 'pattern or flags are not a valid regular expression'),
   z.strictObject({ kind: z.literal('json-schema'), artifact: z.string().min(1), schema: z.string().min(1) }),
   z.strictObject({ kind: z.literal('file-exists'), path: z.string().min(1), exists: z.boolean().default(true) }),
-  z.strictObject({ kind: z.literal('tool-used'), tool: z.string().min(1), ...bounds }),
+  z.strictObject({ kind: z.literal('tool-used'), tool: z.string().min(1), ...bounds }).refine(boundsOrdered, boundsMessage),
   z.strictObject({ kind: z.literal('command'), run: z.string().min(1), timeout_s: positiveInt.default(120) }),
-  z.strictObject({
-    kind: z.literal('review-match'),
-    artifact: z.string().min(1).default('findings.json'),
-    window: z.int().min(0).default(5),
-    pass: z
-      .strictObject({
-        min_recall: z.number().min(0).max(1).optional(),
-        max_false_positives: z.int().min(0).optional(),
-        max_decoy_hits: z.int().min(0).optional(),
-        max_nits: z.int().min(0).optional(),
-      })
-      .default({}),
-    confirm: name.optional(),
-  }),
+  z
+    .strictObject({
+      kind: z.literal('review-match'),
+      artifact: z.string().min(1).default('findings.json'),
+      window: z.int().min(0).default(5),
+      pass: z
+        .strictObject({
+          min_recall: z.number().min(0).max(1).optional(),
+          max_false_positives: z.int().min(0).optional(),
+          max_decoy_hits: z.int().min(0).optional(),
+          max_duplicates: z.int().min(0).optional(),
+          max_nits: z.int().min(0).optional(),
+          max_findings: z.int().min(0).optional(),
+          min_claims_correct: z.number().min(0).max(1).optional(),
+        })
+        .default({}),
+      confirm: name.optional(),
+    })
+    // Without a judge there is no claims_correct, and a bound on a metric that
+    // is never computed would quietly never apply.
+    .refine(g => g.pass.min_claims_correct === undefined || g.confirm !== undefined, 'min_claims_correct needs confirm: <judge>'),
   z.strictObject({ kind: z.literal('judge'), judge: name, question: z.string().min(1), target }),
 ])
 export type Grader = z.infer<typeof Grader>
@@ -209,8 +230,11 @@ export type Decoy = z.infer<typeof Decoy>
 
 // ── litmus:findings ──────────────────────────────────────────────────────────
 
+// Model output, so extra keys (a "confidence", a top-level "summary") are
+// allowed and ignored: they cost the review nothing. Missing or mistyped
+// required fields still fail.
 export const Finding = z
-  .strictObject({
+  .object({
     file: z.string().min(1),
     line: positiveInt,
     end_line: positiveInt.optional(),
@@ -222,6 +246,6 @@ export const Finding = z
   })
   .refine(f => f.end_line === undefined || f.end_line >= f.line, 'end_line must be >= line')
 
-export const Findings = z.strictObject({ findings: z.array(Finding) })
+export const Findings = z.object({ findings: z.array(Finding) })
 export type Finding = z.infer<typeof Finding>
 export type Findings = z.infer<typeof Findings>

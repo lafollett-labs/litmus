@@ -39,6 +39,23 @@ test('compare gets its documented defaults, and out-of-range values are refused'
   assert.equal(ConfigFile.safeParse({ ...base, redact: ['not a var'] }).success, false)
 })
 
+test('a judge is held to the same per-provider shape as a config', () => {
+  const judge = (j: Record<string, unknown>) => ConfigFile.safeParse({ suites: ['./s'], configs: { f: { provider: 'fake' } }, judges: { j } }).success
+  assert.equal(judge({ provider: 'anthropic', model: 'claude-haiku-4-5' }), true)
+  assert.equal(judge({ provider: 'bedrock', model: 'm', region: 'us-east-1' }), true)
+  assert.equal(judge({ provider: 'anthropic', model: 'm', region: 'us-east-1' }), false)
+  assert.equal(judge({ provider: 'fake', effort: 'max' }), false)
+  assert.equal(judge({ provider: 'anthropic' }), false)
+})
+
+test('findings from a model may carry extra keys, but not miss or mistype required ones', () => {
+  const f = { file: 'a.go', line: 3, severity: 'high', title: 't', explanation: 'e' }
+  assert.equal(Findings.safeParse({ summary: 'two issues', findings: [{ ...f, confidence: 0.9 }] }).success, true)
+  assert.equal(Findings.safeParse({ findings: [{ ...f, severity: 'urgent' }] }).success, false)
+  const { title: _, ...untitled } = f
+  assert.equal(Findings.safeParse({ findings: [untitled] }).success, false)
+})
+
 test('effort accepts xhigh', () => {
   const c = ConfigFile.parse({ suites: ['./s'], configs: { a: { provider: 'anthropic', model: 'm', effort: 'xhigh' } } })
   assert.equal(c.configs.a?.provider === 'anthropic' && c.configs.a.effort, 'xhigh')
@@ -96,6 +113,21 @@ test('extract defaults to the final message into findings.json, and needs a name
   assert.deepEqual(c.extract, { from: 'final_message', to: 'findings.json', with: 'default' })
   assert.equal(CaseFile.safeParse({ ...modelCase, extract: {} }).success, false)
   assert.equal(CaseFile.safeParse({ ...modelCase, extract: { with: 'default', into: 'x.json' } }).success, false)
+})
+
+test('a count bound that can never pass, or a regex that does not compile, is refused at load', () => {
+  const ok = (g: Record<string, unknown>) => CaseFile.safeParse({ ...modelCase, graders: [g] }).success
+  assert.equal(ok({ kind: 'tool-used', tool: 'Agent', max: 0 }), false) // min defaults to 1
+  assert.equal(ok({ kind: 'tool-used', tool: 'Agent', min: 0, max: 0 }), true)
+  assert.equal(ok({ kind: 'regex', pattern: 'x', min: 3, max: 2 }), false)
+  assert.equal(ok({ kind: 'regex', pattern: '(' }), false)
+  assert.equal(ok({ kind: 'regex', pattern: 'x', flags: 'q' }), false)
+})
+
+test('review-match accepts every documented pass bound, and min_claims_correct only with a confirming judge', () => {
+  const pass = { min_recall: 1, max_false_positives: 1, max_decoy_hits: 0, max_duplicates: 0, max_nits: 5, max_findings: 20, min_claims_correct: 0.8 }
+  assert.equal(CaseFile.safeParse({ ...modelCase, graders: [{ kind: 'review-match', pass, confirm: 'default' }] }).success, true)
+  assert.equal(CaseFile.safeParse({ ...modelCase, graders: [{ kind: 'review-match', pass }] }).success, false)
 })
 
 test('review-match gets its window and artifact defaults', () => {
