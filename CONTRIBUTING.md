@@ -36,7 +36,7 @@ one costs cents.
 Every change lands through a pull request, and `main` stays releasable.
 
 ```
-branch → small commits → pull request → review → green CI → rebase-merge
+branch → small commits → pull request → review → green CI → squash-merge
 ```
 
 - Each commit is one logical change, and `npm run check && npm test` passes at
@@ -58,7 +58,8 @@ for the wrong reason.
 A seeded-bug case needs:
 
 - a proof command that fails while the bug is present and passes once its fix
-  is applied, which `litmus validate` checks
+  is applied, which `litmus validate` checks. The proof's test files go in
+  `proof/`, never in `fixture/`, so the reviewer can't read the answer
 - the fix, as a patch
 - a severity and a category
 - fixture code you have the right to license under MIT

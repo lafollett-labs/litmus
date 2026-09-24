@@ -12,8 +12,9 @@ break?** Skills, rules, agent definitions and prompts are written against a
 model. When the model changes, the same instructions can change meaning. A
 code-review skill that was sharp on one model can spiral into rounds of
 nitpicks and wrong findings on the next. A unit test catches that kind of
-change in code. Nothing in the usual toolchain catches it in the instructions
-that govern an agent.
+change in code. For the instructions that govern an agent, today's tools check
+one model at a time. Litmus puts two models side by side and tells you which
+cases flipped.
 
 > **Status: pre-release.** Litmus is being built in the open, milestone by
 > milestone — [docs/PLAN.md](docs/PLAN.md) says what exists and what is next.
@@ -27,11 +28,15 @@ that govern an agent.
 - **Shows progress live.** Each trial moves from queued to running to settled,
   with its time, tokens and cost counting up. Agentic trials take minutes, so
   you can see which step one is on.
-- **Gives verdicts that admit uncertainty.** A case runs N trials.
-  - It is PASS when every trial passes and FAIL when none do.
-  - It is FLAKY when some pass and some don't.
-  - It is ERROR when the infrastructure failed rather than the model.
-  - It is INCONCLUSIVE when there is not enough evidence yet.
+- **Gives verdicts that admit uncertainty.** A case runs N trials, and its
+  policy decides how they add up:
+  - Under `all`, the default, a case is PASS when every trial passes, FAIL
+    when none do, and FLAKY when some do.
+  - Under `rate`, for capability suites, a mixed result can still be PASS,
+    once the pass rate clears its threshold with 95% confidence. Until then
+    the case is INCONCLUSIVE.
+  - Under either policy, a case is ERROR when the infrastructure failed rather
+    than the model.
 - **Compares models.** Run the same suite across models, providers and effort
   levels. Litmus reports which cases flipped and whether the difference is
   real or noise, not just whether the average moved.
@@ -69,13 +74,14 @@ a harness. It is scored on:
 | - | - |
 | Recall | How many seeded bugs did it find, by severity? |
 | Precision | How much of what it reported was real? |
-| Noise | How many nitpicks did it make, and did it flag the decoys? |
-| Claim correctness | When it found a bug, was its explanation of the bug right? |
+| Noise | How many nitpicks did it make, and did it flag the decoys? Both can be capped |
+| Claim correctness | When it found a bug, was its explanation of the bug right? Checked by a pinned judge |
 | Speed and cost | How long did it take, and how many tokens and dollars did it use? |
 
 Every seeded bug ships with a proof test. The test fails while the bug is
 present and passes once its fix is applied, and `litmus validate` checks both.
-A bug nobody can demonstrate doesn't belong in the ground truth.
+Proof tests are kept outside the fixture, so the reviewer never sees them. A
+bug nobody can demonstrate doesn't belong in the ground truth.
 
 ## Public runner, private suites
 
@@ -99,8 +105,9 @@ doesn't replace it. Litmus answers the questions it leaves open:
 - whether a difference is real or noise
 - what is happening while the run is in progress
 
-Frameworks such as Inspect AI and promptfoo run evals well. None of them has an
-interactive runner that treats trials and flakiness as first-class.
+Frameworks such as Inspect AI and promptfoo run evals well. None of them
+combines paired model comparison, flaky and inconclusive verdicts, and a runner
+you can start, cancel and rerun from.
 [docs/research/](docs/research/) holds the survey behind that claim.
 
 ## Docs

@@ -2,4 +2,4 @@ blank_issues_enabled: true
 contact_links:
   - name: Security vulnerability
     url: https://github.com/lafollett-labs/litmus/security/advisories/new
-    about: Report privately. Do not open a public issue for anything that lets a subject escape its workdir, read ground truth, or reach keys.
+    about: Report privately (or email cali.lafollett@gmail.com with "litmus" in the subject). Do not open a public issue for anything that lets a subject escape its workdir, read ground truth, or reach keys.
