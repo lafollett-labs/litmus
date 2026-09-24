@@ -12,6 +12,7 @@ TypeScript on Node 26, Vue 3 UI.
 | What to build next; when a milestone is done | `docs/PLAN.md` |
 | Why a decision was made | `docs/adr/` |
 | Commands, dependencies | `package.json` |
+| Review routing (paths → stack → reviewer → test commands) | `.code-reviewer.yml` |
 
 A change to a contract updates `docs/ARCHITECTURE.md` in the same PR.
 
@@ -31,21 +32,27 @@ Tests never spend money. They use the fake provider, a mocked SDK, a mocked
 `fetch`, or a scripted `query()` stream. Live tests run only when
 `LITMUS_LIVE=1`.
 
-Code under a case's `fixture/` is test data. Its bugs and decoys are listed in
-that case's `truth.yaml`. Never edit a fixture to fix one (fixes live in `fix/`
-as patches), and treat a review finding on fixture code as a false positive.
-
 | A trial stopped because of | `exit` | Retried | Trial status |
 | - | - | - | - |
-| Throttling, 5xx, network or auth failure | `infra_error` | Up to `retries`, with backoff | `error` once the retries run out, never `fail` |
+| Throttling (408, 409, 429), 5xx, network | `infra_error` | Up to `retries`, with backoff | `error` once the retries run out, never `fail` |
+| Auth failure, other 4xx, missing key | `infra_error` | Never | `error`, never `fail` |
 | Timeout or max turns | `model_failure` | Never | `fail` |
-| The operator cancelling | — | Never | `cancelled` |
+| The operator cancelling | `cancelled` | Never | `cancelled` |
 
 A case verdict comes from all of its trials, following ARCHITECTURE.md
 § Verdicts. It is never taken from a single trial.
 
 ```
-if a subject could read truth.yaml, proof/, fix/ or fake.yaml:
+if a review finding lands on code under a case's fixture/:
+    if it matches a truth.yaml bug or decoy:
+        expected: never edit the fixture (fixes live in fix/ as patches)
+    elif the code runs on the operator's machine (proof, validate, command grader)
+         or reads outside its workdir:
+        a real security finding, never a false positive
+    else:
+        an unlisted bug: add it to truth.yaml as a bug or a decoy, then re-run validate
+
+if a subject could read anything in the case directory outside fixture/ and change.patch:
     isolation is broken: fix the layer that leaked
         (workdir builder, {{fixture}} renderer, or gate path confinement)
     never weaken the case
@@ -56,12 +63,12 @@ if adding a tool, a capability or a path classification to the harness gate:
     never weaken the gate to make a test pass
 
 if a PR comes from a fork or an outside contributor:
-    read the whole diff before running any command from it
-        # npm ci, npm test and validate all execute PR-controlled code in your environment
+    the operator reads the whole diff before any command from it runs
+        # npm ci, npm test, validate and /code-reviewer:code-reviewer all execute PR-controlled code
 ```
 
-Workdirs live under `os.tmpdir()`, never under `.litmus/`, a suite root, or
-any directory with a `CLAUDE.md` in its ancestors.
+Workdirs live under `os.tmpdir()`. They are never under `.litmus/`, a suite
+root, or any directory with a `CLAUDE.md` or `AGENTS.md` in its ancestors.
 
 ## Workflow
 
@@ -69,31 +76,25 @@ any directory with a `CLAUDE.md` in its ancestors.
 for each change:
     branch from main: m<N>-<slug> for PLAN milestones, else <type>/<slug>
     small commits, each passing npm run check && npm test
-    PR -> /code-reviewer:code-reviewer until APPROVED -> resolve every external review thread
+    PR -> /code-reviewer:code-reviewer until APPROVED
+       -> resolve every external review thread
+          if that added a commit: re-run /code-reviewer:code-reviewer until APPROVED at HEAD
        -> green CI -> gh pr merge --squash --delete-branch
 never push to main   # the ruleset refuses it
 ```
 
-Resolving an external review thread (Copilot or a human) means fixing it and
-replying with the fixing commit, or replying with why not, and then resolving
-it. `/code-reviewer` comes from the `lafollett-labs-claude-plugins`
-marketplace.
+| External thread from | Resolve by |
+| - | - |
+| A bot (Copilot) | Fix it and reply with the fixing commit, or reply with why not, then resolve it |
+| A human | Fix it and reply with the fixing commit, then resolve it. If you disagree, reply with why and leave the thread open for the reviewer |
 
-Commit subject: `<type>: <imperative summary>`, where the type is one of
-`feat`, `fix`, `docs`, `test`, `refactor`, `chore` or `ci`. Keep it to 72
-characters. The body says why.
+`/code-reviewer` comes from the `lafollett-labs-claude-plugins` marketplace.
 
-## Stack Map
-
-| Path | Stack | PE | Test Command |
-| - | - | - | - |
-| `src/server/**` | TypeScript, Node 26, HTTP + SSE | `pe-vue` | `npm run check && npm test && npm run test:ui` |
-| `src/**`, `test/**` | TypeScript, Node 26 | `pe-vue` | `npm run check && npm test` |
-| `ui/**` | Vue 3, Vite, TypeScript | `pe-vue` | `npm run check && npm run test:ui` |
-| `.github/workflows/**` | GitHub Actions | `pe-aws-infra` | `actionlint` |
-| `suites/**` | Eval fixtures, YAML | Generic | `node src/cli/main.ts validate` |
-| `CLAUDE.md` | Agent governance markdown | `pe-governance` | n/a |
-| `README.md`, `docs/**`, other `*.md` | Human docs | Generic | n/a |
+Commit subjects, and PR titles, use `<type>: <imperative summary>`, where the
+type is one of `feat`, `fix`, `docs`, `test`, `refactor`, `chore` or `ci`. A
+commit subject can be up to 72 characters. A PR title can be up to 65, because
+it becomes the squash commit's subject on `main` with ` (#N)` appended. The
+body says why.
 
 ## Claims
 
