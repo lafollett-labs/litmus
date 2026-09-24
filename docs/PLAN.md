@@ -32,7 +32,7 @@ stay on the branch, and their messages go into the squash commit's body.
   - `tsconfig.json` with Riff's strict flags.
   - `src/core`: ids, content hashing and error classes (`InfraError` with
     `retryable`, `ModelFailure`, `ConfigError`).
-  - CI running `check` and `test` on every push and pull request.
+  - CI running `check` and `test` on every pull request and every push to `main`.
   - Done when: `npm run check && npm test` passes locally and in CI on the PR.
     After merge, the `main` ruleset requires the `check` job.
 
