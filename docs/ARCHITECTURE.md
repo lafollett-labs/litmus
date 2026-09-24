@@ -60,7 +60,12 @@ litmus.config.yaml   # this repository's own config: the example suites and the 
 ## Configuration: `litmus.config.yaml`
 
 This file lives where you run litmus. Suite roots are searched in the order
-listed, and a suite name defined under two roots is an error.
+listed, and a suite name defined under two roots is an error. So is a root
+that holds no suite, a directory under a root with `suite.yml` or `cases/` but
+no `suite.yaml`, and a broken symlink under a root or `cases/`. Entries whose
+names start with `.` or `_` are never suites or cases and are skipped. Judge
+names in `extract.with`, `judge` graders and `review-match.confirm` must be
+defined under `judges`.
 
 ```yaml
 suites:
@@ -228,10 +233,16 @@ Defaults for the rest of the case:
 
 Every directory under a suite's `cases/` is a case and must hold a `case.yaml`.
 The exceptions are directories whose names start with `_` or `.`, which can
-hold shared files. A `subject` is a file (a prompt, a skill's `SKILL.md`) or,
-for a harness case, a directory (a plugin), which is hashed by its tree. A
-`prompt_file` or `subject` may not point at any case's `truth.yaml`,
-`fake.yaml`, `fix/` or `proof/`.
+hold shared files. `fixture/`, `change.patch`, `fake.yaml` and `truth.yaml`
+are optional, but one that is present as the wrong type, or as a broken link,
+is an error rather than an absence.
+
+A `subject` is a file (a prompt, a skill's `SKILL.md`) or, for a harness case,
+a directory (a plugin). A directory is hashed by its tree: each regular file's
+relative path, executable bit and content. `.git` and `.DS_Store` are left out,
+and a symlink or special file is refused. A `prompt_file` or `subject` may not
+point at any case's `case.yaml`, `truth.yaml`, `fake.yaml`, `fix/` or `proof/`,
+by its written path or its real one.
 
 `truth.yaml`:
 
