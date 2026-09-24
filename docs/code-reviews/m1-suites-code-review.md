@@ -1,6 +1,6 @@
 # Code Review: m1-suites
 
-**Verdict:** 🔁 CHANGES REQUESTED (round 2, locked to `36cee9e`)
+**Verdict:** ✅ APPROVED (round 3, locked to `e44f37f`)
 
 | | |
 | - | - |
@@ -100,9 +100,41 @@ The new findings are all in the fix code itself:
 
 Every fix commit passes check and test on its own (74, 79, 79). At the tip, 79 of 79 tests pass.
 
-## Merge Eligibility (latest)
+## Merge Eligibility (after round 2)
 
 **Locked to SHA:** `36cee9e`. The round-2 fixes (`36cee9e..fa225f8`) are re-reviewed in round 3, the last round before the cap.
+
+## Review Round 3
+
+**Verdict:** ✅ APPROVED
+
+| | |
+| - | - |
+| **Review Round** | 3 |
+| **Reviewed SHA** | `e44f37f` (round-2 fixes: `36cee9e..fa225f8`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue verified every round-2 finding as RESOLVED:
+
+- It re-ran its round-2 probes unchanged.
+- It mutation-tested the fixes. Reverting `optional()` to `statSync`, dropping the realpath arm, and dropping `case.yaml` from the answer set each fail a test (78 of 79).
+- Every fix commit was extracted with `git archive` and passed on its own.
+- `npm ci` and `npm audit` found 0 vulnerabilities.
+
+There are no findings at MEDIUM or above. Four small ones remain, and each was fixed after approval, so Gate 2 (the PR) reviews them:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| V-LOW-015 | The judge check runs only through `loadProject`, and no CLI test pins it | Fixed in `efa2777`: `list` exits 2 on an undefined judge, and a test covers it. So a command that loads suites without `loadProject` fails a test |
+| V-LOW-016 | A dangling case part is reported as "not found", and a refusal reached through a link does not name its target | Fixed in `efa2777`: "is a broken symlink", plus "(real path …)" when only the real path was an answer |
+| V-INFO-006 | ARCHITECTURE said a directory subject may not point at `fix/` or `proof/`, but none is checked | Fixed in `8505399`: the rule covers prompt files and file subjects, and a directory subject is only hashed |
+| V-INFO-007 | `BUILTIN_SCHEMAS` repeats the keys of M4's built-in map | For M4's rebase: one table keyed by name, which the grader builds its validators from |
+
+80 of 80 tests pass at the tip.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `e44f37f`. The PR opens with the post-approval commits `efa2777` and `8505399` (LOW and INFO fixes only), and Gate 2 reviews them.
 
 ---
 
