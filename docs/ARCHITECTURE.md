@@ -241,13 +241,26 @@ for each seeded bug:
 
 It fails a case in any of these situations:
 
-- the fixture contains a symlink
+- the tree contains a symlink after the change is applied
+- the fixture contains a `.git` entry
 - a `proof/` path also exists under `fixture/`
+- `min_trials` exceeds `trials`, or a `rate` threshold is outside (0, 1)
 - a harness case's plugins or fixture declare hooks or MCP servers without
   `allow_hooks: true`
+- a harness case with `setting_sources: [project]` has a fixture
+  `.claude/settings.json` (or `settings.local.json`) that sets any key other
+  than `$schema`
+- a suite root lies inside one of the case's plugin or subject roots
 
-It warns when a `rate`-policy case has fewer trials than the policy needs to
-return PASS (see Verdicts).
+It warns in two situations:
+
+- a `rate`-policy case has fewer trials than the policy needs to return PASS
+  (see Verdicts)
+- a pass bound is set on a metric that can never be defined for the case, such
+  as `min_recall` on a clean case
+
+The same checks run when a suite is loaded for `run`. `validate` adds only the
+proof runs.
 
 ## Flow of a run
 
@@ -259,16 +272,20 @@ for each job, at most `concurrency` at once:
     for attempt in 1 .. 1 + retries:
         workdir = sandbox.workdir(case)  # fresh every attempt; see Sandbox
         result  = executor(case, config, trial, workdir, events)
-        if result.exit == infra_error and attempt <= retries:
+        if result.exit == infra_error and result.retryable and attempt <= retries:
             emit trial.retry; back off; continue
-        if result.exit == ok and case.extract:
-            extract(result)              # may raise InfraError → retried like grading
-        grade(result)                    # a grader may raise InfraError: retry grading only, never the executor
         break
-    status = cancelled if the run was cancelled
-             else error if the last exit was infra_error, or grading failed with InfraError after retries
-             else pass if every grader passed
-             else fail
+    if result.exit in (ok, model_failure):
+        if result.exit == ok and case.extract:
+            extract(result)              # InfraError → retried like grading
+        grade(result)                    # InfraError → retry grading only, never the executor
+    status = match:
+        the run's cancel aborted this trial         -> cancelled
+        result.exit == infra_error                  -> error       # never graded
+        grading raised InfraError after retries     -> error
+        result.exit == model_failure                -> fail        # graders ran for metrics only
+        every grader passed                         -> pass
+        else                                        -> fail
     write trial.json, transcript.jsonl, artifacts/   # usage summed over every attempt
     when every trial of (case, config) is settled:
         verdict = policy(trials); emit case.settled
@@ -281,24 +298,36 @@ on finish or cancel:
 
 | How the executor stopped | `exit` | Retried | Trial status |
 | - | - | - | - |
+| How the executor stopped | `exit` | Retried | Trial status |
+| - | - | - | - |
 | It finished, including a refusal, a truncation or unparseable output | `ok` | No | `pass` or `fail`, decided by the graders |
-| Timeout or max turns reached | `model_failure` | Never | `fail` |
-| Throttling, 5xx, network or auth failure | `infra_error` | Up to `retries`, with backoff | `error`, once the retries run out |
-| The operator cancelled | — | Never | `cancelled` |
+| A harness timeout or max turns | `model_failure` | Never | `fail` |
+| A model-executor timeout, throttling (408, 409, 429), 5xx or network | `infra_error` (retryable) | Up to `retries`, with backoff | `error` once the retries run out |
+| Auth failure, another 4xx, or a missing key | `infra_error` (not retryable) | Never | `error` |
+| The operator cancelled | `cancelled` | Never | `cancelled` |
 
-A review that never converges is exactly what litmus is meant to catch, so a
-timeout and a max-turns stop are model failures and are never retried. A
-timeout and a cancel travel on different abort reasons, so they can't be
+A review loop that never converges is exactly what litmus is meant to catch, so
+a harness timeout or max-turns stop is a model failure, and it is never
+retried. A single model call that times out is almost always a stalled
+connection, so for the `model` executor a timeout is a retryable infra error.
+A timeout and a cancel travel on different abort reasons, so they can't be
 confused.
+
+**Effective `min_trials`.** A run can ask for fewer trials than the case
+defines, through `--trials`, a trial-key selector, the UI, or a rerun. The
+verdict then uses `min(min_trials, trials requested)`. When `min_trials` is not
+set, it defaults to ceil(requested / 2). Running one passing trial is PASS, not
+INCONCLUSIVE.
 
 ## Sandbox
 
 **Workdirs.** Each workdir is created under
 `os.tmpdir()/litmus/<run>/<key-slug>-<attempt>/`. It is never placed under
-`.litmus/`, a suite root, or any directory with a `CLAUDE.md` in its
-ancestors. It is built in four steps:
+`.litmus/`, a suite root, or any directory with a `CLAUDE.md` or `AGENTS.md`
+in its ancestors. It is built in five steps:
 
-1. `fixture/` is copied, and a symlink anywhere in it is refused.
+1. `fixture/` is copied. A symlink or a `.git` entry anywhere in it is
+   refused.
 2. `git init`, and the tree is committed on `main`.
 3. If the case has a `change.patch`, the branch `litmus/change` is created
    with the patch committed on it. `HEAD` is `litmus/change`.
@@ -307,8 +336,10 @@ ancestors. It is built in four steps:
 5. The builder takes a snapshot of every file (path, size and hash).
 
 Git runs only while the workdir is being built, before the subject starts. It
-runs with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
-`core.hooksPath=/dev/null` and `core.fsmonitor=false`.
+runs with `PATH` alone for its environment, and with `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_CONFIG_GLOBAL=/dev/null`, `core.hooksPath=/dev/null` and
+`core.fsmonitor=false`. The gate also refuses the subject any write under
+`<workdir>/.git/`.
 
 After the executor exits, **the files the subject wrote** are found by
 comparing against the snapshot, not by asking git. That way nothing the
@@ -325,9 +356,16 @@ subject wrote into `.git/` ever runs.
 
 This keeps credentials out of the environment and out of the usual dotfile
 locations. **It does not contain a hostile process**, which can still read any
-file the operator can read. A `command` grader runs code the subject may have
-written, and `allow_shell` gives the subject a real shell. Both are
-uncontained until the container executor lands (see "After 0.1.0" in the plan).
+file the operator can read. Four paths are uncontained until the container
+executor lands (see "After 0.1.0" in the plan):
+
+- a `command` grader, which runs code the subject may have written
+- a `validate` proof, which runs a suite author's command
+- `allow_shell`, which gives the subject a real shell
+- `allow_hooks`, which runs plugin and project hooks
+
+A shell command, hook or MCP server started by the harness is a child of the
+harness process, so it inherits the harness's credential.
 
 ## Contracts
 
@@ -375,8 +413,9 @@ interface Executor {
     case: Case; config: Config; trial: number; attempt: number; workdir: string
     emit: (e: TrialEvent) => void; signal: AbortSignal
   }): Promise<{
-    exit: 'ok' | 'model_failure' | 'infra_error'
+    exit: 'ok' | 'model_failure' | 'infra_error' | 'cancelled'
     reason?: string
+    retryable?: boolean                   // infra_error only
     artifacts: Record<string, string>     // name -> path under the trial's artifacts dir
     transcript: string                    // path to transcript.jsonl
     usage: { input_tokens: number; output_tokens: number; cost_usd?: number }
@@ -403,10 +442,20 @@ interface Executor {
 `@anthropic-ai/claude-agent-sdk`. It runs in the workdir (`cwd`) with a
 scrubbed environment and these settings:
 
-- `settingSources` is always passed explicitly. Leaving it out would load the
-  operator's own settings. The value is `[]`, or `['project']` when the case
-  asks for it, which loads `CLAUDE.md` and `.claude/` from the fixture. The
-  `user` and `local` sources are never allowed.
+- **Prompt.** The harness prompt is rendered with the same placeholders as the
+  `model` prompt, so `{{diff}}` puts the change in front of a subject that has
+  no shell. `subject` only identifies the version by its hash; the harness
+  loads the subject itself, as a plugin or through the fixture.
+- **Settings.** `settingSources` is always passed explicitly, because leaving
+  it out would load the operator's own settings. The value is `[]`, or
+  `['project']` when the case asks for it. `['project']` loads `CLAUDE.md` or
+  `AGENTS.md` and `.claude/` from the fixture. The `user` and `local` sources
+  are never allowed. A fixture's `.claude/settings.json` may set only
+  `$schema`: permissions, env, hooks and helper commands would otherwise run
+  or approve things outside the gate. Managed (policy) settings on the host
+  still load; the SDK gives no way to turn them off.
+- **Permissions.** `permissionMode: 'default'` is set explicitly, and
+  `disallowedTools` lists every tool class the case has not allowed.
 - `CLAUDE_CONFIG_DIR` is a fresh directory created for the trial, and
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` is set. MCP config is strict, with no
   servers unless `allow_hooks` is set.
@@ -420,12 +469,15 @@ scrubbed environment and these settings:
   config error.
 - `maxTurns` comes from the case, and the trial's timeout aborts the session.
 
-Every tool call passes through a default-deny gate:
+Every tool call passes through a default-deny gate. The gate is a PreToolUse
+hook, not only `canUseTool`: Claude Code approves read-only tools, and tools
+that settings allow, without ever asking `canUseTool`, while a PreToolUse hook
+fires on every call, subagents' included.
 
 | Tool | Allowed when |
 | - | - |
-| Read, Glob, Grep | The realpath is inside the workdir, or inside a plugin or subject root (read-only) |
-| Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir |
+| Read, Glob, Grep | The realpath is inside the workdir, or inside a plugin or subject root (read-only), and not inside any suite root |
+| Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` |
 | Agent (subagents), TodoWrite, Skill | Always. Subagent tool calls pass through the same gate |
 | Bash | `allow_shell: true` |
 | WebFetch, WebSearch, `mcp__*` | `allow_network: true` (`mcp__*` also needs `allow_hooks: true`) |
@@ -436,9 +488,9 @@ Every refusal is written to the transcript. The trial's artifacts are:
 - the files the subject wrote, found by the snapshot
 - `final_message.txt`
 
-`validate` fails a case if a suite root sits inside one of its plugin or
-subject roots. Otherwise read-only access to those roots could reach ground
-truth.
+The gate refuses any realpath inside a configured suite root, even one that is
+also inside a plugin or subject root. A private suite kept in the plugin repo
+it evaluates therefore stays out of reach.
 
 ### Extract
 
@@ -502,11 +554,15 @@ pairs = a maximum-cardinality one-to-one matching over candidates
         # then earliest bugs in truth order, then earliest findings
 
 for each unmatched finding:
-    if it is within window of a decoy:       decoy hit       # any severity
+    if it is within window of a decoy:           decoy hit       # any severity
+    elif it is within window of a matched bug:   duplicate       # a second report of a found bug
     elif truth.kind == seeded and its severity is info or low:
-                                             nit
-    else:                                    false positive  # on a clean case, every finding lands here or on a decoy
+                                                 nit
+    else:                                        false positive  # on a clean case, every finding lands here or on a decoy
 ```
+
+Paths are normalized before they are compared. A leading workdir path
+(absolute, or its realpath) is stripped, as are a leading `./` and backslashes.
 
 The metrics are below. A metric is null when its denominator is 0.
 
@@ -514,13 +570,14 @@ The metrics are below. A metric is null when its denominator is 0.
 recall            = matched / bugs                    # also recall_<severity> per severity
 precision         = matched / (matched + false_positives + decoy_hits)
 precision_all     = matched / findings
-false_positives, decoy_hits, nits, findings           # counts
+false_positives, decoy_hits, duplicates, nits, findings   # counts
 claims_correct    = confirmed / matched               # only with confirm
 ```
 
 The `pass` bounds are `min_recall`, `max_false_positives`, `max_decoy_hits`,
-`max_nits`, `max_findings` and `min_claims_correct`. A bound that is not set
-does not apply.
+`max_duplicates`, `max_nits`, `max_findings` and `min_claims_correct`. A bound
+that is not set does not apply. Nor does a bound whose metric is null, such as
+`min_recall` on a clean case; its rationale says "n/a".
 
 With `confirm: <judge>`, each matched pair goes to a binary judge. It asks
 whether the finding states the seeded bug's mechanism, and whether that
@@ -545,8 +602,8 @@ scored    = trials with status pass or fail          # error and cancelled are l
 successes = scored trials that are successes
 
 if scored is empty:                         ERROR
-elif len(scored) < min_trials:              INCONCLUSIVE
-elif expect == fail and any trial passed:   FAIL     # a canary that ever passes is broken
+elif expect == fail and any trial passed:   FAIL     # one pass proves a canary broken
+elif len(scored) < min_trials:              INCONCLUSIVE (reason: min_trials)
 elif policy == all:
     if successes == len(scored):            PASS
     elif successes == 0:                    FAIL
@@ -555,8 +612,10 @@ elif policy == rate:
     ci = wilson_95(successes, len(scored))
     if ci.lo >= threshold:                  PASS
     elif ci.hi < threshold:                 FAIL
-    else:                                   INCONCLUSIVE    # run more trials
+    else:                                   INCONCLUSIVE (reason: interval)
 ```
+
+`min_trials` is the effective one described under Flow of a run.
 
 FLAKY exists only under `all`, which is the unit-test-runner reading: it
 sometimes passes. Under `rate`, an interval that straddles the threshold is
@@ -571,22 +630,35 @@ Every verdict also stores:
   interval
 - pass@k and pass^k on successes, with k = min(3, scored), using the unbiased
   combinatorial estimators
-- the error count
+- the error count, and for INCONCLUSIVE, its reason
 
 ### Comparison
 
 A comparison takes configuration A (the baseline) and configuration B over
 the cases both of them scored.
 
-- **Excluded cases.** A case only one side ran, or that one side could not
-  score, is listed as excluded.
+- **Excluded cases.** A case is listed as excluded, with a reason, in three
+  situations:
+  - only one side ran it
+  - one side could not score it
+  - its **case hash** differs between the sides
+
+  The case hash covers `case.yaml`, `truth.yaml`, `fixture/`, `change.patch`,
+  `proof/`, `fix/`, and the grader and extractor hashes. An edit to ground
+  truth would otherwise be blamed on the model. A difference in a subject or
+  plugin hash does not exclude a case, because comparing subject versions is a
+  real use. It is listed in the comparison's `notes` instead.
 - **Flips.** Every case whose verdict changed is listed with its old and new
   verdicts. This is the headline of the comparison, not a footnote.
-- **Suite verdict.** d is the mean over paired cases of B's success rate minus
-  A's. Its 95% interval comes from a two-level bootstrap. Each resample draws
-  cases with replacement, and for each case draws each side's rate from its
-  Jeffreys posterior, `Beta(successes + ½, scored − successes + ½)`. The
-  randomness is a seeded mulberry32, so a comparison is reproducible.
+- **Suite verdict.** d is the mean over paired cases of B's observed success
+  rate minus A's. Its 95% interval comes from a two-level bootstrap:
+  1. Each resample draws cases with replacement.
+  2. For each case drawn, it draws a difference from a normal distribution
+     centred on that case's observed difference.
+  3. The spread comes from Jeffreys-smoothed rates, p̃ = (s + ½)/(n + 1), with
+     variance p̃(1 − p̃)/n per side. Each draw is clamped to [−1, 1].
+
+  The randomness is a seeded mulberry32, so a comparison is reproducible.
 
   With δ = `compare.tolerance`:
 
@@ -599,8 +671,17 @@ the cases both of them scored.
   ```
 
   Resampling cases alone treats each pass rate as exact, so one case at 1/1
-  against 0/1 would come out as a certain regression. The posterior draw
-  keeps the uncertainty from each case's trials in the interval.
+  against 0/1 would come out as a certain regression. The per-case draw keeps
+  each case's trial uncertainty in the interval.
+
+  Centring on the observed difference, rather than on a posterior mean, keeps
+  unequal trial counts unbiased. A posterior mean pulls 1/1 to 0.75 and 5/5 to
+  0.92, so two sides that never failed would read as a confident regression.
+
+  NO CHANGE takes real evidence. Two identical all-pass sides reach it at
+  δ = 0.05 with about 20 cases × 30 trials, or 200 cases × 10. Smaller suites
+  come out INCONCLUSIVE, which is why `run` treats a comparison's
+  INCONCLUSIVE as information rather than a failure (see CLI).
 
 - **WARN.** Raised for a metric when the ratio of B's per-trial median to A's
   falls outside [1/`warn_ratio`, `warn_ratio`]. The metrics are total tokens,
@@ -613,13 +694,16 @@ the cases both of them scored.
 | - | - |
 | `<run id>` | That run. It must hold exactly one config |
 | `<run id>:<config>` | That config within that run |
-| `baseline:<name>[:<config>]` | The run stored under that baseline name |
+| `baseline:<name>[:<config>]` | The run stored under that baseline name. Baseline names use the NAME grammar |
 | `config:<name>` | The latest run that includes that config |
 
 - `litmus run --config a,b` compares every later config against the first.
 - `litmus run --baseline <name>` compares each config against the config of
   the same name in the baseline run. A config missing from the baseline is
   reported and skipped.
+- A rerun (`--rerun <run> --only …`) selects (case, config) pairs whose verdict
+  is in the set. Its jobs are those pairs, not the cross product of their
+  cases and configs.
 - A standalone `litmus compare` prints its result and writes it only with
   `--out`, because runs are append-only.
 
@@ -642,6 +726,8 @@ the cases both of them scored.
 
 The record shapes are the types in `src/core/types.ts`. Runs are append-only.
 A rerun is a new run, and its `run.json` names the parent run it came from.
+`run.json` also records each case's case hash, and a hash of each plugin root
+the run loaded.
 
 **Redaction.** Before anything is written to disk or printed by a reporter, the
 exact values of these environment variables are replaced with `[REDACTED]`:
@@ -652,6 +738,11 @@ exact values of these environment variables are replaced with `[REDACTED]`:
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_SESSION_TOKEN`
 - every variable named in `redact`
+
+Redaction happens once, where events and records are produced, so events.jsonl,
+the SSE stream, the CLI and every reporter get the same scrubbed text.
+Credentials the AWS SDK resolves from a named profile never pass through
+litmus's environment, so they are not in this set. SECURITY.md says so.
 
 ## Events
 
@@ -684,8 +775,9 @@ spend the operator's money or read transcripts:
 - **CORS.** The server never sends CORS headers.
 
 Run ids and trial keys are checked against their grammar. A trial key goes in
-a query parameter, never in the path: its `/` would split the path, and its
-`#` would become a fragment that never reaches the server.
+a query parameter, percent-encoded with `encodeURIComponent`, and the server
+decodes it before checking. Unencoded, its `/` would split a path, and its `#`
+would start a fragment that never reaches the server, in a path or a query.
 
 | Method | Path | Does |
 | - | - | - |
@@ -696,7 +788,7 @@ a query parameter, never in the path: its `/` would split the path, and its
 | GET | `/api/runs/:id` | Manifest, verdicts, comparison |
 | GET | `/api/runs/:id/events` | Server-sent events: the backlog first, then the live stream |
 | POST | `/api/runs/:id/cancel` | Cancel the run |
-| GET | `/api/runs/:id/trial?key=<trial key>` | Trial record, transcript and artifacts |
+| GET | `/api/runs/:id/trial?key=<encoded trial key>` | Trial record, transcript and artifacts |
 | GET | `/api/compare?a=&b=` | Compare two runs, using the forms under Addressing runs and comparisons |
 | PUT | `/api/baselines/:name` | Set a baseline to a run |
 
@@ -752,12 +844,21 @@ to that trial and ignores `--trials`.
 
 Exit codes for `run`:
 
-| Exit | Meaning |
-| - | - |
-| 0 | Every verdict is PASS. FLAKY is also allowed with `--allow-flaky`, and INCONCLUSIVE with `--allow-inconclusive`. There is no REGRESSION |
-| 1 | Any FAIL, FLAKY, INCONCLUSIVE with no errored trials behind it, or REGRESSION |
-| 2 | A usage or config error |
-| 3 | Nothing that would give 1, but some case is ERROR, or INCONCLUSIVE because trials errored. CI can tell infrastructure trouble from a regression |
+```
+blocking = FAIL | REGRESSION
+         | FLAKY                           unless --allow-flaky
+         | INCONCLUSIVE (reason interval)  unless --allow-inconclusive
+infra    = ERROR | INCONCLUSIVE (reason min_trials)
+
+exit 2 on a usage or config error
+else exit 1 if any verdict is blocking
+else exit 3 if any verdict is infra      # CI can tell infrastructure trouble from a regression
+else exit 0
+```
+
+Inside `run`, only a comparison's REGRESSION blocks. Its INCONCLUSIVE and NO
+CHANGE are reported, and neither changes the exit code, since small suites
+rarely have the evidence for NO CHANGE.
 
 `compare` exits 0 on NO CHANGE or IMPROVEMENT, and 1 on REGRESSION. It also
 exits 1 on INCONCLUSIVE, unless `--allow-inconclusive` is passed.
