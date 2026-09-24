@@ -56,6 +56,15 @@ test('findings from a model may carry extra keys, but not miss or mistype requir
   assert.equal(Findings.safeParse({ findings: [untitled] }).success, false)
 })
 
+test('OpenRouter model fallbacks are refused in params, for configs and judges alike', () => {
+  const cfg = (params: Record<string, unknown>) => ConfigFile.safeParse({ suites: ['./s'], configs: { o: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5', params } } }).success
+  assert.equal(cfg({ temperature: 0 }), true)
+  assert.equal(cfg({ models: ['anthropic/claude-sonnet-5', 'openai/gpt-5'] }), false)
+  assert.equal(cfg({ route: 'fallback' }), false)
+  const judge = ConfigFile.safeParse({ suites: ['./s'], configs: { f: { provider: 'fake' } }, judges: { j: { provider: 'openrouter', model: 'm', params: { models: ['x'] } } } })
+  assert.equal(judge.success, false)
+})
+
 test('effort accepts xhigh', () => {
   const c = ConfigFile.parse({ suites: ['./s'], configs: { a: { provider: 'anthropic', model: 'm', effort: 'xhigh' } } })
   assert.equal(c.configs.a?.provider === 'anthropic' && c.configs.a.effort, 'xhigh')

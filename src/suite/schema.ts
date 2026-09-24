@@ -24,7 +24,15 @@ const modelConfig = {
 export const ConfigDef = z.discriminatedUnion('provider', [
   z.strictObject({ provider: z.literal('anthropic'), ...modelConfig }),
   z.strictObject({ provider: z.literal('bedrock'), ...modelConfig, region: z.string().min(1).optional() }),
-  z.strictObject({ provider: z.literal('openrouter'), ...modelConfig }),
+  // OpenRouter's `models` and `route` tell it to answer with another model when
+  // the first fails. An eval that silently measured a different model is worse
+  // than an ERROR (ARCHITECTURE § Provider).
+  z
+    .strictObject({ provider: z.literal('openrouter'), ...modelConfig })
+    .refine(d => !d.params || !('models' in d.params || 'route' in d.params), {
+      message: 'params.models and params.route are OpenRouter model fallbacks, which litmus never enables',
+      path: ['params'],
+    }),
   z.strictObject({ provider: z.literal('fake'), model: z.string().default('fake') }),
 ])
 export type ConfigDef = z.infer<typeof ConfigDef>
