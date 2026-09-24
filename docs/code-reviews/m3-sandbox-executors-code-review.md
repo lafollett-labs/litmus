@@ -1,6 +1,6 @@
 # Code Review: m3-sandbox-executors
 
-**Verdict:** 🔁 CHANGES REQUESTED (round 3, locked to `0abd8b3`; round cap reached)
+**Verdict:** 🔁 CHANGES REQUESTED (round 4, locked to `924eda1`; raised cap reached)
 
 | | |
 | - | - |
@@ -132,6 +132,39 @@ At the tip, 196 tests pass and 4 (live) are skipped.
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `0abd8b3`. The round-3 fixes (`e1e7f90`, docs in `7c64fdc`) have not been reviewed locally, and the 3-round cap is reached. Per the skill, this halts to the operator: proceed with one more round, abort, or escalate.
+
+The operator chose one more round (cap raised to 4).
+
+## Review Round 4
+
+**Verdict:** 🔁 CHANGES REQUESTED (raised cap reached)
+
+| | |
+| - | - |
+| **Review Round** | 4 of 4 (cap raised by the operator) |
+| **Reviewed SHA** | `924eda1` (round-3 fixes: `0abd8b3..924eda1`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue verified all five round-3 findings as RESOLVED:
+
+- Bun's loader reads hooks from all 7 shapes in `shapes.json`, and litmus now refuses all 7. `FENCES[0]` is byte-identical to the CLI's own regex.
+- Where the two fences capture different bodies, the strict one can only add refusals.
+- No cached or marketplace plugin is refused for `isolation`.
+
+Round-3's HIGH-001 fix resolved merge keys the way the YAML spec does, which is not how Claude Code's parser (Bun) does it.
+
+| ID | Finding | Disposition |
+| - | - | - |
+| HIGH-001 | Bun.YAML merges a quoted or escaped `"<<"` and coerces a collection key (`[hooks]`, `[[hooks]]`, `? - hooks`) to its text, so 11 shapes load `hooks`, `mcpServers` or `isolation` while passing a spec parse. Checked end to end against the CLI's lifted loader on Bun 1.4.2 and 1.3.12 | Fixed in `e741189` by closing the class rather than chasing Bun: every top-level frontmatter key must be a plain string scalar, and any `<<` is refused, plain or quoted. All 11 shapes are tests, as a skill, as an agent and in the fixture. Mutation check: dropping the key refusal fails the test. All 17 cached plugins classify as before |
+| LOW-001 | `allow_hooks: true` also turned off the isolation refusal | Fixed in `e741189`: the scan always runs, and `allow_hooks` waives process signals only. Isolation, links, non-plain keys, merge keys and parse failures are refused either way |
+| LOW-002 | A fixture `.GIT/` got past the case-sensitive `.git` refusal on APFS, and its config ran during litmus's `git add` (proven with a clean filter) | Fixed in `6789282`: the check is folded, as is the post-patch `.git/` link filter. Tested with `.git`, `.GIT` and `.Git` |
+| INFO-001 | A marketplace agent with an unquoted `: ` in its description is refused as invalid YAML, although Claude Code loads it | No action: it fails closed and says to quote the value |
+
+At the tip, 199 tests pass and 4 (live) are skipped. ARCHITECTURE is updated in `c23b9d7`.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `924eda1`. The round-4 fixes (`e741189`, `6789282`, docs `c23b9d7`) have not been reviewed locally, and the raised cap is reached. This halts to the operator again.
 
 ---
 
