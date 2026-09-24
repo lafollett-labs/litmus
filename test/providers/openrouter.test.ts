@@ -36,6 +36,7 @@ test('a 200 that carries no answer is an infra error, classified by its code, ne
     ['top-level 401', { error: { code: 401, message: 'no auth' } }, false],
     ['top-level 402', { error: { code: '402', message: 'no credits' } }, false],
     ['top-level 503', { error: { code: 503, message: 'busy' } }, true],
+    ['a code outside HTTP', { error: { code: 600, message: 'odd' } }, false],
   ]
   for (const [label, body, retryable] of shapes) {
     const { fetch } = fakeFetch(200, body)

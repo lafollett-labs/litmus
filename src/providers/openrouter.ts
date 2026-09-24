@@ -13,7 +13,7 @@ type ChatResponse = {
   error?: UpstreamError
 }
 
-const retryableStatus = (s: number) => s === 408 || s === 409 || s === 429 || s >= 500
+const retryableStatus = (s: number) => s === 408 || s === 409 || s === 429 || (s >= 500 && s < 600)
 
 export function openrouterProvider(deps: Deps = {}): Provider {
   const doFetch = deps.fetch ?? fetch

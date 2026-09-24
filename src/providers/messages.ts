@@ -75,7 +75,7 @@ export function classify(e: unknown): unknown {
       return new InfraError(`stream error ${e.type ?? 'error'}: ${e.message}${id}`, { retryable, cause: e })
     }
     const status = e.status
-    const retryable = status === 408 || status === 409 || status === 429 || status >= 500
+    const retryable = status === 408 || status === 409 || status === 429 || (status >= 500 && status < 600)
     return new InfraError(`${e.type ?? 'error'}: ${e.message}${id}`, { retryable, cause: e }) // e.message already leads with the status
   }
   // Anything else the SDK raises is the stream failing in flight. MessageStream
