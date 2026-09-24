@@ -393,12 +393,15 @@ INCONCLUSIVE.
 
 **Workdirs.** Each workdir is created under
 `os.tmpdir()/litmus/<run>/<key-slug>-<key-hash>-<attempt>/`. The hash
-keeps two keys that slug alike apart. It is never placed inside the results
-store or a suite root, compared by real, case-folded path. Nor is it placed anywhere with instructions in its
+keeps two keys that slug alike apart. The workdir is used by its real path,
+so a `TMPDIR`, or a `litmus/` under it, that is a symlink is judged where it
+lands. It is never placed inside the results store or a suite root, compared
+case-folded. Nor is it placed anywhere with instructions in its real
 ancestors that Claude Code would load: `CLAUDE.md`, `CLAUDE.local.md`,
 `AGENTS.md`, `.claude/CLAUDE.md` or `.claude/rules/`. It is built in five steps:
 
-1. `fixture/` is copied. A symlink, a `.git` entry in any case (`.GIT` is
+1. `fixture/` is copied. A fixture that is itself a symlink is refused, as is
+   a symlink inside it, a `.git` entry in any case (`.GIT` is
    `.git` on a case-insensitive volume), or anything that is not a regular file
    or directory (a FIFO, a socket) is refused.
 2. `git init`, and the tree is committed on `main`.

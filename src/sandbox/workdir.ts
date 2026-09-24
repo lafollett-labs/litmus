@@ -35,14 +35,16 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
   // The slug alone is not one-to-one (a/b_c@x#1 and a_b/c@x#1 both read
   // a_b_c_x_1), and the rmSync below would then delete a live sibling. The
   // key's hash makes the name unique.
-  const root = join(resolve(base), 'litmus', where.run, `${slug(where.key)}-${sha256(where.key).slice(0, 12)}-${where.attempt}`)
-  // Compared by real, case-folded path: a TMPDIR reached through a symlink,
-  // or spelt in another case, still lands where it lands.
-  const realRoot = fold(join(realExisting(resolve(base)), 'litmus', where.run))
-  const under = avoid.find(a => {
-    return inside(realRoot, fold(realExisting(resolve(a))))
-  })
-  if (under) throw new InfraError(`workdir ${root} would sit inside ${under}; point TMPDIR outside the results store and every suite root`, { retryable: false })
+  const name = `${slug(where.key)}-${sha256(where.key).slice(0, 12)}-${where.attempt}`
+  const parent = join(resolve(base), 'litmus', where.run)
+  // Checked, scanned and removed by its real path, case-folded where compared:
+  // a TMPDIR, or a litmus/ under it, that is a symlink or spelt in another
+  // case still lands where it lands.
+  const realParent = realExisting(parent)
+  const under = avoid.find(a => inside(fold(realParent), fold(realExisting(resolve(a)))))
+  if (under) throw new InfraError(`workdir ${join(realParent, name)} would sit inside ${under}; point TMPDIR outside the results store and every suite root`, { retryable: false })
+  mkdirSync(parent, { recursive: true })
+  const root = join(realpathSync.native(parent), name)
   rmSync(root, { recursive: true, force: true }) // fresh on every attempt, never reused
   const dir = join(root, 'work')
   const home = join(root, 'home')
@@ -57,7 +59,12 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
     const leak = instructionFileAbove(dir)
     if (leak) throw new InfraError(`workdir ${dir} sits under ${leak}; point TMPDIR somewhere outside any repo`, { retryable: false })
 
-    if (c.fixtureDir) copyTree(c.fixtureDir, dir, c.id)
+    // copyTree lstats every entry below its root, not the root itself: a
+    // fixture that is a link to another case would bring its truth.yaml in.
+    if (c.fixtureDir) {
+      if (lstatSync(c.fixtureDir).isSymbolicLink()) throw new ConfigError(`${c.id}: fixture ${c.fixtureDir} is a symlink; a fixture may not be or contain a link`)
+      copyTree(c.fixtureDir, dir, c.id)
+    }
     git(dir, ['init', '-q', '-b', 'main'])
     git(dir, ['add', '-A'])
     git(dir, ['commit', '-q', '--allow-empty', '-m', 'fixture'])

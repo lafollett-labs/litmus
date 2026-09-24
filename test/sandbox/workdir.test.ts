@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
 import { scrubbedEnv } from '../../src/sandbox/env.ts'
@@ -111,6 +111,27 @@ test('a workdir never sits inside the results store or a suite root', () => {
     // a case-insensitive volume (default APFS): the other spelling is the same directory
     assert.throws(() => buildWorkdir(c, where, base, [base.toUpperCase()]), /would sit inside/, 'spelt in another case')
   }
+})
+
+test('a litmus/ under TMPDIR that is a symlink is checked and scanned where it lands', () => {
+  const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  const store = realpathSync(tree({ 'keep.txt': 'results' }))
+  symlinkSync(store, join(base, 'litmus'))
+  assert.throws(() => buildWorkdir(c, where, base, [store]), (e: Error) => e instanceof InfraError && /would sit inside/.test(e.message))
+  assert.deepEqual(readdirSync(store), ['keep.txt'])
+  // The instructions above the link's target are the ones Claude Code loads.
+  const repo = realpathSync(tree({ 'AGENTS.md': '# rules', 'deep/.keep': '' }))
+  const other = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  symlinkSync(join(repo, 'deep'), join(other.base, 'litmus'))
+  assert.throws(() => buildWorkdir(other.c, where, other.base), (e: Error) => e instanceof InfraError && /AGENTS\.md/.test(e.message))
+})
+
+test('a fixture that is itself a symlink is refused, so another case\'s truth never comes in with it', () => {
+  const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  const peer = tree({ 'truth.yaml': 'kind: clean\n', 'a.go': 'package a\n' })
+  rmSync(c.fixtureDir!, { recursive: true })
+  symlinkSync(peer, c.fixtureDir!)
+  assert.throws(() => buildWorkdir(c, where, base), (e: Error) => e instanceof ConfigError && /fixture .* is a symlink/.test(e.message))
 })
 
 test('a run id or attempt outside its grammar never reaches the recursive delete', () => {
