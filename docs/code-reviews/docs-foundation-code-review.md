@@ -1,6 +1,6 @@
 # Code Review: docs-foundation
 
-**Verdict:** 🚫 BLOCKED
+**Verdict:** 🚫 BLOCKED (round 2)
 
 | | |
 | - | - |
@@ -131,6 +131,59 @@ Findings are listed by the ID of the reviewer that raised them: `G-*` is the gen
 
 **Locked to SHA:** `1f0da3a03e49a131f6386daab0244e515f10c085`
 **Status:** 🚫 Blocked. Round 2 is required after remediation.
+
+---
+
+## Review Round 2
+
+**Verdict:** 🚫 BLOCKED
+
+| | |
+| - | - |
+| **Reviewer** | @Cali LaFollett (PE-Governance + independent generic reviewer) |
+| **Reviewed SHA** | `845748a0cae0119f4a42d1e2ea1094dc7e88de12` |
+| **Date** | 2026-09-24 |
+
+### Summary
+
+Round 2 verified the round-1 fixes: 12 of 12 P-* findings and 23 G-* findings are resolved. The four G-* findings that were only partly resolved are fixed this round. The round also raised new findings.
+
+The one new HIGH was a statistics bug. The Jeffreys-posterior bootstrap is biased when the two sides ran different numbers of trials. The reviewer showed that 30 cases, all passing on both sides, at 5/5 against 1/1 read as a confident REGRESSION. The fix centres each draw on the case's observed difference and takes its spread from Jeffreys-smoothed variance. The reviewer suggested a pooled prior instead. That was rejected, because it makes all-pass intervals overconfident: 5 cases × 5/5 on each side would read as NO CHANGE.
+
+Copilot's eight threads were fixed, replied to and resolved in round 1. `CLAUDE.md` became `AGENTS.md` at the owner's request. Claude Code 2.1.281 loads `AGENTS.md` natively when a project has no `CLAUDE.md`. Review routing moved to `.code-reviewer.yml`.
+
+### Findings Overview
+
+| Severity | In Scope | Out of Scope |
+| - | - | - |
+| 🔴 CRITICAL | 0 | 0 |
+| 🟠 HIGH | 1 | 0 |
+| 🟡 MEDIUM | 9 | 0 |
+| 🟢 LOW | 14 | 0 |
+| ℹ️ INFO | 2 | 1 |
+
+### Dispositions
+
+| ID | Finding | Fixed by |
+| - | - | - |
+| R2-HIGH-001 | Jeffreys bias at unequal trial counts | Draws centred on the observed difference, with spread from smoothed variance (ARCHITECTURE § Comparison; the M5 code and tests are on their branch) |
+| R2-MEDIUM-001 | The status rule let a timed-out trial pass, graded infra errors, and had no retryable bit | Status is now a `match` with an explicit order. Retries are gated on `retryable`. `model_failure` is always `fail` |
+| R2-MEDIUM-002 | Exit-code ambiguity | Each verdict records `inconclusive_reason`. A single blocking/infra rule decides the exit code. A comparison's INCONCLUSIVE inside `run` does not block |
+| R2-MEDIUM-003 | `min_trials` above the requested trials | Effective `min_trials = min(min_trials, requested)`. `validate` rejects `min_trials > trials` and a rate threshold outside (0, 1) |
+| R2-MEDIUM-004 | Project settings could approve tools before the gate saw them | The gate is a PreToolUse hook. A fixture settings file may set only `$schema`. `permissionMode` and `disallowedTools` are explicit. SECURITY notes that managed settings always load |
+| R2-MEDIUM-005 | A suite root inside a plugin root could leak truth | The gate refuses reads inside any suite root, and load checks for it too |
+| R2-MEDIUM-006 | Comparisons paired cases across changed ground truth | Cases are compared by case hash, and a mismatch is excluded with a reason. Subject and plugin differences go in `notes` |
+| P-MEDIUM-001..003 | Auth retries, the fixture rule, re-review after thread fixes | Fixed in `AGENTS.md` (093fe84) |
+| R2-LOW-001..010, P-LOW-001..004, INFO | Encoding, null bounds, duplicates and path normalization, credential inheritance, `.git` writes, harness `{{diff}}` and `subject`, model-executor timeouts, redaction scope, canary ordering, NO CHANGE data needs, wording | Fixed in ARCHITECTURE, SECURITY, PLAN, CONTRIBUTING and `AGENTS.md` |
+
+### Action Items
+
+#### Must Fix (blocks merge)
+- [x] R2-HIGH-001
+
+#### Should Fix
+- [x] Every MEDIUM
+
 
 ---
 
