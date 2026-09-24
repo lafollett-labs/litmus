@@ -7,9 +7,10 @@ everything they do. That raises three questions:
 - what a subject under test can reach
 - what ends up in the results
 
-This document states the intended answers. Where a milestone in
-[docs/PLAN.md](docs/PLAN.md) has not landed yet, the control is a design
-commitment, not code you can check.
+This document states the intended answers. The mechanisms behind them are
+specified in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) § Sandbox. Where a
+milestone in [docs/PLAN.md](docs/PLAN.md) has not landed yet, the control is a
+design commitment, not code you can check.
 
 ## Reporting a vulnerability
 
@@ -23,20 +24,25 @@ would rather not have it.
 ## The threat model
 
 **The subject under test is the untrusted party.** A harness trial runs an
-agent that has tools, and a subject that misbehaves is exactly what litmus is
-meant to catch. So no instruction in a prompt counts as a control.
+agent with tools, and a subject that misbehaves is exactly what litmus is
+meant to catch. So no instruction in a prompt counts as a control. Suites
+contributed by other people are untrusted too, until you have read them.
 
 In scope:
 
 - A subject that reads or writes outside its trial's workdir.
-- A subject that reads the case's ground truth (`truth.yaml`, `fix/` or
-  `fake.yaml`). That invalidates the eval, and it counts as a vulnerability.
-- A subject that reaches the shell or the network when its case has not
-  allowed it.
-- A subject that reads the operator's keys.
+- A subject that reads the case's ground truth (`truth.yaml`, `proof/`, `fix/`
+  or `fake.yaml`). That invalidates the eval, and it counts as a vulnerability.
+  This includes a symlink planted by a fixture or a patch.
+- A subject that reaches the shell, the network, hooks or MCP servers when its
+  case has not allowed them.
+- A subject, or any child process litmus starts, that reads the operator's
+  keys from its environment.
 - A suite, case or config file that runs code just by being loaded.
+- A key that appears in anything litmus writes: `run.json`, `trial.json`, a
+  transcript, an artifact or an export.
 - A web page that drives `litmus serve` from another origin, for example to
-  start runs that spend the operator's money.
+  start runs that spend the operator's money or to read transcripts.
 
 Out of scope:
 
@@ -47,15 +53,32 @@ Out of scope:
 
 | Control | What it does |
 | - | - |
-| Disposable workdir | Each trial works on a fresh copy of `fixture/`. Ground-truth files are never copied into it. |
-| Default-deny tool gate | Harness file tools are confined to the workdir. Shell and network are refused unless the case opts in, and every refusal is recorded. |
-| Keys from the environment | Keys are read at call time from standard environment variables. They are never written to `run.json`, `trial.json`, a transcript or an export. |
-| Localhost only | `litmus serve` binds to `127.0.0.1` and rejects a foreign `Host`, or a foreign `Origin` on a mutating request. |
-| Declarative suites | Suite files are data. The only thing a suite executes is the `command` a case names, and only inside the trial's workdir. |
+| Disposable workdir | Each attempt runs on a fresh copy of `fixture/` plus `change.patch`, under the OS temp directory. Ground-truth files are never copied into it. Symlinks are refused both before and after the patch is applied. |
+| Settings isolation | A harness trial always passes `settingSources` explicitly: nothing, or the fixture's own project settings. It uses a fresh `CLAUDE_CONFIG_DIR` for each trial, with auto-memory off. The operator's own settings, memory and claude.ai connectors never load. |
+| Default-deny tool gate | Harness file tools are confined to the workdir by realpath. Plugin and subject roots are readable but not writable. Shell, network, hooks and MCP servers are refused unless the case opts in, and every refusal is recorded. |
+| Scrubbed child environments | The harness, `command` graders and `validate` proofs get an allowlisted environment, with `HOME` pointed at a temporary directory. Only the harness gets a credential, and only the one its provider needs. |
+| Git before, snapshot after | Git runs only while the workdir is being built, with system, global and hook config disabled. The files a subject wrote are found by comparing snapshots, so nothing it writes into `.git/` ever runs. |
+| API keys only | The harness authenticates with an API key or AWS credentials. It never uses a claude.ai login. |
+| Redaction by value | Before anything is written or reported, the values of known key variables are replaced with `[REDACTED]`. That covers the Anthropic, OpenRouter and AWS keys, plus any listed under `redact`. Provider responses are stored as parsed bodies only. |
+| Localhost only | `litmus serve` binds to `127.0.0.1`. It accepts only its own `Host`, requires its own `Origin` on any request that changes state, and sends no CORS headers. |
+| Declarative loading | Loading a suite, case or config never runs code. |
 
-Shell access (`allow_shell: true`) is not contained. It gives the subject a
-real shell on your machine. Until the container executor lands (see "After
-0.1.0" in the plan), use it only on a machine you are willing to lose.
+## Where litmus runs code on purpose
+
+Code runs only on these paths, and each one runs in a scrubbed environment:
+
+| Path | Runs | Contained? |
+| - | - | - |
+| `litmus validate` | Each seeded bug's `proof` command, on a disposable copy of the case | No. Read a suite before you validate it |
+| `command` grader | The case's command, in the workdir, after the subject has run | No. It may run code the subject wrote |
+| `allow_shell: true` | A real shell for the subject | No |
+| `allow_hooks: true` | Plugin and project hooks and MCP servers, as host processes | No |
+
+A scrubbed environment keeps keys out of reach of casual reads. **It does not
+contain a hostile process**, which can still read any file you can read. Until
+the container executor lands (see "After 0.1.0" in the plan), run the four
+uncontained paths only on a machine you are willing to lose, and only for
+suites whose authors you trust.
 
 ## Results are sensitive
 
