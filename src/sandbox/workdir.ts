@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, parse, resolve } from 'node:path'
+import { dirname, join, parse, resolve, sep } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
+import { sha256 } from '../core/hash.ts'
 import { RUN_ID } from '../core/ids.ts'
 import type { LoadedCase } from '../suite/load.ts'
 import { snapshot, symlinksUnder, type Snapshot } from './snapshot.ts'
@@ -23,12 +24,19 @@ export type Workdir = {
 const GIT_ENV = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0' }
 const GIT_ARGS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', '-c', 'user.name=litmus', '-c', 'user.email=litmus@localhost']
 
-export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; attempt: number }, base: string = tmpdir()): Workdir {
+// `avoid` is every directory a workdir must never sit inside: the results
+// store and the suite roots. The runner passes them.
+export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; attempt: number }, base: string = tmpdir(), avoid: string[] = []): Workdir {
   // root is removed recursively below, so every part of its path is checked
   // first: a run id or attempt that is not what the grammar says never reaches rmSync.
   if (!RUN_ID.test(where.run)) throw new Error(`not a run id: ${where.run}`)
   if (!Number.isSafeInteger(where.attempt) || where.attempt < 1) throw new Error(`not an attempt number: ${where.attempt}`)
-  const root = join(resolve(base), 'litmus', where.run, `${slug(where.key)}-${where.attempt}`)
+  // The slug alone is not one-to-one (a/b_c@x#1 and a_b/c@x#1 both read
+  // a_b_c_x_1), and the rmSync below would then delete a live sibling. The
+  // key's hash makes the name unique.
+  const root = join(resolve(base), 'litmus', where.run, `${slug(where.key)}-${sha256(where.key).slice(0, 12)}-${where.attempt}`)
+  const under = avoid.map(a => resolve(a)).find(a => root === a || root.startsWith(a + sep))
+  if (under) throw new InfraError(`workdir ${root} would sit inside ${under}; point TMPDIR outside the results store and every suite root`, { retryable: false })
   rmSync(root, { recursive: true, force: true }) // fresh on every attempt, never reused
   const dir = join(root, 'work')
   const home = join(root, 'home')
@@ -99,11 +107,13 @@ function git(cwd: string, args: string[], failure?: string): void {
   }
 }
 
+const INSTRUCTION_FILES = ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.claude/CLAUDE.md', '.claude/rules']
+
 function instructionFileAbove(dir: string): string | undefined {
   let d = dirname(dir)
   const { root } = parse(d)
   while (true) {
-    for (const f of ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md']) if (existsSync(join(d, f))) return join(d, f)
+    for (const f of INSTRUCTION_FILES) if (existsSync(join(d, f))) return join(d, f)
     if (d === root) return undefined
     d = dirname(d)
   }

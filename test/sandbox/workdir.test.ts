@@ -73,7 +73,7 @@ test('a patch that does not apply is a config error that names the case', () => 
 })
 
 test('a workdir under a directory holding CLAUDE.md, CLAUDE.local.md or AGENTS.md is refused', () => {
-  for (const f of ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md']) {
+  for (const f of ['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', '.claude/CLAUDE.md']) {
     const { c } = oneCase(CASE, { 'fixture/a.txt': 'x' })
     const repo = tree({ [f]: '# rules' })
     assert.throws(() => buildWorkdir(c, where, repo), (e: Error) => e instanceof InfraError && !e.retryable && new RegExp(f).test(e.message), f)
@@ -84,6 +84,19 @@ test('a FIFO or other special file in the fixture is refused', () => {
   const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
   spawnSync('mkfifo', [join(c.fixtureDir!, 'pipe')])
   assert.throws(() => buildWorkdir(c, where, base), (e: Error) => e instanceof ConfigError && /pipe, which is neither a regular file nor a directory/.test(e.message))
+})
+
+test('two trial keys that slug the same still get distinct workdirs', () => {
+  const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  const one = buildWorkdir(c, { ...where, key: 'a/b_c@x#1' }, base)
+  const two = buildWorkdir(c, { ...where, key: 'a_b/c@x#1' }, base)
+  assert.notEqual(one.root, two.root)
+  assert.ok(existsSync(one.dir) && existsSync(two.dir))
+})
+
+test('a workdir never sits inside the results store or a suite root', () => {
+  const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  assert.throws(() => buildWorkdir(c, where, base, [base]), (e: Error) => e instanceof InfraError && /would sit inside/.test(e.message))
 })
 
 test('a run id or attempt outside its grammar never reaches the recursive delete', () => {
