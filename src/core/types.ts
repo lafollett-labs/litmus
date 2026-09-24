@@ -4,7 +4,8 @@
 
 export type Usage = { input_tokens: number; output_tokens: number; cost_usd?: number }
 
-export type Exit = 'ok' | 'model_failure' | 'infra_error'
+// cancelled is the operator stopping the run: never a result, never retried.
+export type Exit = 'ok' | 'model_failure' | 'infra_error' | 'cancelled'
 
 // One line of transcript.jsonl. Executors map their native stream onto this so
 // graders (tool-used, regex over the transcript) never know which harness ran.
@@ -18,6 +19,7 @@ export type TranscriptEntry =
 export type ExecutorResult = {
   exit: Exit
   reason?: string
+  retryable?: boolean // infra_error only: false when every attempt would fail the same way
   artifacts: Record<string, string> // name -> absolute path
   transcript: string // absolute path to transcript.jsonl
   usage: Usage
@@ -32,7 +34,7 @@ export type GraderResult = {
   rationale?: string
 }
 
-export type TrialStatus = 'pass' | 'fail' | 'error'
+export type TrialStatus = 'pass' | 'fail' | 'error' | 'cancelled'
 
 export type TrialRecord = {
   key: string
