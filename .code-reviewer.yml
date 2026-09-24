@@ -1,0 +1,48 @@
+# Review routing for /code-reviewer (lafollett-labs-claude-plugins). The skill
+# reads this before any Stack Map, so this file is the only routing table.
+version: "1.0"
+
+project:
+  name: "litmus"
+  generated_at: "2026-09-24"
+
+stacks:
+  - paths: ["src/server/**"]
+    stack: "TypeScript, Node 26, HTTP + SSE"
+    pe: "pe-vue"
+    test_commands:
+      - "source ~/.nvm/nvm.sh && nvm use && npm run check && npm test"
+      - "source ~/.nvm/nvm.sh && nvm use && npm run test:ui  # once M9 adds it"
+  - paths: ["src/**", "test/**", "package.json", "package-lock.json", "tsconfig.json"]
+    stack: "TypeScript, Node 26"
+    pe: "pe-vue"
+    test_commands:
+      - "source ~/.nvm/nvm.sh && nvm use && npm run check && npm test"
+  - paths: ["ui/**"]
+    stack: "Vue 3, Vite, TypeScript"
+    pe: "pe-vue"
+    test_commands:
+      - "source ~/.nvm/nvm.sh && nvm use && npm run check && npm run test:ui"
+  - paths: [".github/workflows/**"]
+    stack: "GitHub Actions"
+    pe: "pe-aws-infra"
+    test_commands:
+      - "actionlint"
+  - paths: ["AGENTS.md", ".code-reviewer.yml"]
+    stack: "Agent governance"
+    pe: "pe-governance"
+    test_commands: []
+  - paths: ["suites/**"]
+    stack: "Eval fixtures, YAML"
+    pe: "generic"
+    test_commands:
+      - "source ~/.nvm/nvm.sh && nvm use && node src/cli/main.ts validate"
+  - paths: ["README.md", "docs/**", "*.md"]
+    stack: "Human docs"
+    pe: "generic"
+    test_commands: []
+
+settings:
+  output_dir: "docs/code-reviews"
+  verdict_mode: "strict"
+  auto_commit: true
