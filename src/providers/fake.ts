@@ -19,7 +19,8 @@ export const FakeScript = z.strictObject({
         delay_ms: z.int().min(0).default(0),
         usage: z.strictObject({ input_tokens: z.int().min(0), output_tokens: z.int().min(0) }).optional(),
         cost_usd: z.number().min(0).optional(),
-      }),
+      })
+      .refine(e => e.text === undefined || e.text_file === undefined, 'give text or text_file, not both'),
     )
     .min(1),
 })

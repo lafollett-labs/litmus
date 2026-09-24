@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { getEventListeners } from 'node:events'
 import { join } from 'node:path'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
 import { fakeProvider } from '../../src/providers/fake.ts'
@@ -20,6 +21,9 @@ const root = tree({
   'second.txt': 'from a file',
   'bad.yaml': 'responses: []\n',
   'missing.yaml': 'responses:\n  - text_file: nowhere.txt\n',
+  'quick.yaml': 'responses:\n  - delay_ms: 5\n    text: quick\n',
+  'both.yaml': 'responses:\n  - text: a\n    text_file: second.txt\n',
+  'broken.yaml': 'responses: [\n',
 })
 const fake = fakeProvider()
 const ask = (trial: number, attempt = 1, file = join(root, 'fake.yaml'), signal = new AbortController().signal) =>
@@ -64,6 +68,17 @@ test('an already-cancelled request rejects at once, with or without a delay', as
   await assert.rejects(ask(5, 1, join(root, 'fake.yaml'), ctl.signal), /cancelled first/)
   await assert.rejects(ask(1, 1, join(root, 'fake.yaml'), ctl.signal), /cancelled first/)
   assert.ok(Date.now() - started < 1000)
+})
+
+test('a delay that runs out answers, and leaves no listener on the signal', async () => {
+  const ctl = new AbortController()
+  const r = await ask(1, 1, join(root, 'quick.yaml'), ctl.signal)
+  assert.equal(r.text, 'quick')
+  assert.equal(getEventListeners(ctl.signal, 'abort').length, 0)
+})
+
+test('a missing or unparseable fake.yaml, or an entry with both text and text_file, is a config error', async () => {
+  for (const f of ['nowhere.yaml', 'broken.yaml', 'both.yaml']) await assert.rejects(ask(1, 1, join(root, f)), ConfigError, f)
 })
 
 test('a missing text_file is a config error, not a crash', async () => {
