@@ -392,12 +392,14 @@ INCONCLUSIVE.
 ## Sandbox
 
 **Workdirs.** Each workdir is created under
-`os.tmpdir()/litmus/<run>/<key-slug>-<attempt>/`. It is never placed under
-`.litmus/`, a suite root, or any directory with a `CLAUDE.md` or `AGENTS.md`
-in its ancestors. It is built in five steps:
+`os.tmpdir()/litmus/<run>/<key-slug>-<key-hash>-<attempt>/`. The hash
+keeps two keys that slug alike apart. It is never placed inside the results
+store or a suite root. Nor is it placed anywhere with instructions in its
+ancestors that Claude Code would load: `CLAUDE.md`, `CLAUDE.local.md`,
+`AGENTS.md`, `.claude/CLAUDE.md` or `.claude/rules/`. It is built in five steps:
 
-1. `fixture/` is copied. A symlink or a `.git` entry anywhere in it is
-   refused.
+1. `fixture/` is copied. A symlink, a `.git` entry, or anything that is not
+   a regular file or directory (a FIFO, a socket) is refused.
 2. `git init`, and the tree is committed on `main`.
 3. If the case has a `change.patch`, the branch `litmus/change` is created
    with the patch committed on it. `HEAD` is `litmus/change`.
@@ -562,10 +564,15 @@ scrubbed environment and these settings:
 - `CLAUDE_CONFIG_DIR` is a fresh directory created for the trial, and
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` is set. MCP config is strict, with no
   servers unless `allow_hooks` is set.
-- The case's plugins are loaded. A plugin or fixture that declares hooks or MCP
-  servers is refused unless the case sets `allow_hooks: true`. Hooks run as
-  host processes outside the gate, so they are uncontained, like
-  `allow_shell`.
+- The case's plugins are loaded. A plugin or fixture that would start a host
+  process is refused unless the case sets `allow_hooks: true`. That means
+  hooks, MCP servers or LSP servers, and they are uncontained, like
+  `allow_shell`. A plugin's `plugin.json` may hold only the keys `name`,
+  `version`, `description`, `author`, `homepage`, `repository`, `license`,
+  `keywords`, `commands`, `agents`, `skills` and `$schema`. It may not ship
+  `hooks/hooks.json`, `.mcp.json` or `.lsp.json`. No skill, agent or command
+  in the plugin, or in the fixture's `.claude/`, may declare `hooks`,
+  `mcpServers` or `lspServers` in its frontmatter.
 - Credentials: `anthropic` requires `ANTHROPIC_API_KEY`, and a claude.ai login
   is never used. `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS
   credential variables, including `AWS_BEARER_TOKEN_BEDROCK`. With
@@ -588,8 +595,9 @@ fires on every call, subagents' included.
 | Tool | Allowed when |
 | - | - |
 | Read, Glob, Grep, LS | The realpath is inside the workdir, or inside a plugin or subject root (read-only), and not inside any suite root. A Glob or Grep is also refused when a suite root lies anywhere below its base, since it would descend into it |
-| Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` |
-| Agent (subagents), TodoWrite, Skill | Always. Subagent tool calls pass through the same gate |
+| Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` or `final_message.txt`. Under `setting_sources: [project]`, also not under `.claude/` or `.mcp.json`, which the session would read back as its own config |
+| Agent, Task (subagents) | With no `isolation`. Their tool calls pass through the same gate; a worktree or remote agent would not |
+| TodoWrite, Skill | Always |
 | Bash | `allow_shell: true` |
 | WebFetch, WebSearch, `mcp__*` | `allow_network: true` (`mcp__*` also needs `allow_hooks: true`) |
 | Anything else | Never |
@@ -603,12 +611,19 @@ The gate refuses any realpath inside a configured suite root, even one that is
 also inside a plugin or subject root. A private suite kept in the plugin repo
 it evaluates therefore stays out of reach.
 
+The case's own directory, its suite and its suite root are always deny roots,
+whatever the runner passes. The gate fails closed: a call it cannot judge (an
+unreadable path, a path through a file) is a denial with the error as its
+reason. Paths are compared by their on-disk case (`realpath.native`), and names
+that may not exist yet are compared case-folded, so a case variant on a
+case-insensitive volume is judged as the real name.
+
 Paths are resolved the way the tool would resolve them, then judged:
 
 - A pattern is relative to the tool's `path`, and its reach is its literal
   prefix.
-- A pattern with `..` after a wildcard is refused, and so is a path starting
-  with `~`.
+- A pattern holding `..` or `~`, or a brace or class that holds `/`, is
+  refused, and so is a path starting with `~`.
 - A symlink is judged by where it lands. A dangling symlink on the way is
   refused, since writing through it would create its target, wherever that is.
 - A directory subject is its own read root. A file subject's read root is the
