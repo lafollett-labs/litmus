@@ -29,6 +29,17 @@ test('case ids join suite and case with a slash', () => {
   assert.equal(caseId('smoke', 'always-passes'), 'smoke/always-passes')
 })
 
+test('ids are built only from valid names, since they end up in paths and URLs', () => {
+  assert.throws(() => caseId('../x', 'c'), ConfigError)
+  assert.throws(() => caseId('s', 'a/b'), ConfigError)
+  assert.throws(() => trialKey({ suite: 's', case: 'c', config: 'Opus', trial: 1 }), ConfigError)
+})
+
+test('a run id that would not match its own grammar is refused', () => {
+  assert.throws(() => runId(new Date('+010000-01-01T00:00:00Z')), RangeError)
+  assert.throws(() => runId(new Date(0), 'zz/z'), RangeError)
+})
+
 test('names reject the trial-key delimiters and a leading dash or dot', () => {
   for (const bad of ['a/b', 'a@b', 'a#b', '-flag', '.hidden', 'Upper', '']) {
     assert.throws(() => assertName('case', bad), ConfigError, bad)

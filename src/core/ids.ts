@@ -15,13 +15,14 @@ export function assertName(kind: string, name: string): string {
   return name
 }
 
+// Ids end up in paths and URLs, so they are built only from valid names.
 export function caseId(suite: string, name: string): string {
-  return `${suite}/${name}`
+  return `${assertName('suite', suite)}/${assertName('case', name)}`
 }
 
 export function trialKey(ref: TrialRef): string {
   if (!Number.isSafeInteger(ref.trial) || ref.trial < 1) throw new RangeError(`trial must be a positive safe integer, got ${ref.trial}`)
-  return `${ref.suite}/${ref.case}@${ref.config}#${ref.trial}`
+  return `${caseId(ref.suite, ref.case)}@${assertName('config', ref.config)}#${ref.trial}`
 }
 
 // Built from NAME, so the two grammars cannot drift apart.
@@ -46,5 +47,7 @@ export function parseTrialKey(key: string): TrialRef | undefined {
 // a valid directory name on every OS (no colons).
 export function runId(now: Date = new Date(), suffix: string = randomBytes(2).toString('hex')): string {
   const stamp = now.toISOString().replace(/\.\d{3}Z$/, 'Z').replaceAll(':', '-')
-  return `${stamp}-${suffix}`
+  const id = `${stamp}-${suffix}`
+  if (!RUN_ID.test(id)) throw new RangeError(`"${id}" is not a run id (a year past 9999, or a suffix that is not 4 hex digits)`)
+  return id
 }
