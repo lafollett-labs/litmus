@@ -165,6 +165,12 @@ suites/examples/code-review/
 `change.patch`, under the OS temp directory, so no relative path reaches the
 case directory.
 
+`fake.yaml` is the suite author's own script, and it stands in for the model.
+It can therefore read its `text_file` from anywhere the author points it,
+including a case's `truth.yaml`. Scripting the right answer is how the grading
+pipeline is tested for $0, and under a `fake` config there is no subject to hide
+anything from.
+
 `validate` fails a case whose tree contains a symlink **after the change is
 applied**. A patch can create a symlink too, and an absolute link could point
 back at the case's ground truth.
@@ -473,7 +479,9 @@ network (SSO, IMDS, STS), and an empty chain fails before anything reaches the
 model. The error carries the credential provider's own message, such as an
 expired SSO session's `aws sso login` hint.
 
-OpenRouter can report a failure inside a 200: a top-level `error`, an `error`
+An OpenRouter answer's content may be a string or an array of parts. A
+refusal arrives in its own field, and it is the answer when there is no
+content. OpenRouter can report a failure inside a 200: a top-level `error`, an `error`
 on the choice, `finish_reason: "error"`, or no choice at all. None of these is
 an answer to grade, so each is an `InfraError`, classified by its code as an
 HTTP status would be (with no code, retryable).
