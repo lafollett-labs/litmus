@@ -11,7 +11,7 @@ test('a trial key round-trips through parse', () => {
 })
 
 test('a malformed trial key parses to undefined rather than a partial ref', () => {
-  for (const bad of ['code-review/go@opus', 'code-review@opus#1', 'a/b@c#0', 'a/b@c#-1', 'A/b@c#1', 'a/b/c@d#1', '']) {
+  for (const bad of ['code-review/go@opus', 'code-review@opus#1', 'a/b@c#0', 'a/b@c#-1', 'A/b@c#1', 'a/b/c@d#1', 'a/b@c#1\n', '']) {
     assert.equal(parseTrialKey(bad), undefined, bad)
   }
 })
@@ -41,7 +41,8 @@ test('a run id that would not match its own grammar is refused', () => {
 })
 
 test('names reject the trial-key delimiters and a leading dash or dot', () => {
-  for (const bad of ['a/b', 'a@b', 'a#b', '-flag', '.hidden', 'Upper', '']) {
+  // A JS $ without the m flag matches only at the very end, so a trailing newline fails too.
+  for (const bad of ['a/b', 'a@b', 'a#b', '-flag', '.hidden', 'Upper', 'safe\n', '']) {
     assert.throws(() => assertName('case', bad), ConfigError, bad)
   }
   assert.equal(assertName('config', 'opus-5.5_bedrock'), 'opus-5.5_bedrock')
