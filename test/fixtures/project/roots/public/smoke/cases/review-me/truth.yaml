@@ -1,0 +1,15 @@
+kind: seeded
+bugs:
+  - id: off-by-one
+    file: src/token.ts
+    lines: [1, 1]
+    severity: high
+    category: correctness
+    summary: Tokens live one second past expiry
+    proof: node --test
+    fix: fix/off-by-one.patch
+decoys:
+  - id: arrow-export
+    file: src/token.ts
+    lines: [1, 1]
+    summary: An exported arrow function is fine
