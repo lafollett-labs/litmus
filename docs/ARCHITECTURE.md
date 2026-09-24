@@ -420,8 +420,9 @@ subject wrote into `.git/` ever runs.
 
 - `PATH`, `LANG`, `LC_*`, `TERM` and `TMPDIR`.
 - `HOME`, pointed at a temporary directory created for the trial.
-- The toolchain cache variables `GOCACHE`, `GOMODCACHE`, `GOPATH` and
-  `npm_config_cache`, when they are set.
+- The toolchain variables `GOCACHE`, `GOMODCACHE`, `GOPATH`, `GOFLAGS` and
+  `npm_config_cache`, when they are set. `GOFLAGS` is the operator's own
+  setting, so it carries through to the `go` runs in `command` graders.
 - For the harness only, the one credential its provider needs.
 
 This keeps credentials out of the environment and out of the usual dotfile
