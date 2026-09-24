@@ -30,7 +30,7 @@ export type GraderResult = {
   grader: string
   pass: boolean
   score?: number
-  metrics?: Record<string, number>
+  metrics?: Record<string, number | null> // null when a ratio's denominator is 0
   rationale?: string
 }
 
@@ -52,7 +52,11 @@ export type TrialRecord = {
   started_at: string
   finished_at: string
   artifacts: string[] // names under artifacts/
+  tool_calls: number // from the transcript; WARN compares medians of it
+  findings: number | null // entries in findings.json, when the trial produced one
   subject_hash?: string
+  extractor_hash?: string
+  judge_hashes?: Record<string, string> // judge name -> hash, for every judge a grader called
 }
 
 export type VerdictKind = 'PASS' | 'FAIL' | 'FLAKY' | 'ERROR' | 'INCONCLUSIVE'
@@ -68,6 +72,9 @@ export type Verdict = {
   case: string
   config: string
   verdict: VerdictKind
+  // Why a verdict is INCONCLUSIVE: too few scored trials (infra trouble, exit
+  // 3) or an interval that has not cleared the threshold yet (exit 1).
+  inconclusive_reason: 'min_trials' | 'interval' | null
   policy: 'all' | 'rate'
   expect: 'pass' | 'fail'
   unexpected_pass: boolean // expect: fail, and at least one trial passed
@@ -93,7 +100,8 @@ export type Comparison = {
   a: string // label for the baseline side
   b: string
   cases: number // cases both sides scored
-  excluded: string[] // cases only one side ran, or one side could not score
+  excluded: { case: string; reason: string }[] // not paired: one side missing, unscored, or the case itself changed
+  notes: string[] // differences worth knowing that do not exclude a case (subject or plugin versions)
   flips: Flip[]
   delta: number | null // mean over cases of B's success rate minus A's
   interval: Interval | null // paired bootstrap 95%
