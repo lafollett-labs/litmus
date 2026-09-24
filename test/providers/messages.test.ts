@@ -92,12 +92,14 @@ test('auth, permission, bad requests, unknown models and missing credentials fai
     assert.ok(c instanceof InfraError, String(e))
     assert.equal(c.retryable, false, String(e))
   }
-  // Mantle wraps an empty AWS credential chain as a connection error; no retry finds credentials.
-  const aws = Object.assign(new Error('Could not load credentials from any providers'), { name: 'CredentialsProviderError' })
-  for (const e of [aws, new APIConnectionError({ message: 'Failed to resolve AWS credentials', cause: aws })]) {
+})
+
+test('an AWS credential failure stays retryable, as the SDK intends, and carries its own message', () => {
+  const sso = Object.assign(new Error("The SSO session has expired. To refresh it, run 'aws sso login'"), { name: 'CredentialsProviderError' })
+  for (const e of [sso, new APIConnectionError({ message: 'Failed to resolve AWS credentials from the credential provider chain.', cause: sso })]) {
     const c = classify(e) as InfraError
-    assert.equal(c.retryable, false)
-    assert.match(c.message, /no usable credentials/)
+    assert.equal(c.retryable, true)
+    assert.match(c.message, /^no usable credentials: The SSO session has expired.*aws sso login/)
   }
 })
 

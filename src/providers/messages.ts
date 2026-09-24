@@ -56,10 +56,13 @@ const FAILS_AGAIN = new Set(['invalid_request_error', 'authentication_error', 'p
 
 export function classify(e: unknown): unknown {
   if (e instanceof APIUserAbortError) return e // cancellation, not a failure
-  // Checked before connection errors: Mantle reports an AWS credential chain
-  // that found nothing as an APIConnectionError caused by it, and no retry
-  // will conjure credentials.
-  if (credentialFailure(e)) return new InfraError(`no usable credentials: ${(e as Error).message}`, { retryable: false, cause: e })
+  // Mantle wraps an AWS credential failure in an APIConnectionError. It stays
+  // retryable, as the SDK intends (resolution is network-bound: SSO, IMDS,
+  // STS), and an empty chain fails before anything reaches the model. The
+  // message is the credential error's own, which names the fix (an expired SSO
+  // session says to run `aws sso login`).
+  const cred = credentialFailure(e)
+  if (cred) return new InfraError(`no usable credentials: ${cred.message}`, { cause: e })
   if (e instanceof APIConnectionError) return new InfraError(`connection failed: ${e.message}`, { cause: e })
   if (e instanceof APIError) {
     const id = e.requestID ? ` (request ${e.requestID})` : '' // the id Anthropic support asks for
@@ -82,9 +85,9 @@ export function classify(e: unknown): unknown {
   return e
 }
 
-function credentialFailure(e: unknown): boolean {
+function credentialFailure(e: unknown): Error | undefined {
   for (let c: unknown = e; c instanceof Error; c = c.cause) {
-    if (c.name === 'CredentialsProviderError') return true
+    if (c.name === 'CredentialsProviderError') return c
   }
-  return false
+  return undefined
 }
