@@ -1,0 +1,15 @@
+node_modules/
+dist/
+ui/dist/
+.DS_Store
+*.log
+
+# Keys stay in the environment, never in the tree.
+.env
+.env.*
+!.env.example
+
+# Run output. Transcripts hold whatever a subject saw — treat them as sensitive.
+.litmus/
+test-results/
+playwright-report/
