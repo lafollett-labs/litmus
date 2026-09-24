@@ -210,6 +210,18 @@ test('a plugin that declares hooks is refused unless the case sets allow_hooks',
   assert.equal(calls[0]!.plugins![0]!.path, plugin)
 })
 
+test('a plugin root that is itself a symlink is refused, allow_hooks or not', async () => {
+  const link = join(realpathSync(tree({ '.keep': '' })), 'plugin-link')
+  symlinkSync(pluginTree({ 'skills/x/SKILL.md': '---\nname: x\n---\nhi\n' }), link)
+  const { query, calls } = scripted([result()])
+  for (const extra of ['', '  allow_hooks: true\n']) {
+    const r = await runHarness(job(HARNESS(`  plugins: [${link}]\n${extra}`)), query)
+    assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
+    assert.match(r.reason ?? '', /plugin-link is a symlink; name the directory it points at/)
+  }
+  assert.equal(calls.length, 0)
+})
+
 test('under project settings, a fixture\'s settings may set only $schema', async () => {
   const project = HARNESS('  setting_sources: [project]\n')
   const run = (settings: string, file = 'fixture/.claude/settings.json') => runHarness(job(project, { [file]: settings }), scripted([result()]).query)

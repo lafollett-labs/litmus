@@ -316,6 +316,8 @@ const runs = (reason: string): Refusal => ({ reason, fix: RUNS, waivable: true }
 const blocks = (reason: string, fix: string): Refusal => ({ reason, fix, waivable: false })
 
 export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | undefined {
+  // The walk lstats everything below the root; the root itself is checked here.
+  if (lstatSync(dir).isSymbolicLink()) return blocks(`plugin ${dir} is a symlink`, 'name the directory it points at')
   if (!allowHooks) for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return runs(`plugin ${dir} has ${f}`)
   const manifest = join(dir, '.claude-plugin/plugin.json')
   if (existsSync(manifest)) {
