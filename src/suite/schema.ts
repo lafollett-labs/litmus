@@ -21,10 +21,26 @@ const modelConfig = {
   params: z.record(z.string(), z.unknown()).optional(),
 }
 
+// Server-side model fallbacks answer with another model when the first fails
+// or declines, and an eval that silently measured a different model is worse
+// than an ERROR (ARCHITECTURE § Provider). Each provider's switches for them
+// are refused here, before anything is sent.
+const fallbackParams = (keys: string[]) => (d: { params?: Record<string, unknown> | undefined }) => !d.params || !keys.some(k => k in d.params!)
+const refused = (keys: string[], who: string) => ({
+  message: `params.${keys.join(' and params.')} ${keys.length === 1 ? 'is' : 'are'} ${who} model fallbacks, which litmus never enables`,
+  path: ['params'],
+})
+
 export const ConfigDef = z.discriminatedUnion('provider', [
-  z.strictObject({ provider: z.literal('anthropic'), ...modelConfig }),
-  z.strictObject({ provider: z.literal('bedrock'), ...modelConfig, region: z.string().min(1).optional() }),
-  z.strictObject({ provider: z.literal('openrouter'), ...modelConfig }),
+  z.strictObject({ provider: z.literal('anthropic'), ...modelConfig }).refine(fallbackParams(['fallbacks']), refused(['fallbacks'], 'Anthropic')),
+  z
+    .strictObject({ provider: z.literal('bedrock'), ...modelConfig, region: z.string().min(1).optional() })
+    .refine(fallbackParams(['fallbacks']), refused(['fallbacks'], 'Anthropic')),
+  z
+    .strictObject({ provider: z.literal('openrouter'), ...modelConfig })
+    .refine(fallbackParams(['models', 'route']), refused(['models', 'route'], 'OpenRouter'))
+    // A router picks a different model per request, so it measures nothing in particular.
+    .refine(d => d.model !== 'openrouter/auto', { message: 'openrouter/auto picks a model per request; name the model to measure', path: ['model'] }),
   z.strictObject({ provider: z.literal('fake'), model: z.string().default('fake') }),
 ])
 export type ConfigDef = z.infer<typeof ConfigDef>

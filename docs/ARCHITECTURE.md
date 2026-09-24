@@ -136,7 +136,11 @@ too, so token budgets go through `effort` and the executor's `max_tokens`.
 
 Keys never appear in this file. Each provider reads its key from the standard
 environment variables: `ANTHROPIC_API_KEY`, the AWS credential chain, and
-`OPENROUTER_API_KEY`.
+`OPENROUTER_API_KEY`. The Anthropic provider uses `ANTHROPIC_API_KEY` and
+nothing else. It never falls back to `ANTHROPIC_AUTH_TOKEN` or to a saved login
+profile, whose `base_url` could send the eval to another host and bill another
+account. A Bedrock config takes its region from `region`, then `AWS_REGION`,
+then `AWS_DEFAULT_REGION`. With none of them set, it is a config error.
 
 ## Suite and case files
 
@@ -160,6 +164,12 @@ suites/examples/code-review/
 `{{fixture}}` never renders them. A workdir is built only from `fixture/` and
 `change.patch`, under the OS temp directory, so no relative path reaches the
 case directory.
+
+`fake.yaml` is the suite author's own script, and it stands in for the model.
+It can therefore read its `text_file` from anywhere the author points it,
+including a case's `truth.yaml`. Scripting the right answer is how the grading
+pipeline is tested for $0, and under a `fake` config there is no subject to hide
+anything from.
 
 `validate` fails a case whose tree contains a symlink **after the change is
 applied**. A patch can create a symlink too, and an absolute link could point
@@ -454,15 +464,47 @@ interface Provider {
 
 Every provider error is classified at the boundary and thrown as `InfraError`:
 
-- Retryable: 408, 409, 429, 5xx, and connection failures.
-- Not retryable: auth failures, 4xx responses, and a missing key. The same
-  request would fail again, so the trial settles as `error` without using up
-  its retries.
+- Retryable: 408, 409, 429, 5xx, and connection failures. Also retryable:
+  - a stream that fails in flight (a dropped connection, a body that ends
+    before `message_stop`, malformed SSE)
+  - an error event mid-stream, which has no HTTP status, unless its type says
+    the request itself was wrong (`invalid_request_error`, an auth, permission
+    or billing error, `not_found_error`, `request_too_large`)
+- Not retryable: auth failures, other 4xx responses, and a missing key. The
+  same request would fail again, so the trial settles as `error` without using
+  up its retries.
+
+An AWS credential failure is retryable. Resolving credentials goes over the
+network (SSO, IMDS, STS), and an empty chain fails before anything reaches the
+model. The error carries the credential provider's own message, such as an
+expired SSO session's `aws sso login` hint.
+
+An OpenRouter answer's content may be a string or an array of parts. A
+refusal arrives in its own field, and it is the answer when there is no
+content. An empty answer is the model's result only when its finish reason says
+why (`length` or `content_filter`). Otherwise it is a retryable infra error,
+since that is how an upstream hiccup looks through OpenRouter. OpenRouter can
+also report a failure inside a 200: a top-level `error`, an `error`
+on the choice, `finish_reason: "error"`, or no choice at all. None of these is
+an answer to grade, so each is an `InfraError`, classified by its code as an
+HTTP status would be (with no code, retryable).
 
 A refusal or a truncated response is returned as text, and the graders judge
 it. SDK retries are turned off, because the runner owns retries. Server-side
 model fallbacks are never enabled: a fallback answers with a different model,
-and an eval that silently measures the wrong model is worse than an ERROR.
+and an eval that silently measures the wrong model is worse than an ERROR. The
+config refuses at load each provider's switch for them: Anthropic's
+`fallbacks`, and OpenRouter's `models`, `route` and `openrouter/auto`.
+OpenRouter's routing between hosts of the same model is not a model fallback,
+and stays on.
+
+Usage counts cached input tokens (cache reads and writes) as input tokens. When
+a provider reports no cost, the pricing fallback prices all of them at the full
+input rate. That is approximate: cache reads are overpriced (they bill at about
+0.1×), and cache writes are underpriced by up to 2×. For a bring-your-own-key
+OpenRouter request, cost is OpenRouter's fee plus the upstream charge it reports.
+If the upstream charge is missing, no cost is recorded and the pricing fallback
+estimates it.
 
 ### Executor
 
