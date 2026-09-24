@@ -567,9 +567,17 @@ scrubbed environment and these settings:
   `allow_shell`.
 - Credentials: `anthropic` requires `ANTHROPIC_API_KEY`, and a claude.ai login
   is never used. `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS
-  credential variables. Pairing a harness with `openrouter` or `fake` is a
-  config error.
+  credential variables, including `AWS_BEARER_TOKEN_BEDROCK`. With
+  `AWS_PROFILE`, it points `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`
+  at the operator's own files, because `HOME` is redirected. Pairing a harness
+  with `openrouter` or `fake` is a config error.
 - `maxTurns` comes from the case, and the trial's timeout aborts the session.
+- **Result.** A turn that ends on an API error arrives as a `success` result
+  with `is_error` set, and its text is the error. It is an `infra_error`,
+  classified by `api_error_status` like any provider error, and never graded.
+  Tokens come from `modelUsage`, which covers every model call in the session,
+  subagents included; `usage` covers the main loop only. Cost is
+  `total_cost_usd`.
 
 Every tool call passes through a default-deny gate. The gate is a PreToolUse
 hook, not only `canUseTool`: Claude Code approves read-only tools, and tools
@@ -578,7 +586,7 @@ fires on every call, subagents' included.
 
 | Tool | Allowed when |
 | - | - |
-| Read, Glob, Grep | The realpath is inside the workdir, or inside a plugin or subject root (read-only), and not inside any suite root |
+| Read, Glob, Grep, LS | The realpath is inside the workdir, or inside a plugin or subject root (read-only), and not inside any suite root. A Glob or Grep is also refused when a suite root lies anywhere below its base, since it would descend into it |
 | Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` |
 | Agent (subagents), TodoWrite, Skill | Always. Subagent tool calls pass through the same gate |
 | Bash | `allow_shell: true` |
@@ -593,6 +601,17 @@ Every refusal is written to the transcript. The trial's artifacts are:
 The gate refuses any realpath inside a configured suite root, even one that is
 also inside a plugin or subject root. A private suite kept in the plugin repo
 it evaluates therefore stays out of reach.
+
+Paths are resolved the way the tool would resolve them, then judged:
+
+- A pattern is relative to the tool's `path`, and its reach is its literal
+  prefix.
+- A pattern with `..` after a wildcard is refused, and so is a path starting
+  with `~`.
+- A symlink is judged by where it lands. A dangling symlink on the way is
+  refused, since writing through it would create its target, wherever that is.
+- A directory subject is its own read root. A file subject's read root is the
+  folder it sits in.
 
 ### Extract
 
