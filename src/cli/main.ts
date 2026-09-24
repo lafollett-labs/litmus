@@ -48,7 +48,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
         return 2
     }
   } catch (e) {
-    if (e instanceof ConfigError || (e instanceof TypeError && 'code' in e && String(e.code).startsWith('ERR_PARSE_ARGS'))) {
+    if (e instanceof TypeError && 'code' in e && String(e.code).startsWith('ERR_PARSE_ARGS')) {
+      io.err(`${e.message}\n\n${USAGE}`)
+      return 2
+    }
+    if (e instanceof ConfigError) {
       io.err(e.message)
       return 2
     }

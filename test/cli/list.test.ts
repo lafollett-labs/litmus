@@ -53,6 +53,13 @@ test('help exits 0 with usage on stdout; no command at all exits 2 with usage on
   assert.match(none.stderr, /usage: litmus/)
 })
 
+test('a bad flag prints the usage after the error; a config error prints only the error', () => {
+  const flag = litmus('list', '--bogus')
+  assert.match(flag.stderr, /Unknown option '--bogus'[\s\S]*usage: litmus/)
+  const config = litmus('list', '--config-file', '/no/such.yaml')
+  assert.doesNotMatch(config.stderr, /usage: litmus/)
+})
+
 test('an undefined judge name exits 2 through the CLI, so every command that loads a project checks it', () => {
   const root = tree({
     'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\n',
