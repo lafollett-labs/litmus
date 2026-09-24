@@ -8,3 +8,10 @@ test('each error class is distinguishable by instanceof and by name', () => {
   assert.ok(errors[0] instanceof InfraError && !(errors[0] instanceof ModelFailure))
   assert.ok(errors.every(e => e instanceof Error))
 })
+
+test('an infra error is retryable unless the caller says it will fail the same way every time', () => {
+  assert.equal(new InfraError('throttled').retryable, true)
+  assert.equal(new InfraError('key revoked', { retryable: false }).retryable, false)
+  const cause = new Error('socket hang up')
+  assert.equal(new InfraError('connection failed', { cause }).cause, cause)
+})
