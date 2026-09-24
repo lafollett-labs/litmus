@@ -1,0 +1,4 @@
+name: smoke
+defaults:
+  trials: 3
+  tags: [smoke]

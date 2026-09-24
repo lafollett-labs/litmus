@@ -1,0 +1,10 @@
+name: secret-case
+expect: fail
+executor:
+  kind: harness
+  harness: claude-code
+  prompt: /review
+graders:
+  - kind: tool-used
+    tool: Agent
+    max: 3

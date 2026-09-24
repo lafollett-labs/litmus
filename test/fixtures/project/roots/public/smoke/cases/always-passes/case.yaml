@@ -1,0 +1,9 @@
+name: always-passes
+executor:
+  kind: model
+  prompt: Say hello.
+graders:
+  - kind: regex
+    target: response.txt
+    pattern: hello
+    min: 1

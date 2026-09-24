@@ -1,0 +1,14 @@
+name: review-me
+description: One seeded bug and one decoy
+expect: pass
+executor:
+  kind: model
+  prompt_file: prompt.md
+graders:
+  - kind: json-schema
+    artifact: findings.json
+    schema: litmus:findings
+  - kind: review-match
+    pass: { min_recall: 1.0, max_decoy_hits: 0 }
+trials: 5
+tags: [review, ts]
