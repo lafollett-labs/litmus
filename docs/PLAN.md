@@ -36,7 +36,7 @@ stay on the branch, and their messages go into the squash commit's body.
   - Done when: `npm run check && npm test` passes locally and in CI on the PR.
     After merge, the `main` ruleset requires the `check` job.
 
-- [ ] **M1: Suites and config**
+- [x] **M1: Suites and config**
   - zod schemas for `litmus.config.yaml`, `suite.yaml`, `case.yaml`,
     `truth.yaml` and `litmus:findings`. The rules they enforce:
     - the NAME grammar
@@ -46,6 +46,9 @@ stay on the branch, and their messages go into the squash commit's body.
     - `allow_hooks`
     - `extract`
     - `min_trials` defaults to ceil(trials / 2)
+    - the `compare` ranges, and a `rate` threshold inside (0, 1)
+    - `params` refused when it holds a credential-shaped key, `headers`, or a
+      live credential value, at any depth
   - Suite discovery across several roots, with an error when two suites share
     a name.
   - Paths resolved relative to the file that names them, and subject content
