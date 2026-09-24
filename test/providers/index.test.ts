@@ -58,7 +58,7 @@ test('openrouter reads its key from the env it is given', async () => {
   )
 })
 
-test('bedrock takes its region from the config or AWS_REGION, and has none is a config error before any trial', () => {
+test('bedrock takes its region from the config or AWS_REGION, and none at all is a config error before any trial', () => {
   assert.equal(createProvider({ provider: 'bedrock', model: 'm' }, { AWS_REGION: 'eu-west-1' }).id, 'bedrock')
   assert.equal(createProvider({ provider: 'bedrock', model: 'm' }, { AWS_DEFAULT_REGION: 'eu-west-1' }).id, 'bedrock')
   assert.throws(() => createProvider({ provider: 'bedrock', model: 'm' }, {}), (e: unknown) => e instanceof ConfigError && /has no region/.test(String(e)))
