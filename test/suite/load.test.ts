@@ -1,9 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { chmodSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ConfigError } from '../../src/core/errors.ts'
 import { sha256 } from '../../src/core/hash.ts'
-import { discoverSuites, loadConfig } from '../../src/suite/load.ts'
+import { discoverSuites, effectiveMinTrials, loadConfig } from '../../src/suite/load.ts'
 import { tree } from '../helpers/tmp.ts'
 
 const FIXTURE = join(import.meta.dirname, '../fixtures/project/litmus.config.yaml')
@@ -79,10 +80,15 @@ test('review-match without truth.yaml, a missing fix patch, and a missing prompt
   assert.throws(() => discoverSuites([noPrompt]), /prompt_file not found/)
 })
 
-test('min_trials defaults to half the trials, rounded up', () => {
+test('an unset min_trials is half the trials requested, rounded up; a set one is capped by them', () => {
   const [smoke] = discoverSuites(loadConfig(FIXTURE).roots)
-  assert.equal(smoke!.cases[0]!.settings.min_trials, 2) // 3 trials
-  assert.equal(smoke!.cases[1]!.settings.min_trials, 3) // 5 trials
+  const [three, five] = [smoke!.cases[0]!.settings, smoke!.cases[1]!.settings]
+  assert.equal(three.min_trials, undefined)
+  assert.equal(effectiveMinTrials(three), 2) // 3 trials
+  assert.equal(effectiveMinTrials(five), 3) // 5 trials
+  assert.equal(effectiveMinTrials(five, 4), 2) // --trials 4: half of what ran, not of what the case says
+  assert.equal(effectiveMinTrials({ ...five, min_trials: 4 }), 4)
+  assert.equal(effectiveMinTrials({ ...five, min_trials: 4 }, 2), 2)
 })
 
 test('min_trials above trials is an error', () => {
@@ -124,8 +130,120 @@ test('params refuse a value equal to a live credential, including one named in r
   const key = 'sk-ant-test-0123456789'
   assert.throws(() => loadConfig(withParams(`{ note: [${key}] }`), { ANTHROPIC_API_KEY: key }), /holds the value of a credential variable/)
   const root = tree({
-    'litmus.config.yaml': `suites: [./s]\nredact: [MY_GATEWAY_TOKEN]\njudges:\n  j:\n    provider: fake\n    model: f\n    params: { user: gw-secret-value }\nconfigs:\n  a: { provider: fake }\n`,
+    'litmus.config.yaml': `suites: [./s]\nredact: [MY_GATEWAY_TOKEN]\njudges:\n  j:\n    provider: anthropic\n    model: m\n    params: { user: gw-secret-value }\nconfigs:\n  a: { provider: fake }\n`,
   })
   assert.throws(() => loadConfig(join(root, 'litmus.config.yaml'), { MY_GATEWAY_TOKEN: 'gw-secret-value' }), /judges\.j\.params\.user holds/)
   assert.doesNotThrow(() => loadConfig(join(root, 'litmus.config.yaml'), { ANTHROPIC_API_KEY: '' }))
+})
+
+const CASE = (extra = '') => `name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, pattern: x }]\n${extra}`
+const configError = (re: RegExp) => (e: Error) => e instanceof ConfigError && re.test(e.message)
+
+test('a filesystem surprise on an authored path is a config error, never a crash', () => {
+  const dirPrompt = tree({ ...suite('s'), 's/cases/c/case.yaml': 'name: c\nexecutor: { kind: model, prompt_file: p }\ngraders: [{ kind: regex, pattern: x }]\n', 's/cases/c/p/x': '' })
+  assert.throws(() => discoverSuites([dirPrompt]), configError(/prompt_file at .* is not a file/))
+
+  const dirFix = tree({
+    ...suite('s'),
+    's/cases/c/truth.yaml': 'kind: seeded\nbugs: [{ id: b, file: a, lines: [1, 1], severity: low, category: x, summary: s, proof: p, fix: fix }]\n',
+    's/cases/c/fix/b.patch': '',
+  })
+  assert.throws(() => discoverSuites([dirFix]), configError(/fix for bug "b" at .* is not a file/))
+
+  const dangling = tree(suite('s'))
+  symlinkSync(join(dangling, 'nowhere'), join(dangling, 'gone'))
+  assert.throws(() => discoverSuites([dangling]), configError(/gone is a broken symlink/))
+
+  if (process.getuid?.() !== 0) {
+    const locked = tree({ ...suite('s'), 's/cases/c/case.yaml': 'name: c\nexecutor: { kind: model, prompt_file: p.md }\ngraders: [{ kind: regex, pattern: x }]\n', 's/cases/c/p.md': 'hi' })
+    chmodSync(join(locked, 's/cases/c/p.md'), 0o000)
+    assert.throws(() => discoverSuites([locked]), configError(/cannot read .*p\.md/))
+    chmodSync(join(locked, 's/cases/c/p.md'), 0o644)
+  }
+})
+
+test('a root with no suites, or a root one level too deep, is an error rather than an empty run', () => {
+  assert.throws(() => discoverSuites([tree({ 'notes.md': '' })]), /holds no suite/)
+  const deep = tree(suite('s'))
+  assert.throws(() => discoverSuites([join(deep, 's')]), /looks like a suite but has no suite\.yaml|holds no suite/)
+  assert.throws(() => discoverSuites([tree({ 'x/suite.yml': 'name: x\n' })]), /x looks like a suite but has no suite\.yaml/)
+})
+
+test('every directory under cases/ is a case, except the _ and . ones', () => {
+  const typo = tree({ ...suite('s'), 's/cases/d/case.yml': CASE() })
+  assert.throws(() => discoverSuites([typo]), /cases\/d has no case\.yaml/)
+  const shared = tree({ ...suite('s'), 's/cases/_shared/diff.patch': '', 's/cases/.cache/x': '', 's/cases/README.md': '' })
+  assert.deepEqual(discoverSuites([shared])[0]!.cases.map(c => c.name), ['c'])
+})
+
+test('a case directory must be named for its case, and suite and case names follow the NAME grammar', () => {
+  assert.throws(() => discoverSuites([tree({ ...suite('s'), 's/cases/c/case.yaml': CASE().replace('name: c', 'name: other') })]), /case "other" lives in .*must be named "other"/)
+  assert.throws(() => discoverSuites([tree({ 'Bad/suite.yaml': 'name: Bad\n' })]), /name: must be lowercase/)
+})
+
+test('a directory subject is hashed by its tree, and only a harness may have one', () => {
+  const harness = 'name: c\nsubject: ../../plugin\nexecutor: { kind: harness, harness: claude-code, prompt: /review }\ngraders: [{ kind: regex, pattern: x }]\n'
+  const make = (files: Record<string, string>) => tree({ ...suite('s'), 's/cases/c/case.yaml': harness, ...files })
+  const one = discoverSuites([make({ 's/plugin/a.md': 'A', 's/plugin/sub/b.md': 'B' })])[0]!.cases[0]!.subject
+  const same = discoverSuites([make({ 's/plugin/sub/b.md': 'B', 's/plugin/a.md': 'A', 's/plugin/.git/HEAD': 'x' })])[0]!.cases[0]!.subject
+  const edited = discoverSuites([make({ 's/plugin/a.md': 'A!', 's/plugin/sub/b.md': 'B' })])[0]!.cases[0]!.subject
+  const renamed = discoverSuites([make({ 's/plugin/a2.md': 'A', 's/plugin/sub/b.md': 'B' })])[0]!.cases[0]!.subject
+  assert.equal(one?.kind, 'dir')
+  assert.equal(one?.hash, same?.hash)
+  assert.notEqual(one?.hash, edited?.hash)
+  assert.notEqual(one?.hash, renamed?.hash)
+
+  const linked = make({ 's/plugin/a.md': 'A' })
+  symlinkSync('/etc/hosts', join(linked, 's/plugin/hosts'))
+  assert.throws(() => discoverSuites([linked]), configError(/hosts is a symlink/))
+
+  const model = tree({ ...suite('s'), 's/plugin/a.md': 'A', 's/cases/c/case.yaml': CASE('subject: ../../plugin\n') })
+  assert.throws(() => discoverSuites([model]), /a model case's subject is its system prompt, so it must be a file/)
+  assert.throws(() => discoverSuites([tree({ ...suite('s'), 's/cases/c/case.yaml': CASE('subject: ../../nope.md\n') })]), /subject not found/)
+})
+
+test('a file subject is hashed by its bytes, not by decoded text', () => {
+  const root = tree({ ...suite('s'), 's/cases/c/case.yaml': CASE('subject: s.bin\n') })
+  writeFileSync(join(root, 's/cases/c/s.bin'), Buffer.from([0xff, 0x41]))
+  const a = discoverSuites([root])[0]!.cases[0]!.subject?.hash
+  writeFileSync(join(root, 's/cases/c/s.bin'), Buffer.from([0xfe, 0x41]))
+  const b = discoverSuites([root])[0]!.cases[0]!.subject?.hash
+  assert.notEqual(a, b) // both decode to U+FFFD A
+})
+
+test('a prompt_file or subject that points at a case\'s answers is refused', () => {
+  const answers = {
+    ...suite('s'),
+    's/cases/c/truth.yaml': 'kind: clean\n',
+    's/cases/c/fake.yaml': 'responses: []\n',
+    's/cases/c/fix/b.patch': '',
+    's/cases/c/proof/t.sh': '',
+  }
+  for (const target of ['truth.yaml', 'fake.yaml', 'fix/b.patch', 'proof/t.sh']) {
+    const viaPrompt = tree({ ...answers, 's/cases/d/case.yaml': `name: d\nexecutor: { kind: model, prompt_file: ../c/${target} }\ngraders: [{ kind: regex, pattern: x }]\n` })
+    assert.throws(() => discoverSuites([viaPrompt]), /prompt_file .* is a case's ground truth/, target)
+    const viaSubject = tree({ ...answers, 's/cases/d/case.yaml': `name: d\nsubject: ../c/${target}\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, pattern: x }]\n` })
+    assert.throws(() => discoverSuites([viaSubject]), /subject .* is a case's ground truth/, target)
+  }
+  const fine = tree({ ...suite('s'), 's/docs/fix/notes.md': 'not a case', 's/cases/c/case.yaml': CASE('subject: ../../docs/fix/notes.md\n') })
+  assert.equal(discoverSuites([fine])[0]!.cases[0]!.subject?.kind, 'file')
+})
+
+test('a recursive YAML alias is a config error, not a stack overflow', () => {
+  assert.throws(() => loadConfig(withParams('&p { self: *p }'), {}), configError(/a YAML alias refers to itself/))
+  const shared = loadConfig(withParams('{ a: &x { temperature: 0 }, b: *x }'), {})
+  assert.ok(shared.configs.a)
+})
+
+test('harness plugins and json-schema files are resolved and checked at load', () => {
+  const harness = (plugins: string) => `name: c\nexecutor: { kind: harness, harness: claude-code, prompt: /review, plugins: [${plugins}] }\ngraders: [{ kind: regex, pattern: x }]\n`
+  const ok = tree({ ...suite('s'), 's/plugins/p/x.md': '', 's/cases/c/case.yaml': harness('../../plugins/p') })
+  const c = discoverSuites([ok])[0]!.cases[0]!
+  assert.deepEqual(c.plugins, [join(ok, 's/plugins/p')])
+  assert.throws(() => discoverSuites([tree({ ...suite('s'), 's/cases/c/case.yaml': harness('../../plugins/nope') })]), /plugin \.\.\/\.\.\/plugins\/nope is not a directory/)
+
+  const schema = (s: string) => `name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: json-schema, artifact: out.json, schema: ${s} }]\n`
+  assert.throws(() => discoverSuites([tree({ ...suite('s'), 's/cases/c/case.yaml': schema('out.schema.json') })]), /schema out\.schema\.json not found/)
+  assert.doesNotThrow(() => discoverSuites([tree({ ...suite('s'), 's/cases/c/case.yaml': schema('litmus:findings') })]))
+  assert.deepEqual(discoverSuites([tree(suite('s'))])[0]!.cases[0]!.plugins, [])
 })

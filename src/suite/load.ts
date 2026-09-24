@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, type Stats } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import type { z } from 'zod'
@@ -7,17 +7,27 @@ import { ConfigError } from '../core/errors.ts'
 import { sha256 } from '../core/hash.ts'
 import { caseId } from '../core/ids.ts'
 import { CaseFile, ConfigFile, SuiteFile, TruthFile } from './schema.ts'
+import { hashTree } from './tree.ts'
+
+// Everything here reads operator-authored files, so every failure is a
+// ConfigError (exit 2), never a stack trace (exit 1, which `run` uses for a
+// blocking verdict).
 
 export type Config = ConfigFile & { file: string; dir: string; roots: string[]; resultsDir: string }
 
 export type Settings = {
   trials: number
-  min_trials: number
+  min_trials?: number // as written (case, then suite); read it through effectiveMinTrials
   policy: 'all' | 'rate'
   threshold: number
   timeout_s: number
   tags: string[]
 }
+
+// A file subject is text the model executor can use as its system prompt. A
+// directory subject (a plugin, a skill folder) is only a version: the harness
+// loads it itself.
+export type Subject = { kind: 'file'; path: string; hash: string; content: string } | { kind: 'dir'; path: string; hash: string }
 
 export type LoadedCase = {
   id: string
@@ -27,20 +37,28 @@ export type LoadedCase = {
   spec: CaseFile
   settings: Settings
   prompt: string // the resolved prompt text, whichever of prompt / prompt_file the case gave
+  plugins: string[] // absolute plugin roots (harness cases); [] otherwise
   fixtureDir?: string
   changePatch?: string
   truth?: TruthFile
   fakeFile?: string
-  subject?: { path: string; hash: string; content: string }
+  subject?: Subject
 }
 
 export type LoadedSuite = { name: string; dir: string; spec: SuiteFile; cases: LoadedCase[] }
 
 const BUILTIN = { trials: 3, policy: 'all', threshold: 0.8, timeout_s: 600 } as const
 
+// The verdict needs min(min_trials, requested) scored trials, and an unset
+// min_trials is half the trials requested this run, rounded up: one trial that
+// survived two infra errors is not evidence of PASS (ARCHITECTURE § Flow).
+export function effectiveMinTrials(s: Settings, requested: number = s.trials): number {
+  return s.min_trials === undefined ? Math.ceil(requested / 2) : Math.min(s.min_trials, requested)
+}
+
 export function loadConfig(file: string, env: NodeJS.ProcessEnv = process.env): Config {
   const path = resolve(file)
-  if (!existsSync(path)) throw new ConfigError(`no config at ${path} (pass --config, or create litmus.config.yaml)`)
+  if (!stat(path)?.isFile()) throw new ConfigError(`no config at ${path} (pass --config-file, or create litmus.config.yaml)`)
   const spec = parseFile(path, ConfigFile)
   const secrets = new Set([...CREDENTIAL_VARS, ...spec.redact].map(n => env[n]).filter(v => typeof v === 'string' && v !== ''))
   for (const [section, defs] of Object.entries({ configs: spec.configs, judges: spec.judges })) {
@@ -74,34 +92,47 @@ function refuseCredentials(value: unknown, where: string, secrets: Set<unknown>,
 // Suites are the immediate subdirectories of each root that hold a suite.yaml.
 // A name that appears under two roots is an error, not a shadow: a private
 // suite silently replacing a public one of the same name is a gate that
-// measures something other than what its name says.
+// measures something other than what its name says. A root with no suites is
+// an error too: a mistyped root path would otherwise run nothing and exit 0.
 export function discoverSuites(roots: string[]): LoadedSuite[] {
   const seen = new Map<string, string>()
   const suites: LoadedSuite[] = []
   for (const root of roots) {
-    if (!existsSync(root) || !statSync(root).isDirectory()) throw new ConfigError(`suite root ${root} is not a directory`)
-    for (const entry of readdirSync(root).sort()) {
-      const dir = join(root, entry)
-      if (!statSync(dir).isDirectory() || !existsSync(join(dir, 'suite.yaml'))) continue
+    if (!stat(root)?.isDirectory()) throw new ConfigError(`suite root ${root} is not a directory`)
+    let found = 0
+    for (const dir of entries(root)) {
+      if (!dirOrBrokenLink(dir)) continue
+      if (!stat(join(dir, 'suite.yaml'))?.isFile()) {
+        if (stat(join(dir, 'suite.yml')) || stat(join(dir, 'cases'))) throw new ConfigError(`${dir} looks like a suite but has no suite.yaml`)
+        continue
+      }
       const suite = loadSuite(dir)
       const prior = seen.get(suite.name)
       if (prior) throw new ConfigError(`suite "${suite.name}" is defined twice: ${prior} and ${dir}`)
       seen.set(suite.name, dir)
       suites.push(suite)
+      found++
     }
+    if (found === 0) throw new ConfigError(`suite root ${root} holds no suite (no <dir>/suite.yaml under it)`)
   }
   return suites
 }
 
+// Every directory under cases/ is a case, so a case.yml typo is an error rather
+// than a case that silently stops running. A name that can never be a case
+// name (leading . or _) is skipped, which leaves room for shared files.
 export function loadSuite(dir: string): LoadedSuite {
   const spec = parseFile(join(dir, 'suite.yaml'), SuiteFile)
   expectDirName(spec.name, dir, 'suite')
   const casesDir = join(dir, 'cases')
-  const names = existsSync(casesDir) ? readdirSync(casesDir).sort() : []
-  const cases = names
-    .map(n => join(casesDir, n))
-    .filter(d => statSync(d).isDirectory() && existsSync(join(d, 'case.yaml')))
-    .map(d => loadCase(spec, d))
+  const cases: LoadedCase[] = []
+  for (const d of stat(casesDir)?.isDirectory() ? entries(casesDir) : []) {
+    if (!dirOrBrokenLink(d) || /^[._]/.test(basename(d))) continue
+    if (!stat(join(d, 'case.yaml'))?.isFile()) {
+      throw new ConfigError(`${d} has no case.yaml; every directory under cases/ is a case (prefix it with _ to keep other files there)`)
+    }
+    cases.push(loadCase(spec, d))
+  }
   if (cases.length === 0) throw new ConfigError(`suite "${spec.name}" has no cases under ${casesDir}`)
   return { name: spec.name, dir, spec, cases }
 }
@@ -111,58 +142,79 @@ function loadCase(suite: SuiteFile, dir: string): LoadedCase {
   const spec = parseFile(file, CaseFile)
   expectDirName(spec.name, dir, 'case')
   const d = suite.defaults
-  const trials = spec.trials ?? d.trials ?? BUILTIN.trials
   const settings: Settings = {
-    trials,
-    // Half the trials, rounded up, must score before a verdict counts: one
-    // trial that survived two infra errors is not evidence of PASS.
-    min_trials: spec.min_trials ?? d.min_trials ?? Math.ceil(trials / 2),
+    trials: spec.trials ?? d.trials ?? BUILTIN.trials,
     policy: spec.policy ?? d.policy ?? BUILTIN.policy,
     threshold: spec.threshold ?? d.threshold ?? BUILTIN.threshold,
     timeout_s: spec.timeout_s ?? d.timeout_s ?? BUILTIN.timeout_s,
     tags: [...new Set([...(d.tags ?? []), ...(spec.tags ?? [])])],
   }
-  if (settings.min_trials > settings.trials) {
-    throw new ConfigError(`${file}: min_trials (${settings.min_trials}) exceeds trials (${settings.trials})`)
+  const minTrials = spec.min_trials ?? d.min_trials
+  if (minTrials !== undefined) {
+    if (minTrials > settings.trials) throw new ConfigError(`${file}: min_trials (${minTrials}) exceeds trials (${settings.trials})`)
+    settings.min_trials = minTrials
   }
 
-  const prompt = spec.executor.prompt ?? readRequired(resolve(dir, spec.executor.prompt_file!), file, 'prompt_file')
-  const loaded: LoadedCase = { id: caseId(suite.name, spec.name), suite: suite.name, name: spec.name, dir, spec, settings, prompt }
+  const promptFile = spec.executor.prompt_file === undefined ? undefined : resolve(dir, spec.executor.prompt_file)
+  if (promptFile) refuseAnswers(promptFile, file, 'prompt_file')
+  const prompt = spec.executor.prompt ?? readBytes(promptFile!, file, 'prompt_file').toString('utf8')
+  const plugins = spec.executor.kind === 'harness' ? spec.executor.plugins.map(p => requireDir(resolve(dir, p), file, `plugin ${p}`)) : []
+  const loaded: LoadedCase = { id: caseId(suite.name, spec.name), suite: suite.name, name: spec.name, dir, spec, settings, prompt, plugins }
 
-  const fixtureDir = join(dir, 'fixture')
-  if (existsSync(fixtureDir)) loaded.fixtureDir = fixtureDir
-  const changePatch = join(dir, 'change.patch')
-  if (existsSync(changePatch)) loaded.changePatch = changePatch
-  const fakeFile = join(dir, 'fake.yaml')
-  if (existsSync(fakeFile)) loaded.fakeFile = fakeFile
+  if (stat(join(dir, 'fixture'))?.isDirectory()) loaded.fixtureDir = join(dir, 'fixture')
+  if (stat(join(dir, 'change.patch'))?.isFile()) loaded.changePatch = join(dir, 'change.patch')
+  if (stat(join(dir, 'fake.yaml'))?.isFile()) loaded.fakeFile = join(dir, 'fake.yaml')
 
   const truthFile = join(dir, 'truth.yaml')
-  if (existsSync(truthFile)) {
+  if (stat(truthFile)) {
     loaded.truth = parseFile(truthFile, TruthFile)
-    for (const bug of loaded.truth.bugs) {
-      readRequired(resolve(dir, bug.fix), truthFile, `fix for bug "${bug.id}"`)
-    }
+    for (const bug of loaded.truth.bugs) requireFile(resolve(dir, bug.fix), truthFile, `fix for bug "${bug.id}"`)
   }
-  if (spec.graders.some(g => g.kind === 'review-match') && !loaded.truth) {
-    throw new ConfigError(`${file}: a review-match grader needs a truth.yaml beside it`)
+  for (const g of spec.graders) {
+    if (g.kind === 'review-match' && !loaded.truth) throw new ConfigError(`${file}: a review-match grader needs a truth.yaml beside it`)
+    if (g.kind === 'json-schema' && !g.schema.startsWith('litmus:')) requireFile(resolve(dir, g.schema), file, `schema ${g.schema}`)
   }
 
-  if (spec.subject) {
-    const path = resolve(dir, spec.subject)
-    const content = readRequired(path, file, 'subject')
-    loaded.subject = { path, hash: sha256(content), content }
-  }
+  if (spec.subject) loaded.subject = loadSubject(resolve(dir, spec.subject), spec, file)
   return loaded
 }
 
+function loadSubject(path: string, spec: CaseFile, file: string): Subject {
+  const st = stat(path)
+  if (!st) throw new ConfigError(`${file}: subject not found at ${path}`)
+  if (st.isDirectory()) {
+    if (spec.executor.kind === 'model') {
+      throw new ConfigError(`${file}: a model case's subject is its system prompt, so it must be a file; ${path} is a directory`)
+    }
+    return { kind: 'dir', path, hash: fsCall(path, () => hashTree(path)) }
+  }
+  refuseAnswers(path, file, 'subject')
+  const bytes = readBytes(path, file, 'subject')
+  return { kind: 'file', path, hash: sha256(bytes), content: bytes.toString('utf8') }
+}
+
+// truth.yaml, fake.yaml, fix/ and proof/ are a case's answers. A prompt_file or
+// subject that resolves to one of them, in this case or any other, hands the
+// answers to the model under test.
+function refuseAnswers(path: string, from: string, what: string): void {
+  const isCase = (d: string) => stat(join(d, 'case.yaml'))?.isFile() === true
+  const name = basename(path)
+  let answer = (name === 'truth.yaml' || name === 'fake.yaml') && isCase(dirname(path))
+  for (let d = dirname(path); !answer && dirname(d) !== d; d = dirname(d)) {
+    answer = (basename(d) === 'fix' || basename(d) === 'proof') && isCase(dirname(d))
+  }
+  if (answer) throw new ConfigError(`${from}: ${what} ${path} is a case's ground truth, which never reaches the subject`)
+}
+
 function parseFile<S extends z.ZodType>(file: string, schema: S): z.infer<S> {
-  if (!existsSync(file)) throw new ConfigError(`missing ${file}`)
+  const text = readBytes(file, file, 'file').toString('utf8')
   let raw: unknown
   try {
-    raw = parse(readFileSync(file, 'utf8'))
+    raw = parse(text)
   } catch (e) {
     throw new ConfigError(`${file}: not valid YAML: ${(e as Error).message}`)
   }
+  refuseCycles(raw, file)
   const result = schema.safeParse(raw)
   if (!result.success) {
     const issues = result.error.issues.map(i => `  ${i.path.join('.') || '(root)'}: ${i.message}`).join('\n')
@@ -171,13 +223,60 @@ function parseFile<S extends z.ZodType>(file: string, schema: S): z.infer<S> {
   return result.data
 }
 
-function readRequired(path: string, from: string, what: string): string {
-  if (!existsSync(path)) throw new ConfigError(`${from}: ${what} not found at ${path}`)
-  return readFileSync(path, 'utf8')
+// yaml builds `&a { self: *a }` into a circular object, which every walk after
+// this (the params check, hashing, run.json) would recurse into forever.
+function refuseCycles(value: unknown, file: string, ancestors = new Set<object>()): void {
+  if (value === null || typeof value !== 'object') return
+  if (ancestors.has(value)) throw new ConfigError(`${file}: a YAML alias refers to itself`)
+  ancestors.add(value)
+  for (const v of Object.values(value)) refuseCycles(v, file, ancestors)
+  ancestors.delete(value)
+}
+
+function readBytes(path: string, from: string, what: string): Buffer {
+  requireFile(path, from, what)
+  return fsCall(path, () => readFileSync(path))
+}
+
+function requireFile(path: string, from: string, what: string): string {
+  const st = stat(path)
+  if (!st) throw new ConfigError(`${from}: ${what} not found at ${path}`)
+  if (!st.isFile()) throw new ConfigError(`${from}: ${what} at ${path} is not a file`)
+  return path
+}
+
+function requireDir(path: string, from: string, what: string): string {
+  if (!stat(path)?.isDirectory()) throw new ConfigError(`${from}: ${what} is not a directory at ${path}`)
+  return path
 }
 
 function expectDirName(name: string, dir: string, kind: string): void {
   if (basename(dir) !== name) {
     throw new ConfigError(`${kind} "${name}" lives in ${dir}; its directory must be named "${name}"`)
+  }
+}
+
+// A dangling symlink under a root or cases/ is refused, not skipped: skipping
+// it would quietly drop whatever it used to point at.
+function dirOrBrokenLink(path: string): boolean {
+  const st = stat(path)
+  if (!st) throw new ConfigError(`${path} is a broken symlink`)
+  return st.isDirectory()
+}
+
+function entries(dir: string): string[] {
+  return fsCall(dir, () => readdirSync(dir).sort()).map(n => join(dir, n))
+}
+
+function stat(path: string): Stats | undefined {
+  return fsCall(path, () => statSync(path, { throwIfNoEntry: false }))
+}
+
+function fsCall<T>(path: string, fn: () => T): T {
+  try {
+    return fn()
+  } catch (e) {
+    if (e instanceof ConfigError) throw e
+    throw new ConfigError(`cannot read ${path}: ${(e as Error).message}`)
   }
 }
