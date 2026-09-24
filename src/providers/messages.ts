@@ -50,11 +50,21 @@ export function messagesProvider(id: 'anthropic' | 'bedrock', send: Send): Provi
   }
 }
 
+const FAILS_AGAIN = new Set(['invalid_request_error', 'authentication_error', 'permission_error', 'not_found_error', 'request_too_large'])
+
 export function classify(e: unknown): unknown {
   if (e instanceof APIUserAbortError) return e // cancellation, not a failure
   if (e instanceof APIConnectionError) return new InfraError(`connection failed: ${e.message}`, { cause: e })
   if (e instanceof APIError) {
-    const status = e.status ?? 0
+    // An error event mid-stream has no HTTP status, only its body's type
+    // (overloaded_error, api_error): the server failed after it had started
+    // answering. That is worth another attempt unless the type says the
+    // request itself was wrong.
+    if (e.status === undefined) {
+      const retryable = !FAILS_AGAIN.has(e.type ?? '')
+      return new InfraError(`stream error ${e.type ?? 'error'}: ${e.message}`, { retryable, cause: e })
+    }
+    const status = e.status
     const retryable = status === 408 || status === 409 || status === 429 || status >= 500
     return new InfraError(`${status} ${e.type ?? 'error'}: ${e.message}`, { retryable, cause: e })
   }

@@ -96,6 +96,20 @@ test('auth, permission, bad requests, unknown models and missing credentials fai
   assert.equal((classify(aws) as InfraError).retryable, false)
 })
 
+test('an error event mid-stream has no status: an overload retries, a request the server rejected does not', () => {
+  type ErrorType = ConstructorParameters<typeof APIError>[4]
+  const midStream = (type: string) => new APIError(undefined, { type: 'error', error: { type, message: type } }, undefined, new Headers(), type as ErrorType)
+  for (const type of ['overloaded_error', 'api_error', 'rate_limit_error']) {
+    const c = classify(midStream(type))
+    assert.ok(c instanceof InfraError && c.retryable, type)
+    assert.match((c as InfraError).message, new RegExp(`stream error ${type}`))
+  }
+  for (const type of ['invalid_request_error', 'authentication_error', 'permission_error', 'not_found_error', 'request_too_large']) {
+    const c = classify(midStream(type))
+    assert.ok(c instanceof InfraError && !c.retryable, type)
+  }
+})
+
 test('a cancellation passes through untouched, and so does a bug in our own code', () => {
   const abort = new APIUserAbortError()
   assert.equal(classify(abort), abort)
