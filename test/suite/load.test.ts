@@ -79,6 +79,12 @@ test('review-match without truth.yaml, a missing fix patch, and a missing prompt
   assert.throws(() => discoverSuites([noPrompt]), /prompt_file not found/)
 })
 
+test('min_trials defaults to half the trials, rounded up', () => {
+  const [smoke] = discoverSuites(loadConfig(FIXTURE).roots)
+  assert.equal(smoke!.cases[0]!.settings.min_trials, 2) // 3 trials
+  assert.equal(smoke!.cases[1]!.settings.min_trials, 3) // 5 trials
+})
+
 test('min_trials above trials is an error', () => {
   const root = tree({ ...suite('s'), 's/cases/c/case.yaml': 'name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, pattern: x }]\ntrials: 2\nmin_trials: 3\n' })
   assert.throws(() => discoverSuites([root]), /min_trials \(3\) exceeds trials \(2\)/)

@@ -87,10 +87,14 @@ const HarnessExecutor = z.strictObject({
   prompt: z.string().min(1).optional(),
   prompt_file: z.string().min(1).optional(),
   plugins: z.array(z.string().min(1)).default([]),
-  setting_sources: z.array(z.enum(['user', 'project', 'local'])).default([]),
+  // [] or [project]. The user and local sources are the operator's own
+  // settings, hooks and memory; loading them would make a trial measure the
+  // machine it ran on.
+  setting_sources: z.array(z.literal('project')).max(1).default([]),
   max_turns: positiveInt.default(30),
   allow_shell: z.boolean().default(false),
   allow_network: z.boolean().default(false),
+  allow_hooks: z.boolean().default(false), // hooks and MCP servers run as host processes, outside the gate
 })
 
 // Exactly one of an inline prompt or a prompt file: "/review" is a prompt and

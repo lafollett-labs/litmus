@@ -35,7 +35,7 @@ export type LoadedCase = {
 
 export type LoadedSuite = { name: string; dir: string; spec: SuiteFile; cases: LoadedCase[] }
 
-const BUILTIN: Settings = { trials: 3, min_trials: 1, policy: 'all', threshold: 0.8, timeout_s: 600, tags: [] }
+const BUILTIN = { trials: 3, policy: 'all', threshold: 0.8, timeout_s: 600 } as const
 
 export function loadConfig(file: string): Config {
   const path = resolve(file)
@@ -85,9 +85,12 @@ function loadCase(suite: SuiteFile, dir: string): LoadedCase {
   const spec = parseFile(file, CaseFile)
   expectDirName(spec.name, dir, 'case')
   const d = suite.defaults
+  const trials = spec.trials ?? d.trials ?? BUILTIN.trials
   const settings: Settings = {
-    trials: spec.trials ?? d.trials ?? BUILTIN.trials,
-    min_trials: spec.min_trials ?? d.min_trials ?? BUILTIN.min_trials,
+    trials,
+    // Half the trials, rounded up, must score before a verdict counts: one
+    // trial that survived two infra errors is not evidence of PASS.
+    min_trials: spec.min_trials ?? d.min_trials ?? Math.ceil(trials / 2),
     policy: spec.policy ?? d.policy ?? BUILTIN.policy,
     threshold: spec.threshold ?? d.threshold ?? BUILTIN.threshold,
     timeout_s: spec.timeout_s ?? d.timeout_s ?? BUILTIN.timeout_s,

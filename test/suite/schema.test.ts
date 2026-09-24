@@ -47,8 +47,18 @@ test('a harness case defaults to no shell, no network, and no settings', () => {
   if (c.executor.kind !== 'harness') return
   assert.equal(c.executor.allow_shell, false)
   assert.equal(c.executor.allow_network, false)
+  assert.equal(c.executor.allow_hooks, false)
   assert.deepEqual(c.executor.setting_sources, [])
   assert.deepEqual(c.executor.plugins, [])
+})
+
+test('a harness may load the fixture project settings, but never the operator user or local settings', () => {
+  const harness = (setting_sources: string[]) =>
+    CaseFile.safeParse({ ...modelCase, executor: { kind: 'harness', harness: 'claude-code', prompt: '/review', setting_sources } }).success
+  assert.equal(harness(['project']), true)
+  assert.equal(harness(['user']), false)
+  assert.equal(harness(['local']), false)
+  assert.equal(harness(['project', 'user']), false)
 })
 
 test('a case with no graders, an unknown grader kind, or an unknown harness is rejected', () => {
