@@ -243,7 +243,10 @@ relative path, executable bit and content. `.git` and `.DS_Store` are left out,
 and a symlink or special file is refused. A `prompt_file` or a file `subject`
 may not point at any case's `case.yaml`, `truth.yaml`, `fake.yaml`, `fix/` or
 `proof/`, by its written path or its real one. A directory subject is never
-sent to the model, only hashed.
+sent to the model, only hashed. This rule catches authoring mistakes, such as a
+wrong relative path or a stale symlink. It is not a boundary against the suite's
+own author, who writes the prompt and could put the answers in it directly.
+That is why a hard link, which has a path of its own, is not chased.
 
 `truth.yaml`:
 
