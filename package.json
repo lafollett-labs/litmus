@@ -18,7 +18,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "typecheck": "npm run check",
-    "test": "node --test 'test/**/*.test.ts'"
+    "test": "node scripts/test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
