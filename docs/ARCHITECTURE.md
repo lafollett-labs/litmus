@@ -464,9 +464,14 @@ Every provider error is classified at the boundary and thrown as `InfraError`:
   - an error event mid-stream, which has no HTTP status, unless its type says
     the request itself was wrong (`invalid_request_error`, an auth, permission
     or billing error, `not_found_error`, `request_too_large`)
-- Not retryable: auth failures, other 4xx responses, a missing key, and an AWS
-  credential chain that finds nothing. The same request would fail again, so
-  the trial settles as `error` without using up its retries.
+- Not retryable: auth failures, other 4xx responses, and a missing key. The
+  same request would fail again, so the trial settles as `error` without using
+  up its retries.
+
+An AWS credential failure is retryable. Resolving credentials goes over the
+network (SSO, IMDS, STS), and an empty chain fails before anything reaches the
+model. The error carries the credential provider's own message, such as an
+expired SSO session's `aws sso login` hint.
 
 OpenRouter can report a failure inside a 200: a top-level `error`, an `error`
 on the choice, `finish_reason: "error"`, or no choice at all. None of these is
