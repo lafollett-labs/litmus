@@ -68,7 +68,7 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
     }
     // A patch can create a symlink too, and an absolute one can point straight
     // back at this case's truth.yaml. The post-change tree is checked again.
-    const links = symlinksUnder(dir).filter(p => !p.startsWith('.git/'))
+    const links = symlinksUnder(dir).filter(p => !fold(p).startsWith('.git/'))
     if (links.length) throw new ConfigError(`${c.id}: change.patch creates symlinks (${links.join(', ')}); a fixture may not contain links`)
     return { root, dir, home, claudeConfig, before: snapshot(dir), cleanup }
   } catch (e) {
@@ -87,7 +87,9 @@ function copyTree(from: string, to: string, caseId: string): void {
     const dst = join(to, name)
     const st = lstatSync(src)
     if (st.isSymbolicLink()) throw new ConfigError(`${caseId}: fixture contains a symlink at ${src}`)
-    if (name === '.git') throw new ConfigError(`${caseId}: fixture contains a .git directory at ${src}`)
+    // Folded: on a case-insensitive volume .GIT is .git, and git init would
+    // adopt it, config and all.
+    if (fold(name) === '.git') throw new ConfigError(`${caseId}: fixture contains a .git directory at ${src}`)
     if (st.isDirectory()) {
       mkdirSync(dst, { recursive: true })
       copyTree(src, dst, caseId)

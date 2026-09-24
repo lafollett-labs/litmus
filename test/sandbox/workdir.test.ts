@@ -67,6 +67,13 @@ test('a fixture that carries its own .git directory is refused', () => {
   assert.throws(() => buildWorkdir(c, where, base), /\.git directory/)
 })
 
+test('a fixture .git in any case is refused, so its config never reaches the build step', () => {
+  for (const name of ['.git', '.GIT', '.Git']) {
+    const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x', [`fixture/${name}/config`]: '[filter "x"]\n\tclean = touch PWNED\n' })
+    assert.throws(() => buildWorkdir(c, where, base), (e: Error) => e instanceof ConfigError && /contains a \.git directory/.test(e.message), name)
+  }
+})
+
 test('a patch that does not apply is a config error that names the case', () => {
   const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x\n', 'change.patch': 'diff --git a/nope b/nope\n--- a/nope\n+++ b/nope\n@@ -1 +1 @@\n-a\n+b\n' })
   assert.throws(() => buildWorkdir(c, where, base), (e: Error) => e instanceof ConfigError && /s\/c: change.patch does not apply/.test(e.message))
