@@ -105,9 +105,17 @@ redact: []                           # extra environment variable names whose va
 
 A config can also carry `params`, which are provider-specific request fields
 passed through untouched. `params` is recorded in `run.json`, so it must never
-hold a credential; credentials come only from the environment (below), and
-`validate` refuses a `params` key whose name contains `key`, `token`, `secret`
-or `password`.
+hold a credential. Credentials come only from the environment (below). When
+the config loads, `params` is walked at every depth, and it is refused if any
+key there:
+
+- matches `/key|token|secret|password|passw|auth|credential|cookie|bearer|session/i`
+- is `headers`, since request headers are exactly where a credential would go
+
+The same walk also refuses a string value that equals any credential variable
+litmus knows about. A name-based check can't prove a value is harmless, so
+`params` is for model behaviour (sampling, thinking, output format). Transport
+and auth settings are never allowed there.
 
 `compare` values are validated when the config loads:
 
