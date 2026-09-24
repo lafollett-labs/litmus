@@ -8,11 +8,11 @@
 | **PR** | [#1](https://github.com/lafollett-labs/litmus/pull/1) |
 | **Author** | @clafollett |
 | **Reviewer** | @Cali LaFollett (PE-Governance + independent generic reviewer) |
-| **Review Round** | 1 |
-| **Reviewed SHA** | `1f0da3a03e49a131f6386daab0244e515f10c085` |
+| **Review Round** | 2 (latest local round; see below) |
+| **Reviewed SHA** | `845748a0cae0119f4a42d1e2ea1094dc7e88de12` (round 1: `1f0da3a`) |
 | **Title** | Foundation docs: README, architecture contract, plan to 0.1.0, governance |
-| **Files Changed** | 12 |
-| **Lines Changed** | +1421 / -0 |
+| **Files Changed** | 14 at the round-2 fixes (12 at round 1) |
+| **Gate 2** | From the round-2 fixes on, review moved to the PR (Copilot); no local round 3 was run |
 | **Date** | 2026-09-24 |
 
 ---
