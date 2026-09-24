@@ -98,6 +98,19 @@ Both ran the full checks: `npm ci` found 0 vulnerabilities, typecheck and action
 
 **Locked to SHA:** `fdf7cc5`. The PR opens at this SHA, rebased onto `main` once PR #1 merges.
 
+## Gate 2: PR #2 (Copilot)
+
+After the rebase the PR opened at `45313d0`. From then on, review happened on the PR and no local round was run. Copilot reviewed four times:
+
+| Round | Reviewed SHA | Threads | Outcome |
+| - | - | - | - |
+| 1 | `45313d0` | 3 | Fixed: `InfraError.retryable` (`8241c29`), sparse arrays and symbol keys in `hashJson` (`7b1af72`), and trial numbers past 2^53 (`7cb29a2`). PLAN's CI wording corrected (`446422c`) |
+| 2 | `446422c` | 1 | Fixed: symbol keys and named properties on arrays (`2389ee2`). Overview items: ids are built only from valid names (`b1994fd`), and the ConfigError comment is finished (`a4a3de6`) |
+| 3 | `a4a3de6` | 2 | Fixed: non-enumerable properties (`1eac218`). Disputed with a Node probe: a JS `$` does not match before a trailing newline, and `027fed6` pins that in tests |
+| 4 | `027fed6` | 0 | Findings: None |
+
+Two overview items were answered on the PR and deliberately not changed. `-0` hashes like `0` because `-0 === 0`, so it is the same request, not a collision. CI covers feature branches through their PR rather than on every branch push.
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
