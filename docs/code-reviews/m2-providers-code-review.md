@@ -90,6 +90,17 @@ At the tip, 130 tests pass and 3 (live) are skipped.
 
 **Locked to SHA:** `2a6e90d`. The PR opens with the post-approval commits `fcaf4ee`, `b960e99` and `140a3c0` (LOW fixes only), and Gate 2 reviews them.
 
+## Gate 2: PR #4 (Copilot)
+
+The PR opened at `4e78349`. From then on, review happened on the PR and no local round was run.
+
+| Round | Reviewed SHA | Threads | Outcome |
+| - | - | - | - |
+| 1 | `4e78349` | 2 | Fixed: OpenRouter content given as parts or as a refusal is read as the answer (`7c97b53`). Disputed, with the reason written into ARCHITECTURE (`6bde0cc`): `fake.yaml`'s `text_file` is the suite author's script and stands in for the model, so there is no subject to confine it from. Overview item: the Bedrock live test skips without a region (`63e9980`) |
+| 2 | `6bde0cc` | 1 | Fixed in `3f5b0b7`: an empty answer is the model's result only with a `length` or `content_filter` stop; otherwise it is a retryable infra error. Overview items: a failed body read is classified by status, and a BYOK response missing its upstream charge leaves cost to the pricing fallback |
+| 3 | `3f5b0b7` | 0 | Findings: None. Its "previously missed" item was fixed in `97d9d39`: every response field is checked before it is read |
+| 4 | `97d9d39` | 0 | Findings: None. Its overview item was fixed in `9a45ef5`: retryable 5xx means 500 to 599 |
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
