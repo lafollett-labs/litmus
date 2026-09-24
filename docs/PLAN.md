@@ -61,7 +61,7 @@ stay on the branch, and their messages go into the squash commit's body.
     the selector matrix, and discovery across two roots. `litmus list` prints
     the test fixture tree.
 
-- [ ] **M2: Providers**
+- [x] **M2: Providers**
   - The `Provider` interface, and error classification at the boundary,
     including the retryable and non-retryable `InfraError`s.
   - `fake`, scripted by `fake.yaml`: responses indexed by trial,

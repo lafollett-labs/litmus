@@ -454,7 +454,10 @@ interface Provider {
 
 Every provider error is classified at the boundary and thrown as `InfraError`:
 
-- Retryable: 408, 409, 429, 5xx, and connection failures.
+- Retryable: 408, 409, 429, 5xx, and connection failures. Also retryable: an
+  error event that arrives mid-stream, which has no HTTP status, unless its
+  type says the request itself was wrong (`invalid_request_error`, an auth or
+  permission error, `not_found_error`, `request_too_large`).
 - Not retryable: auth failures, 4xx responses, and a missing key. The same
   request would fail again, so the trial settles as `error` without using up
   its retries.
@@ -463,6 +466,12 @@ A refusal or a truncated response is returned as text, and the graders judge
 it. SDK retries are turned off, because the runner owns retries. Server-side
 model fallbacks are never enabled: a fallback answers with a different model,
 and an eval that silently measures the wrong model is worse than an ERROR.
+OpenRouter's fallback params (`models`, `route`) are refused when the config
+loads.
+
+Usage counts cached input tokens (cache reads and writes) as input tokens. When
+a provider reports no cost, the pricing fallback therefore prices them at the
+full input rate, which is an upper bound.
 
 ### Executor
 
