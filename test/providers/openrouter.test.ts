@@ -62,6 +62,24 @@ test('an empty answer that does not say why is a retryable infra error, not a gr
   }
 })
 
+test('a malformed but parseable body is an infra error or no text, never a raw TypeError', async () => {
+  const shapes: unknown[] = [
+    { choices: [{ message: { content: [null, 5, { type: 'text' }] }, finish_reason: 'stop' }] },
+    { choices: [{ message: { content: 5 }, finish_reason: 'stop' }] },
+    { choices: [{ message: 'not an object', finish_reason: 'stop' }] },
+    { choices: [null] },
+    { choices: [5] },
+    { choices: [{ message: { content: '' }, finish_reason: 7 }] },
+  ]
+  for (const body of shapes) {
+    const { fetch } = fakeFetch(200, body)
+    await assert.rejects(openrouterProvider({ fetch, apiKey: 'k' }).complete(req), InfraError, JSON.stringify(body))
+  }
+  const { fetch } = fakeFetch(200, { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: '12', completion_tokens: -1, cost: 'free' } })
+  const r = await openrouterProvider({ fetch, apiKey: 'k' }).complete(req)
+  assert.deepEqual(r.usage, { input_tokens: 0, output_tokens: 0 })
+})
+
 test('a body read that fails after an error status is classified by the status', async () => {
   const broken = (status: number) => (async () => new Response(new ReadableStream({ start: c => c.error(new TypeError('terminated')) }), { status })) as unknown as typeof fetch
   await assert.rejects(openrouterProvider({ fetch: broken(401), apiKey: 'k' }).complete(req), (e: unknown) => e instanceof InfraError && !e.retryable)
