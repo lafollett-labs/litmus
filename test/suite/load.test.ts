@@ -324,3 +324,21 @@ test('an unknown built-in schema or judge name is refused at load, before any tr
     assert.throws(() => loadProject(project(graders, extra), {}), configError(/judge "nope" is not defined .* \(defined: default\)/), graders + extra)
   }
 })
+
+test('a suite.yaml that is a broken link or not a file is an error, even beside a valid suite', () => {
+  const link = tree({ ...suite('a'), 'b/notes.md': '' })
+  symlinkSync('nowhere.yaml', join(link, 'b/suite.yaml'))
+  assert.throws(() => discoverSuites([link]), configError(/suite\.yaml at .* is a broken symlink/))
+  const dir = tree({ ...suite('a'), 'b/suite.yaml/x': '' })
+  assert.throws(() => discoverSuites([dir]), configError(/suite\.yaml at .* is not a file/))
+})
+
+test('a subject that is itself a symlink is refused, file or directory', () => {
+  const harness = (subject: string) => `name: c\nsubject: ${subject}\nexecutor: { kind: harness, harness: claude-code, prompt: /review }\ngraders: [{ kind: regex, pattern: x }]\n`
+  const dirLink = tree({ ...suite('s'), 's/v2/a.md': 'A', 's/cases/c/case.yaml': harness('../../current') })
+  symlinkSync('v2', join(dirLink, 's/current'))
+  assert.throws(() => discoverSuites([dirLink]), configError(/subject .*current is a symlink/))
+  const fileLink = tree({ ...suite('s'), 's/skill.md': 'S', 's/cases/c/case.yaml': harness('../../link.md') })
+  symlinkSync('skill.md', join(fileLink, 's/link.md'))
+  assert.throws(() => discoverSuites([fileLink]), configError(/subject .*link\.md is a symlink/))
+})

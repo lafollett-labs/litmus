@@ -238,7 +238,7 @@ are optional, but one that is present as the wrong type, or as a broken link,
 is an error rather than an absence.
 
 A `subject` is a file (a prompt, a skill's `SKILL.md`) or, for a harness case,
-a directory (a plugin). A directory is hashed by its tree: each regular file's
+a directory (a plugin), and never a symlink. A directory is hashed by its tree: each regular file's
 relative path, executable bit and content. `.git` and `.DS_Store` are left out,
 and a symlink or special file is refused. A `prompt_file` or a file `subject`
 may not point at any case's `case.yaml`, `truth.yaml`, `fake.yaml`, `fix/` or

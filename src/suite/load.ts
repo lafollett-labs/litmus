@@ -120,7 +120,7 @@ export function discoverSuites(roots: string[]): LoadedSuite[] {
     let found = 0
     for (const dir of entries(root)) {
       if (neverAName(dir) || !dirOrBrokenLink(dir)) continue
-      if (!stat(join(dir, 'suite.yaml'))?.isFile()) {
+      if (!optional(join(dir, 'suite.yaml'), 'file', dir)) {
         if (stat(join(dir, 'suite.yml')) || stat(join(dir, 'cases'))) throw new ConfigError(`${dir} looks like a suite but has no suite.yaml`)
         continue
       }
@@ -203,7 +203,12 @@ function loadCase(suite: SuiteFile, dir: string): LoadedCase {
   return loaded
 }
 
+// A subject is named by its real location: a link as the subject itself would
+// let the path in case.yaml name one thing while the hash covers another.
 function loadSubject(path: string, spec: CaseFile, file: string): Subject {
+  if (fsCall(path, () => lstatSync(path, { throwIfNoEntry: false }))?.isSymbolicLink()) {
+    throw new ConfigError(`${file}: subject ${path} is a symlink; name the file or directory it points at`)
+  }
   const st = stat(path)
   if (!st) throw new ConfigError(`${file}: subject not found at ${path}`)
   if (st.isDirectory()) {
