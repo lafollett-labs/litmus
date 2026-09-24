@@ -329,6 +329,19 @@ test('a stream that ends quietly after the clock stops is classified by the cloc
   assert.ok(timedOut.artifacts['final_message.txt'], 'a timeout keeps what the subject wrote, like max_turns')
 })
 
+test('a success delivered after the clock stopped is classified by the clock, never graded', async () => {
+  const late: Query = ({ options }) =>
+    (async function* () {
+      await new Promise(ok => options.abortController!.signal.addEventListener('abort', ok))
+      yield result()
+    })()
+  const ctl = new AbortController()
+  const cancelled = runHarness(job(HARNESS(), {}, undefined, ctl.signal), late)
+  setTimeout(() => ctl.abort(), 20)
+  assert.equal((await cancelled).exit, 'cancelled')
+  assert.equal((await runHarness(job(HARNESS().replace('timeout_s: 5', 'timeout_s: 1')), late)).exit, 'model_failure')
+})
+
 test('an API-error turn with no status retries, unless its text says auth or billing', async () => {
   const noStatus = (text: string) => runHarness(job(HARNESS()), scripted([result({ is_error: true, result: text })]).query)
   assert.equal((await noStatus('API Error: Connection error.')).retryable, true)

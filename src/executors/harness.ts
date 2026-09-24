@@ -160,6 +160,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
 
   let final = ''
   let result: Extract<SDKMessage, { type: 'result' }> | undefined
+  let resultAfterStop = false // the SDK can still deliver a success once the abort has fired
   // A harness timeout is the subject's session running long: a model failure,
   // graded for metrics like max_turns, so it keeps what the subject wrote.
   const byClock = (): ExecutorResult | undefined => {
@@ -188,6 +189,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
         }
       } else if (m.type === 'result') {
         result = m
+        resultAfterStop = clock.stopped() !== undefined
       }
     }
   } catch (e) {
@@ -197,10 +199,10 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   } finally {
     clock.clear()
   }
-  // The SDK may end the stream quietly, or with an error result, after an
-  // abort: the clock's reason still decides, unless the session had already
-  // finished cleanly before it stopped.
-  if (!(result?.subtype === 'success' && !result.is_error)) {
+  // The SDK may end the stream quietly, with an error result, or even with a
+  // success after an abort: the clock's reason still decides, unless the
+  // session had finished cleanly before it stopped.
+  if (!(result?.subtype === 'success' && !result.is_error && !resultAfterStop)) {
     const stopped = byClock()
     if (stopped) return stopped
   }

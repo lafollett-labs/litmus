@@ -381,7 +381,8 @@ a harness timeout or max-turns stop is a model failure, and it is never
 retried. A single model call that times out is almost always a stalled
 connection, so for the `model` executor a timeout is a retryable infra error.
 A timeout and a cancel travel on different abort reasons, so they can't be
-confused.
+confused. An answer that arrives after either has fired is classified by it,
+never accepted: a provider or SDK that answers late did not answer in time.
 
 **Effective `min_trials`.** A run can ask for fewer trials than the case
 defines, through `--trials`, a trial-key selector, the UI, or a rerun. The

@@ -95,6 +95,19 @@ test('a cancel is reported as cancelled, never as a timeout', async () => {
   assert.equal((await pending).exit, 'cancelled')
 })
 
+test('an answer that arrives after the clock stopped is never accepted', async () => {
+  // A provider that ignores its signal and answers anyway.
+  const deaf: Provider = { id: 'fake', complete: async () => (await new Promise(ok => setTimeout(ok, 1200)), { text: 'late', stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 }, raw: {} }) }
+  const slow = job(REVIEW.replace('timeout_s: 5', 'timeout_s: 1'), { 'skill.md': 's' })
+  const t = await runModel(slow.j, deaf)
+  assert.deepEqual([t.exit, t.retryable], ['infra_error', true])
+  assert.equal(t.artifacts['response.txt'], undefined)
+  const ctl = new AbortController()
+  const pending = runModel(job(REVIEW, { 'skill.md': 's' }, ctl.signal).j, deaf)
+  setTimeout(() => ctl.abort(), 20)
+  assert.equal((await pending).exit, 'cancelled')
+})
+
 test('an error that is not an infra error is a bug, and propagates', async () => {
   const { j } = job(REVIEW, { 'skill.md': 's' })
   const broken: Provider = { id: 'fake', complete: async () => { throw new TypeError('oops') } }

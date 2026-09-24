@@ -35,6 +35,16 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
   tx.message('user', prompt)
 
   const clock = deadline(job.signal, job.case.settings.timeout_s * 1000)
+  const byClock = (): ExecutorResult | undefined => {
+    const why = clock.stopped()
+    if (why === 'cancelled') return done('cancelled')
+    // One provider call that outlives the deadline is a slow or stuck
+    // connection, not a model spiralling, so it is retried (ARCHITECTURE
+    // § Flow). The harness keeps timeout as a model failure: there it is the
+    // subject's own session that ran long.
+    if (why === 'timeout') return done('infra_error', { reason: `timeout after ${job.case.settings.timeout_s}s`, retryable: true })
+    return undefined
+  }
   try {
     const model = 'model' in job.config ? job.config.model : 'fake'
     const r = await provider.complete({
@@ -47,6 +57,9 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
       signal: clock.signal,
       trace: { case_id: job.case.id, trial: job.trial, attempt: job.attempt, ...(job.case.fakeFile ? { fake_file: job.case.fakeFile } : {}) },
     })
+    // A provider that answers after its signal fired did not answer in time.
+    const late = byClock()
+    if (late) return late
     const usage = priced(r.usage, model, job.pricing)
     tx.message('assistant', r.text)
     tx.usage(usage)
@@ -60,13 +73,8 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
     }
     return done('ok', { artifacts, usage, ...(r.stop_reason ? { reason: `stop_reason: ${r.stop_reason}` } : {}) })
   } catch (e) {
-    const why = clock.stopped()
-    if (why === 'cancelled') return done('cancelled')
-    // One provider call that outlives the deadline is a slow or stuck
-    // connection, not a model spiralling, so it is retried (ARCHITECTURE
-    // § Flow). The harness keeps timeout as a model failure: there it is the
-    // subject's own session that ran long.
-    if (why === 'timeout') return done('infra_error', { reason: `timeout after ${job.case.settings.timeout_s}s`, retryable: true })
+    const stopped = byClock()
+    if (stopped) return stopped
     if (e instanceof InfraError) return done('infra_error', { reason: e.message, retryable: e.retryable })
     throw e
   } finally {
