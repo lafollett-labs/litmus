@@ -166,6 +166,16 @@ At the tip, 199 tests pass and 4 (live) are skipped. ARCHITECTURE is updated in 
 
 **Locked to SHA:** `924eda1`. The round-4 fixes (`e741189`, `6789282`, docs `c23b9d7`) have not been reviewed locally, and the raised cap is reached. This halts to the operator again.
 
+
+## Gate 2: PR #5 (Copilot)
+
+The PR opened at `41dec51` with the round-4 fixes unreviewed, as the operator chose. From then on, review happened on the PR and no local round was run.
+
+| Round | Reviewed SHA | Threads | Outcome |
+| - | - | - | - |
+| 1 | `41dec51` | 8 (6 HIGH, 2 MEDIUM) | All fixed, each with a test that fails on the old code. Extglob and bare regex groups end a pattern's prefix and are refused when they hold `/`; only glob fields are patterns (`1631c5a`). Keys are redacted by value in the transcript, the live steps, every artifact (byte-exact) and the result reason (`3546db7`). The workdir is built from its real path, so a symlinked `litmus/` is judged and scanned where it lands, and a symlinked fixture root is refused (`5143094`). An answer that arrives after the timeout or cancel is classified by the clock in both executors (`ccc0353`) |
+| 2 | `ccc0353` | 5 (overview: 5 HIGH), plus a CI failure | All fixed. CI: after `git commit`, the runner's git detached auto-maintenance, which kept running in the workdir and raced the symlink scan. `maintenance.auto=false` and `gc.auto=0` stop it, and the post-patch scan now covers `.git` too; git 2.54 already refuses a patch into `.git/` or `.GIT/`, but the scan no longer relies on that (`359fd59`). `inside()` treats `/` as containing every path (`e29c474`). A store or suite root beneath the prospective workdir is refused, not removed with it (`2230061`). A `..` segment is refused in every path field, because the OS applies it after a symlink (`8868858`). A plugin root that is itself a symlink is refused (`cc87722`). Docs are in `b99e90f` |
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
