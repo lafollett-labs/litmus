@@ -136,6 +136,18 @@ There are no findings at MEDIUM or above. Four small ones remain, and each was f
 
 **Locked to SHA:** `e44f37f`. The PR opens with the post-approval commits `efa2777` and `8505399` (LOW and INFO fixes only), and Gate 2 reviews them.
 
+## Gate 2: PR #3 (Copilot)
+
+The PR opened at `fa7911a`. From then on, review happened on the PR and no local round was run.
+
+| Round | Reviewed SHA | Threads | Outcome |
+| - | - | - | - |
+| 1 | `fa7911a` | 3 | Fixed: grader `min` defaults to 1 in the parsed spec (`a6db2ac`), and a symlinked subject and a broken or non-file `suite.yaml` are refused (`f489cde`). An overview item was fixed too: the usage now follows an argument error (`c2dc5e8`) |
+| 2 | `c2dc5e8` | 1 | Disputed: a hard link to a case's answers is a deliberate act by the suite's own author, and the rule guards against mistakes. The scope is written into ARCHITECTURE (`0d13049`) |
+| 3 | `0d13049` | 0 | Findings: None (approval recommended) |
+
+One overview item was answered on the PR and deliberately not changed: `threshold` stays inside (0, 1), because it applies only under `policy: rate`.
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
