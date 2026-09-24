@@ -362,7 +362,7 @@ test('frontmatter is read the way Claude Code reads it, so no fence or merge-key
   for (const [label, text] of Object.entries(LOADER_SHAPES)) {
     const plugin = pluginTree({ 'skills/r/SKILL.md': text })
     const r = await runHarness(job(HARNESS(`  plugins: [${plugin}]\n`)), scripted([result()]).query)
-    assert.match(r.reason ?? '', /declares hooks in its frontmatter; set allow_hooks/, label)
+    assert.match(r.reason ?? '', /declares hooks in its frontmatter; set allow_hooks|has a << merge key/, label)
   }
   const fixture = await runHarness(job(HARNESS('  setting_sources: [project]\n'), { 'fixture/.claude/skills/x/SKILL.md': LOADER_SHAPES['a four-dash close']! }), scripted([result()]).query)
   assert.match(fixture.reason ?? '', /declares hooks/)
@@ -380,4 +380,40 @@ test('a frontmatter typo names the YAML error and never suggests allow_hooks; is
   assert.match(typo, /not valid YAML \(.+\); quote the value/)
   assert.doesNotMatch(typo, /allow_hooks/)
   assert.match(await run('---\nname: a\nisolation: worktree\n---\n'), /declares isolation in its frontmatter; remove isolation/)
+})
+
+// Shapes where Claude Code's YAML (Bun) and a spec parser disagree: a quoted
+// or escaped << merges there, and a collection key coerces to its text. Each
+// is refused outright, from the round-4 review probe.
+const DISAGREEING_SHAPES: Record<string, string> = {
+  'a double-quoted <<': '---\nname: r\n"<<": {hooks: {PreToolUse: []}}\n---\n',
+  'a single-quoted <<': "---\nname: r\n'<<': {hooks: {PreToolUse: []}}\n---\n",
+  'a quoted << through an alias': '---\nname: r\nmetadata: &h {hooks: {PreToolUse: []}}\n"<<": *h\n---\n',
+  'an escaped <<': '---\nname: r\n"\\x3c<": {hooks: {PreToolUse: []}}\n---\n',
+  'an explicit quoted <<': '---\nname: r\n? "<<"\n: {hooks: {PreToolUse: []}}\n---\n',
+  'a flow sequence key': '---\nname: r\n[hooks]: {PreToolUse: []}\n---\n',
+  'a nested sequence key': '---\nname: r\n[[hooks]]: {PreToolUse: []}\n---\n',
+  'a block sequence key': '---\nname: r\n? - hooks\n: {PreToolUse: []}\n---\n',
+  'a sequence key for mcpServers': '---\nname: r\n[mcpServers]: {x: {command: /bin/sh}}\n---\n',
+  'a sequence key for isolation': '---\nname: a\n[isolation]: worktree\n---\n',
+  'a quoted << for isolation': '---\nname: a\n"<<": {isolation: worktree}\n---\n',
+}
+
+test('a frontmatter key a second parser could read differently is refused, never second-guessed', async () => {
+  for (const [label, text] of Object.entries(DISAGREEING_SHAPES)) {
+    for (const where of ['skills/r/SKILL.md', 'agents/a.md']) {
+      const r = await runHarness(job(HARNESS(`  plugins: [${pluginTree({ [where]: text })}]\n`)), scripted([result()]).query)
+      assert.match(r.reason ?? '', /not a plain string|<< merge key/, `${label} in ${where}`)
+    }
+    const fixture = await runHarness(job(HARNESS('  setting_sources: [project]\n'), { 'fixture/.claude/agents/a.md': text }), scripted([result()]).query)
+    assert.match(fixture.reason ?? '', /not a plain string|<< merge key/, `${label} in the fixture`)
+  }
+})
+
+test('allow_hooks waives process signals only: isolation, links and unreadable keys are still refused', async () => {
+  const run = async (files: Record<string, string>) =>
+    (await runHarness(job(HARNESS(`  plugins: [${pluginTree(files)}]\n  allow_hooks: true\n`)), scripted([result()]).query))
+  assert.equal((await run({ 'hooks/hooks.json': '{}', 'skills/r/SKILL.md': '---\nhooks: {}\n---\n' })).exit, 'ok')
+  assert.match((await run({ 'agents/a.md': '---\nname: a\nisolation: worktree\n---\n' })).reason ?? '', /declares isolation/)
+  assert.match((await run({ 'agents/a.md': '---\n[hooks]: {}\n---\n' })).reason ?? '', /not a plain string/)
 })

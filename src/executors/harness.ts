@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
-import { parse } from 'yaml'
+import { isMap, isScalar, parseDocument } from 'yaml'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
 import { scrubbedEnv } from '../sandbox/env.ts'
@@ -41,12 +41,14 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
 
   const plugins = job.case.plugins // absolute, and checked to exist, at load
   const project = exec.setting_sources.includes('project')
-  if (!exec.allow_hooks) {
-    // Hooks, MCP and LSP servers run as host processes, outside the gate; a
-    // case has to say it accepts that before any of them load.
-    const found = [...plugins.map(p => pluginRunsProcesses(p)), project ? fixtureRunsProcesses(job.workdir.dir) : undefined].find(x => x !== undefined)
-    if (found) return refuse(`${found.reason}; ${found.fix}`)
-  }
+  // Hooks, MCP and LSP servers run as host processes, outside the gate, and a
+  // case has to say it accepts that (allow_hooks) before any of them load. The
+  // scan runs either way: what allow_hooks waives is only those process
+  // signals, never the gate's own checks (isolation, links, unparseable keys).
+  const found = [...plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks)), project ? fixtureRunsProcesses(job.workdir.dir, exec.allow_hooks) : undefined].find(
+    x => x !== undefined,
+  )
+  if (found) return refuse(`${found.reason}; ${found.fix}`)
   if (project) {
     const bad = fixtureSettings(job.workdir.dir)
     if (bad) return refuse(bad)
@@ -302,51 +304,53 @@ const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json', 'monitors/m
 const PROCESS_KEYS = new Set(['hooks', 'mcpservers', 'lspservers', 'monitors', 'statusline'])
 
 // Why a plugin or fixture is refused, and what would fix it. Only a real
-// process signal points at allow_hooks: a YAML typo must not steer an
-// operator toward the one setting that turns this whole check off.
-type Refusal = { reason: string; fix: string }
+// process signal is waived by allow_hooks and points at it: a YAML typo must
+// not steer an operator toward the one setting that turns process checks off.
+type Refusal = { reason: string; fix: string; waivable: boolean }
 const RUNS = 'set allow_hooks: true to run them uncontained'
+const runs = (reason: string): Refusal => ({ reason, fix: RUNS, waivable: true })
+const blocks = (reason: string, fix: string): Refusal => ({ reason, fix, waivable: false })
 
-export function pluginRunsProcesses(dir: string): Refusal | undefined {
-  for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return { reason: `plugin ${dir} has ${f}`, fix: RUNS }
+export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | undefined {
+  if (!allowHooks) for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return runs(`plugin ${dir} has ${f}`)
   const manifest = join(dir, '.claude-plugin/plugin.json')
   if (existsSync(manifest)) {
     let m: unknown
     try {
       m = JSON.parse(readFileSync(manifest, 'utf8'))
     } catch (e) {
-      return { reason: `plugin ${dir} has a plugin.json that is not valid JSON (${(e as Error).message})`, fix: 'fix the JSON' }
+      return blocks(`plugin ${dir} has a plugin.json that is not valid JSON (${(e as Error).message})`, 'fix the JSON')
     }
-    if (m === null || typeof m !== 'object' || Array.isArray(m)) return { reason: `plugin ${dir}'s plugin.json is not an object`, fix: 'fix the JSON' }
+    if (m === null || typeof m !== 'object' || Array.isArray(m)) return blocks(`plugin ${dir}'s plugin.json is not an object`, 'fix the JSON')
     const extra = Object.keys(m).filter(k => !SAFE_MANIFEST_KEYS.has(k))
-    if (extra.length) return { reason: `plugin ${dir}'s plugin.json declares ${extra.join(', ')}`, fix: RUNS }
+    if (extra.length && !allowHooks) return runs(`plugin ${dir}'s plugin.json declares ${extra.join(', ')}`)
   }
   // A plugin's .git is walked too: its manifest can point a component there.
-  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false)
+  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks)
 }
 
 // Under project settings Claude Code discovers .claude/skills, agents and
 // commands at every depth of the fixture, not only at its root. The fixture's
 // .git is litmus's own (a fixture .git is refused at build), so it is skipped.
-function fixtureRunsProcesses(dir: string): Refusal | undefined {
-  if (existsSync(join(dir, '.mcp.json'))) return { reason: 'the fixture has .mcp.json', fix: RUNS }
-  return treeRunsProcesses(dir, 'the fixture', rel => rel.split('/').some(seg => fold(seg) === '.claude'), true)
+function fixtureRunsProcesses(dir: string, allowHooks: boolean): Refusal | undefined {
+  if (!allowHooks && existsSync(join(dir, '.mcp.json'))) return runs('the fixture has .mcp.json')
+  return treeRunsProcesses(dir, 'the fixture', rel => rel.split('/').some(seg => fold(seg) === '.claude'), true, allowHooks)
 }
 
-function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean, skipGit: boolean): Refusal | undefined {
+function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean, skipGit: boolean, allowHooks: boolean): Refusal | undefined {
   const visit = (d: string): Refusal | undefined => {
     for (const name of readdirSync(d).sort()) {
-      if (skipGit && name === '.git') continue
+      if (skipGit && fold(name) === '.git') continue
       const path = join(d, name)
       const rel = relative(root, path).split(sep).join('/')
       const st = lstatSync(path)
-      if (st.isSymbolicLink()) return { reason: `${who}: ${rel} is a symlink, which could point a component at a file this check never reads`, fix: 'replace the link with the files it points at' }
+      if (st.isSymbolicLink()) return blocks(`${who}: ${rel} is a symlink, which could point a component at a file this check never reads`, 'replace the link with the files it points at')
       if (st.isDirectory()) {
         const found = visit(path)
         if (found) return found
       } else if (st.isFile() && /\.md$/i.test(name) && inScope(rel)) {
-        const found = frontmatterRunsProcesses(readFileSync(path, 'utf8'))
-        if (found) return { reason: `${who}: ${rel} ${found.reason}`, fix: found.fix }
+        const found = frontmatterRunsProcesses(readFileSync(path, 'utf8'), allowHooks)
+        if (found) return { ...found, reason: `${who}: ${rel} ${found.reason}` }
       }
     }
     return undefined
@@ -356,28 +360,30 @@ function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => 
 
 // Frontmatter is read with Claude Code's own fence, whose closing --- need not
 // start a line, and with the strict one, which catches a --- inside a value.
-// Merge keys are resolved, as the loader's YAML parser resolves them. A key
-// found either way refuses the file, and frontmatter that does not parse is
-// refused rather than guessed at.
+// Each top-level key is then judged as a plain string, and anything that is
+// not one is refused rather than second-guessed. Claude Code's YAML coerces
+// a collection key ([hooks]) to "hooks" and merges a quoted "<<", so matching
+// its semantics key by key is a race; refusing every key it could read
+// differently is not. Frontmatter that does not parse is refused too.
 const FENCES = [/^---\s*\n([\s\S]*?)---\s*\n?/, /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/]
 
-function frontmatterRunsProcesses(text: string): Refusal | undefined {
+function frontmatterRunsProcesses(text: string, allowHooks: boolean): Refusal | undefined {
   const body = text.replace(/^\uFEFF/, '')
   for (const fence of FENCES) {
     const m = fence.exec(body)
     if (!m) continue
-    let front: unknown
-    try {
-      front = parse(m[1]!, { merge: true })
-    } catch (e) {
-      return { reason: `has frontmatter that is not valid YAML (${(e as Error).message.split('\n')[0]})`, fix: 'quote the value so the frontmatter parses' }
+    const doc = parseDocument(m[1]!)
+    const error = doc.errors[0]
+    if (error) return blocks(`has frontmatter that is not valid YAML (${error.message.split('\n')[0]})`, 'quote the value so the frontmatter parses')
+    if (!isMap(doc.contents)) continue
+    for (const { key } of doc.contents.items) {
+      if (!isScalar(key) || typeof key.value !== 'string') return blocks('has a frontmatter key that is not a plain string', 'use plain string keys')
+      if (key.value === '<<') return blocks('has a << merge key in its frontmatter', 'write the keys out instead of merging them')
+      // An agent definition can ask to run in a git worktree, where the gate
+      // cannot follow it, so this one is refused whatever allow_hooks says.
+      if (fold(key.value) === 'isolation') return blocks('declares isolation in its frontmatter', 'remove isolation: a subagent must run inside this session')
+      if (PROCESS_KEYS.has(fold(key.value)) && !allowHooks) return runs(`declares ${key.value} in its frontmatter`)
     }
-    if (front === null || typeof front !== 'object' || Array.isArray(front)) continue
-    const key = Object.keys(front).find(k => PROCESS_KEYS.has(fold(k)))
-    if (key) return { reason: `declares ${key} in its frontmatter`, fix: RUNS }
-    // An agent definition can ask to run in a git worktree, where the gate
-    // cannot follow it.
-    if (Object.keys(front).some(k => fold(k) === 'isolation')) return { reason: 'declares isolation in its frontmatter', fix: 'remove isolation: a subagent must run inside this session' }
   }
   return undefined
 }
