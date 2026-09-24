@@ -1,6 +1,6 @@
 # Code Review: m3-sandbox-executors
 
-**Verdict:** 🔁 CHANGES REQUESTED (round 1, locked to `bb08f64`)
+**Verdict:** 🔁 CHANGES REQUESTED (round 2, locked to `4a1b3b3`)
 
 | | |
 | - | - |
@@ -62,6 +62,42 @@ Every fix commit passes check and test on its own (183 to 190). At the tip, 190 
 ## Merge Eligibility
 
 **Locked to SHA:** `bb08f64`. The fix commits after it are re-reviewed in round 2.
+
+## Review Round 2
+
+**Verdict:** 🔁 CHANGES REQUESTED
+
+| | |
+| - | - |
+| **Review Round** | 2 |
+| **Reviewed SHA** | `4a1b3b3` (round-1 fixes: `bb08f64..4a1b3b3`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue drove the gate with bypass inputs and verified 12 of the 14 round-1 findings as RESOLVED. Among them:
+
+- **Case variants:** `.GIT/hooks`, `.CLAUDE/`, `.MCP.JSON` and upper-cased suite paths are denied on APFS, and the mutation check holds.
+- **Fail-closed:** NUL, ENOTDIR and ENAMETOOLONG inputs are denied.
+- **Subagents:** every `isolation` value is refused.
+- **Patterns:** brace and extglob climbs are denied, and 10 common globs are still allowed.
+
+Two round-1 fixes were incomplete, and the demonstrated bypasses raised them to HIGH.
+
+| ID | Finding | Disposition |
+| - | - | - |
+| HIGH-001 (was MEDIUM-004) | The process scan could be bypassed: `monitors/monitors.json`, components the manifest points at outside the default dirs, quoted or flow-mapping `hooks`, `.MD`, a symlinked skill dir, or a BOM | Fixed in `89d5ba6`: every markdown file in the plugin (any case of `.md`) has its frontmatter parsed as YAML, and one that doesn't parse is refused. A symlink anywhere in a plugin is refused. `monitors/monitors.json` and `statusLine` are process signals. A test covers each probe shape. All 17 cached plugins classify correctly, and every LaFollett plugin but `context-handoff` (which ships hooks) passes |
+| HIGH-002 (was MEDIUM-005) | Under `[project]`, a nested `src/.claude/skills/x/SKILL.md` could be written and loaded mid-run | Fixed in `0fbc729` and `89d5ba6`: `protectSegments` refuses a write with a `.claude` segment at any depth (folded), and the fixture scan covers `.claude/` at any depth |
+| MEDIUM-001 | A plugin inside the suite loaded, but could not read its own files, silently | Fixed in `89d5ba6`: refused before the session, naming both paths. A subject root inside a deny root is dropped from the read roots (for the harness it is only a version) |
+| LOW-001 | The workdir `avoid` guard compared paths as written | Fixed in `e0daa43`: real, case-folded paths. Tests cover a symlinked TMPDIR, and another spelling on case-insensitive volumes |
+| LOW-002 | `fold()` lower-cased but did not case-fold (`ſ`) | Fixed in `0fbc729`: `toUpperCase().toLowerCase()` after NFC, with a test for `final_meſſage.txt` |
+| INFO-001 | The pattern refusal over-refuses a few rare legitimate shapes | No change: it fails closed, and the subject can rephrase |
+
+The probe left a side effect behind: a detached git worktree registered in the litmus repo. It was removed.
+
+Every fix commit passes check and test on its own. At the tip, 193 pass and 4 (live) are skipped. ARCHITECTURE is updated in `79509e8`.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `4a1b3b3`. The round-2 fixes are re-reviewed in round 3, the last round before the cap.
 
 ---
 
