@@ -73,13 +73,13 @@ root, or any directory with a `CLAUDE.md` or `AGENTS.md` in its ancestors.
 ## Workflow
 
 ```
-for each change:
+for each change, one at a time:          # merge it before the next change opens a PR
     branch from main: m<N>-<slug> for PLAN milestones, else <type>/<slug>
     small commits, each passing npm run check && npm test
-    PR -> /code-reviewer:code-reviewer until APPROVED
-       -> resolve every external review thread
-          if that added a commit: re-run /code-reviewer:code-reviewer until APPROVED at HEAD
-       -> green CI -> gh pr merge --squash --delete-branch
+    /code-reviewer:code-reviewer on the branch until APPROVED   # local, before any PR exists
+    push -> gh pr create
+    resolve every external review thread (Copilot, humans)      # no more local rounds once the PR is open
+    green CI -> gh pr merge --squash --delete-branch
 never push to main   # the ruleset refuses it
 ```
 
