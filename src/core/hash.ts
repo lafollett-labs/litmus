@@ -19,9 +19,14 @@ export function hashJson(value: unknown): string {
 }
 
 function sortKeys(value: unknown): unknown {
+  if (value !== null && typeof value === 'object' && Object.getOwnPropertySymbols(value).length > 0) {
+    throw new TypeError('cannot hash an object or array with symbol keys')
+  }
   if (Array.isArray(value)) {
-    // JSON writes a hole as null, so new Array(1) would collide with [null].
+    // JSON writes a hole as null and drops a named property, so new Array(1)
+    // would collide with [null], and [1] with [1] plus a .note.
     for (let i = 0; i < value.length; i++) if (!(i in value)) throw new TypeError('cannot hash a sparse array')
+    if (Object.keys(value).length !== value.length) throw new TypeError('cannot hash an array with named properties')
     return value.map(sortKeys)
   }
   if (typeof value === 'number' && !Number.isFinite(value)) throw new TypeError(`cannot hash the non-finite number ${value}`)
@@ -31,7 +36,6 @@ function sortKeys(value: unknown): unknown {
   if (value !== null && typeof value === 'object') {
     const proto: unknown = Object.getPrototypeOf(value)
     if (proto !== Object.prototype && proto !== null) throw new TypeError('cannot hash an object that is not plain JSON')
-    if (Object.getOwnPropertySymbols(value).length > 0) throw new TypeError('cannot hash an object with symbol keys')
     // A null-prototype target, so a "__proto__" key is stored as a key instead
     // of replacing the prototype and vanishing from the output.
     const out: Record<string, unknown> = Object.create(null)
