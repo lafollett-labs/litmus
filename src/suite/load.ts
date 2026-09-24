@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync, type Stats } from 'node:fs'
+import { lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Stats } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import type { z } from 'zod'
@@ -6,7 +6,7 @@ import { CREDENTIAL_KEY, CREDENTIAL_VARS } from '../core/credentials.ts'
 import { ConfigError } from '../core/errors.ts'
 import { sha256 } from '../core/hash.ts'
 import { caseId } from '../core/ids.ts'
-import { CaseFile, ConfigFile, SuiteFile, TruthFile } from './schema.ts'
+import { BUILTIN_SCHEMAS, CaseFile, ConfigFile, SuiteFile, TruthFile } from './schema.ts'
 import { hashTree } from './tree.ts'
 
 // Everything here reads operator-authored files, so every failure is a
@@ -70,6 +70,24 @@ export function loadConfig(file: string, env: NodeJS.ProcessEnv = process.env): 
   return { ...spec, file: path, dir, roots: spec.suites.map(r => resolve(dir, r)), resultsDir: resolve(dir, spec.results) }
 }
 
+// The config and every suite it names, with each case's judge references
+// checked against the config's judges: a typo there would otherwise surface
+// on every trial, after the executor has been paid.
+export function loadProject(file: string, env: NodeJS.ProcessEnv = process.env): { config: Config; suites: LoadedSuite[] } {
+  const config = loadConfig(file, env)
+  const suites = discoverSuites(config.roots)
+  const judges = Object.keys(config.judges)
+  for (const c of suites.flatMap(s => s.cases)) {
+    const refs = [c.spec.extract?.with, ...c.spec.graders.map(g => (g.kind === 'judge' ? g.judge : g.kind === 'review-match' ? g.confirm : undefined))]
+    for (const ref of refs) {
+      if (ref !== undefined && !judges.includes(ref)) {
+        throw new ConfigError(`${join(c.dir, 'case.yaml')}: judge "${ref}" is not defined in ${config.file} (defined: ${judges.join(', ') || 'none'})`)
+      }
+    }
+  }
+  return { config, suites }
+}
+
 // params is recorded in run.json, so it must never carry a credential. Keys are
 // refused by name at every depth, and any string equal to a live credential
 // value is refused wherever it sits.
@@ -101,7 +119,7 @@ export function discoverSuites(roots: string[]): LoadedSuite[] {
     if (!stat(root)?.isDirectory()) throw new ConfigError(`suite root ${root} is not a directory`)
     let found = 0
     for (const dir of entries(root)) {
-      if (!dirOrBrokenLink(dir)) continue
+      if (neverAName(dir) || !dirOrBrokenLink(dir)) continue
       if (!stat(join(dir, 'suite.yaml'))?.isFile()) {
         if (stat(join(dir, 'suite.yml')) || stat(join(dir, 'cases'))) throw new ConfigError(`${dir} looks like a suite but has no suite.yaml`)
         continue
@@ -127,7 +145,7 @@ export function loadSuite(dir: string): LoadedSuite {
   const casesDir = join(dir, 'cases')
   const cases: LoadedCase[] = []
   for (const d of stat(casesDir)?.isDirectory() ? entries(casesDir) : []) {
-    if (!dirOrBrokenLink(d) || /^[._]/.test(basename(d))) continue
+    if (neverAName(d) || !dirOrBrokenLink(d)) continue
     if (!stat(join(d, 'case.yaml'))?.isFile()) {
       throw new ConfigError(`${d} has no case.yaml; every directory under cases/ is a case (prefix it with _ to keep other files there)`)
     }
@@ -155,23 +173,29 @@ function loadCase(suite: SuiteFile, dir: string): LoadedCase {
     settings.min_trials = minTrials
   }
 
-  const promptFile = spec.executor.prompt_file === undefined ? undefined : resolve(dir, spec.executor.prompt_file)
+  const promptFile = spec.executor.prompt_file === undefined ? undefined : requireFile(resolve(dir, spec.executor.prompt_file), file, 'prompt_file')
   if (promptFile) refuseAnswers(promptFile, file, 'prompt_file')
   const prompt = spec.executor.prompt ?? readBytes(promptFile!, file, 'prompt_file').toString('utf8')
   const plugins = spec.executor.kind === 'harness' ? spec.executor.plugins.map(p => requireDir(resolve(dir, p), file, `plugin ${p}`)) : []
   const loaded: LoadedCase = { id: caseId(suite.name, spec.name), suite: suite.name, name: spec.name, dir, spec, settings, prompt, plugins }
 
-  if (stat(join(dir, 'fixture'))?.isDirectory()) loaded.fixtureDir = join(dir, 'fixture')
-  if (stat(join(dir, 'change.patch'))?.isFile()) loaded.changePatch = join(dir, 'change.patch')
-  if (stat(join(dir, 'fake.yaml'))?.isFile()) loaded.fakeFile = join(dir, 'fake.yaml')
+  const fixtureDir = optional(join(dir, 'fixture'), 'dir', file)
+  if (fixtureDir) loaded.fixtureDir = fixtureDir
+  const changePatch = optional(join(dir, 'change.patch'), 'file', file)
+  if (changePatch) loaded.changePatch = changePatch
+  const fakeFile = optional(join(dir, 'fake.yaml'), 'file', file)
+  if (fakeFile) loaded.fakeFile = fakeFile
 
-  const truthFile = join(dir, 'truth.yaml')
-  if (stat(truthFile)) {
+  const truthFile = optional(join(dir, 'truth.yaml'), 'file', file)
+  if (truthFile) {
     loaded.truth = parseFile(truthFile, TruthFile)
     for (const bug of loaded.truth.bugs) requireFile(resolve(dir, bug.fix), truthFile, `fix for bug "${bug.id}"`)
   }
   for (const g of spec.graders) {
     if (g.kind === 'review-match' && !loaded.truth) throw new ConfigError(`${file}: a review-match grader needs a truth.yaml beside it`)
+    if (g.kind === 'json-schema' && g.schema.startsWith('litmus:') && !BUILTIN_SCHEMAS.has(g.schema)) {
+      throw new ConfigError(`${file}: unknown built-in schema "${g.schema}" (known: ${[...BUILTIN_SCHEMAS].join(', ')})`)
+    }
     if (g.kind === 'json-schema' && !g.schema.startsWith('litmus:')) requireFile(resolve(dir, g.schema), file, `schema ${g.schema}`)
   }
 
@@ -193,17 +217,33 @@ function loadSubject(path: string, spec: CaseFile, file: string): Subject {
   return { kind: 'file', path, hash: sha256(bytes), content: bytes.toString('utf8') }
 }
 
-// truth.yaml, fake.yaml, fix/ and proof/ are a case's answers. A prompt_file or
+// case.yaml, truth.yaml, fake.yaml, fix/ and proof/ are a case's answers (a
+// case.yaml names the seeded bug and holds the graders). A prompt_file or
 // subject that resolves to one of them, in this case or any other, hands the
-// answers to the model under test.
+// answers to the model under test. The real path is checked as well as the
+// written one, so neither a symlink nor a case-insensitive filesystem gets
+// around it (the real path carries the on-disk case).
 function refuseAnswers(path: string, from: string, what: string): void {
   const isCase = (d: string) => stat(join(d, 'case.yaml'))?.isFile() === true
-  const name = basename(path)
-  let answer = (name === 'truth.yaml' || name === 'fake.yaml') && isCase(dirname(path))
-  for (let d = dirname(path); !answer && dirname(d) !== d; d = dirname(d)) {
-    answer = (basename(d) === 'fix' || basename(d) === 'proof') && isCase(dirname(d))
+  const isAnswer = (p: string): boolean => {
+    const name = basename(p)
+    if ((name === 'case.yaml' || name === 'truth.yaml' || name === 'fake.yaml') && isCase(dirname(p))) return true
+    for (let d = dirname(p); dirname(d) !== d; d = dirname(d)) {
+      if ((basename(d) === 'fix' || basename(d) === 'proof') && isCase(dirname(d))) return true
+    }
+    return false
   }
-  if (answer) throw new ConfigError(`${from}: ${what} ${path} is a case's ground truth, which never reaches the subject`)
+  if (isAnswer(path) || isAnswer(fsCall(path, () => realpathSync.native(path)))) {
+    throw new ConfigError(`${from}: ${what} ${path} is a case's ground truth, which never reaches the subject`)
+  }
+}
+
+// Absent is fine; present as the wrong type, or as a dangling link, is an
+// error, not an absence: a case whose fixture link broke would otherwise run
+// against an empty workdir and read as the model's failure.
+function optional(path: string, kind: 'file' | 'dir', from: string): string | undefined {
+  if (!fsCall(path, () => lstatSync(path, { throwIfNoEntry: false }))) return undefined
+  return kind === 'dir' ? requireDir(path, from, basename(path)) : requireFile(path, from, basename(path))
 }
 
 function parseFile<S extends z.ZodType>(file: string, schema: S): z.infer<S> {
@@ -254,6 +294,12 @@ function expectDirName(name: string, dir: string, kind: string): void {
   if (basename(dir) !== name) {
     throw new ConfigError(`${kind} "${name}" lives in ${dir}; its directory must be named "${name}"`)
   }
+}
+
+// NAME starts alphanumeric, so a . or _ entry is never a suite or case: shared
+// files, editor lock links (.#file), caches.
+function neverAName(path: string): boolean {
+  return /^[._]/.test(basename(path))
 }
 
 // A dangling symlink under a root or cases/ is refused, not skipped: skipping

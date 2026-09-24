@@ -4,7 +4,7 @@ import { chmodSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ConfigError } from '../../src/core/errors.ts'
 import { sha256 } from '../../src/core/hash.ts'
-import { discoverSuites, effectiveMinTrials, loadConfig } from '../../src/suite/load.ts'
+import { discoverSuites, effectiveMinTrials, loadConfig, loadProject } from '../../src/suite/load.ts'
 import { tree } from '../helpers/tmp.ts'
 
 const FIXTURE = join(import.meta.dirname, '../fixtures/project/litmus.config.yaml')
@@ -246,4 +246,81 @@ test('harness plugins and json-schema files are resolved and checked at load', (
   assert.throws(() => discoverSuites([tree({ ...suite('s'), 's/cases/c/case.yaml': schema('out.schema.json') })]), /schema out\.schema\.json not found/)
   assert.doesNotThrow(() => discoverSuites([tree({ ...suite('s'), 's/cases/c/case.yaml': schema('litmus:findings') })]))
   assert.deepEqual(discoverSuites([tree(suite('s'))])[0]!.cases[0]!.plugins, [])
+})
+
+test('a case part that is present but broken is an error, not an absence', () => {
+  const dangling = tree(suite('s'))
+  symlinkSync('../_shared/renamed', join(dangling, 's/cases/c/fixture'))
+  assert.throws(() => discoverSuites([dangling]), configError(/fixture is not a directory/))
+  const wrongType: Record<string, string>[] = [
+    { 's/cases/c/fixture': 'a file, not a tree' },
+    { 's/cases/c/change.patch/x': '' },
+    { 's/cases/c/fake.yaml/x': '' },
+    { 's/cases/c/truth.yaml/x': '' },
+  ]
+  for (const files of wrongType) assert.throws(() => discoverSuites([tree({ ...suite('s'), ...files })]), ConfigError, Object.keys(files)[0])
+  const gone = tree(suite('s'))
+  symlinkSync('nowhere.yaml', join(gone, 's/cases/c/truth.yaml'))
+  assert.throws(() => discoverSuites([gone]), configError(/truth\.yaml at .* not found|truth\.yaml not found/))
+})
+
+test('. and _ entries are skipped before they are stat-ed, so a dangling lock link never blocks a run', () => {
+  const root = tree(suite('s'))
+  symlinkSync(join(root, 'user@host.123'), join(root, '.#README.md'))
+  symlinkSync(join(root, 'gone'), join(root, 's/cases/_old'))
+  assert.deepEqual(discoverSuites([root]).map(x => x.name), ['s'])
+})
+
+test('a prompt_file or subject reaching the answers through a symlink, a case variant or another case.yaml is refused', () => {
+  const answers = { ...suite('s'), 's/cases/c/truth.yaml': 'kind: clean\n', 's/cases/c/fix/b.patch': 'ANSWER' }
+  const viaLink = tree({ ...answers, 's/cases/d/case.yaml': 'name: d\nexecutor: { kind: model, prompt_file: p.md }\ngraders: [{ kind: regex, pattern: x }]\n' })
+  symlinkSync('../c/truth.yaml', join(viaLink, 's/cases/d/p.md'))
+  assert.throws(() => discoverSuites([viaLink]), /is a case's ground truth/)
+
+  const viaDirLink = tree({ ...answers, 's/cases/d/case.yaml': 'name: d\nexecutor: { kind: model, prompt_file: answers/b.patch }\ngraders: [{ kind: regex, pattern: x }]\n' })
+  symlinkSync('../c/fix', join(viaDirLink, 's/cases/d/answers'))
+  assert.throws(() => discoverSuites([viaDirLink]), /is a case's ground truth/)
+
+  // On a case-insensitive filesystem the real path carries the on-disk case; elsewhere the variant simply does not exist.
+  const variant = tree({ ...answers, 's/cases/d/case.yaml': 'name: d\nexecutor: { kind: model, prompt_file: ../c/TRUTH.yaml }\ngraders: [{ kind: regex, pattern: x }]\n' })
+  assert.throws(() => discoverSuites([variant]), configError(/is a case's ground truth|not found/))
+
+  const graders = tree({ ...answers, 's/cases/d/case.yaml': 'name: d\nsubject: ../c/case.yaml\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, pattern: x }]\n' })
+  assert.throws(() => discoverSuites([graders]), /subject .*case\.yaml is a case's ground truth/)
+})
+
+test('a directory hash ignores .git in either form and .DS_Store, and sees the executable bit', () => {
+  const harness = 'name: c\nsubject: ../../plugin\nexecutor: { kind: harness, harness: claude-code, prompt: /review }\ngraders: [{ kind: regex, pattern: x }]\n'
+  const hashOf = (files: Record<string, string>, after?: (root: string) => void) => {
+    const root = tree({ ...suite('s'), 's/cases/c/case.yaml': harness, ...files })
+    after?.(root)
+    return discoverSuites([root])[0]!.cases[0]!.subject?.hash
+  }
+  const base = hashOf({ 's/plugin/hook.sh': 'echo hi' })
+  assert.equal(hashOf({ 's/plugin/hook.sh': 'echo hi', 's/plugin/.git': 'gitdir: /somewhere/.git/worktrees/a' }), base)
+  assert.equal(hashOf({ 's/plugin/hook.sh': 'echo hi', 's/plugin/.DS_Store': 'finder' }), base)
+  assert.notEqual(hashOf({ 's/plugin/hook.sh': 'echo hi' }, r => chmodSync(join(r, 's/plugin/hook.sh'), 0o755)), base)
+})
+
+test('an unknown built-in schema or judge name is refused at load, before any trial is paid for', () => {
+  const schema = tree({ ...suite('s'), 's/cases/c/case.yaml': 'name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: json-schema, artifact: out.json, schema: "litmus:finding" }]\n' })
+  assert.throws(() => discoverSuites([schema]), /unknown built-in schema "litmus:finding" \(known: litmus:findings\)/)
+
+  const project = (graders: string, extra = '') => {
+    const root = tree({
+      'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\njudges: { default: { provider: fake } }\n',
+      'suites/s/suite.yaml': 'name: s\n',
+      'suites/s/cases/c/case.yaml': `name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [${graders}]\n${extra}`,
+      'suites/s/cases/c/truth.yaml': 'kind: clean\n',
+    })
+    return join(root, 'litmus.config.yaml')
+  }
+  assert.doesNotThrow(() => loadProject(project('{ kind: judge, judge: default, question: q }', 'extract: { with: default }\n'), {}))
+  for (const [graders, extra] of [
+    ['{ kind: judge, judge: nope, question: q }', ''],
+    ['{ kind: review-match, confirm: nope }', ''],
+    ['{ kind: regex, pattern: x }', 'extract: { with: nope }\n'],
+  ] as const) {
+    assert.throws(() => loadProject(project(graders, extra), {}), configError(/judge "nope" is not defined .* \(defined: default\)/), graders + extra)
+  }
 })

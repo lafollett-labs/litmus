@@ -134,6 +134,9 @@ function compiles(pattern: string, flags: string | undefined): boolean {
   }
 }
 
+// The schemas a json-schema grader can name as litmus:<name> instead of a file.
+export const BUILTIN_SCHEMAS: ReadonlySet<string> = new Set(['litmus:findings'])
+
 export const Grader = z.discriminatedUnion('kind', [
   z
     .strictObject({ kind: z.literal('regex'), target, pattern: z.string().min(1), flags: z.string().optional(), ...bounds })

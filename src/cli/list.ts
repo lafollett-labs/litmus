@@ -1,10 +1,10 @@
-import { discoverSuites, loadConfig } from '../suite/load.ts'
+import { loadProject } from '../suite/load.ts'
 import { select } from '../suite/select.ts'
 import type { Io } from './main.ts'
 
 export function list(configPath: string, selectors: string[], io: Io): number {
-  const config = loadConfig(configPath)
-  const selection = select(discoverSuites(config.roots), selectors, new Set(Object.keys(config.configs)))
+  const { config, suites } = loadProject(configPath)
+  const selection = select(suites, selectors, new Set(Object.keys(config.configs)))
   const width = Math.max(...selection.map(s => s.case.name.length))
   let suite = ''
   for (const { case: c, trials } of selection) {
