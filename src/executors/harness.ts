@@ -7,7 +7,8 @@ import type { ExecutorResult, Usage } from '../core/types.ts'
 import { scrubbedEnv } from '../sandbox/env.ts'
 import { snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
-import { decide, fold, inside, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
+import { fold, inside } from '../core/paths.ts'
+import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
 import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
 import type { ExecJob } from './types.ts'
@@ -43,8 +44,8 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   if (!exec.allow_hooks) {
     // Hooks, MCP and LSP servers run as host processes, outside the gate; a
     // case has to say it accepts that before any of them load.
-    const hooked = [...plugins.map(p => pluginRunsProcesses(p)), project ? fixtureRunsProcesses(job.workdir.dir) : undefined].filter(x => x !== undefined)
-    if (hooked.length) return refuse(`${hooked.join('; ')}; set allow_hooks: true to run them uncontained`)
+    const found = [...plugins.map(p => pluginRunsProcesses(p)), project ? fixtureRunsProcesses(job.workdir.dir) : undefined].find(x => x !== undefined)
+    if (found) return refuse(`${found.reason}; ${found.fix}`)
   }
   if (project) {
     const bad = fixtureSettings(job.workdir.dir)
@@ -300,44 +301,52 @@ const SAFE_MANIFEST_KEYS = new Set(['$schema', 'name', 'version', 'description',
 const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json', 'monitors/monitors.json']
 const PROCESS_KEYS = new Set(['hooks', 'mcpservers', 'lspservers', 'monitors', 'statusline'])
 
-export function pluginRunsProcesses(dir: string): string | undefined {
-  for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return `plugin ${dir} has ${f}`
+// Why a plugin or fixture is refused, and what would fix it. Only a real
+// process signal points at allow_hooks: a YAML typo must not steer an
+// operator toward the one setting that turns this whole check off.
+type Refusal = { reason: string; fix: string }
+const RUNS = 'set allow_hooks: true to run them uncontained'
+
+export function pluginRunsProcesses(dir: string): Refusal | undefined {
+  for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return { reason: `plugin ${dir} has ${f}`, fix: RUNS }
   const manifest = join(dir, '.claude-plugin/plugin.json')
   if (existsSync(manifest)) {
     let m: unknown
     try {
       m = JSON.parse(readFileSync(manifest, 'utf8'))
-    } catch {
-      return `plugin ${dir} has a plugin.json that is not valid JSON`
+    } catch (e) {
+      return { reason: `plugin ${dir} has a plugin.json that is not valid JSON (${(e as Error).message})`, fix: 'fix the JSON' }
     }
-    if (m === null || typeof m !== 'object' || Array.isArray(m)) return `plugin ${dir}'s plugin.json is not an object`
+    if (m === null || typeof m !== 'object' || Array.isArray(m)) return { reason: `plugin ${dir}'s plugin.json is not an object`, fix: 'fix the JSON' }
     const extra = Object.keys(m).filter(k => !SAFE_MANIFEST_KEYS.has(k))
-    if (extra.length) return `plugin ${dir}'s plugin.json declares ${extra.join(', ')}`
+    if (extra.length) return { reason: `plugin ${dir}'s plugin.json declares ${extra.join(', ')}`, fix: RUNS }
   }
-  return treeRunsProcesses(dir, `plugin ${dir}`, () => true)
+  // A plugin's .git is walked too: its manifest can point a component there.
+  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false)
 }
 
 // Under project settings Claude Code discovers .claude/skills, agents and
-// commands at every depth of the fixture, not only at its root.
-function fixtureRunsProcesses(dir: string): string | undefined {
-  if (existsSync(join(dir, '.mcp.json'))) return 'the fixture has .mcp.json'
-  return treeRunsProcesses(dir, 'the fixture', rel => rel.split('/').some(seg => fold(seg) === '.claude'))
+// commands at every depth of the fixture, not only at its root. The fixture's
+// .git is litmus's own (a fixture .git is refused at build), so it is skipped.
+function fixtureRunsProcesses(dir: string): Refusal | undefined {
+  if (existsSync(join(dir, '.mcp.json'))) return { reason: 'the fixture has .mcp.json', fix: RUNS }
+  return treeRunsProcesses(dir, 'the fixture', rel => rel.split('/').some(seg => fold(seg) === '.claude'), true)
 }
 
-function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean): string | undefined {
-  const visit = (d: string): string | undefined => {
+function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean, skipGit: boolean): Refusal | undefined {
+  const visit = (d: string): Refusal | undefined => {
     for (const name of readdirSync(d).sort()) {
-      if (name === '.git') continue
+      if (skipGit && name === '.git') continue
       const path = join(d, name)
       const rel = relative(root, path).split(sep).join('/')
       const st = lstatSync(path)
-      if (st.isSymbolicLink()) return `${who}: ${rel} is a symlink, which could point a component at a file this check never reads`
+      if (st.isSymbolicLink()) return { reason: `${who}: ${rel} is a symlink, which could point a component at a file this check never reads`, fix: 'replace the link with the files it points at' }
       if (st.isDirectory()) {
         const found = visit(path)
         if (found) return found
       } else if (st.isFile() && /\.md$/i.test(name) && inScope(rel)) {
-        const why = frontmatterRunsProcesses(readFileSync(path, 'utf8'))
-        if (why) return `${who}: ${rel} ${why}`
+        const found = frontmatterRunsProcesses(readFileSync(path, 'utf8'))
+        if (found) return { reason: `${who}: ${rel} ${found.reason}`, fix: found.fix }
       }
     }
     return undefined
@@ -345,21 +354,32 @@ function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => 
   return visit(root)
 }
 
-// Parsed as YAML, the way the loader reads it, so a quoted key or a flow
-// mapping is seen. Frontmatter that does not parse is refused rather than
-// guessed at.
-function frontmatterRunsProcesses(text: string): string | undefined {
-  const m = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
-  if (!m) return undefined
-  let front: unknown
-  try {
-    front = parse(m[1]!)
-  } catch {
-    return 'has frontmatter that is not valid YAML'
+// Frontmatter is read with Claude Code's own fence, whose closing --- need not
+// start a line, and with the strict one, which catches a --- inside a value.
+// Merge keys are resolved, as the loader's YAML parser resolves them. A key
+// found either way refuses the file, and frontmatter that does not parse is
+// refused rather than guessed at.
+const FENCES = [/^---\s*\n([\s\S]*?)---\s*\n?/, /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/]
+
+function frontmatterRunsProcesses(text: string): Refusal | undefined {
+  const body = text.replace(/^\uFEFF/, '')
+  for (const fence of FENCES) {
+    const m = fence.exec(body)
+    if (!m) continue
+    let front: unknown
+    try {
+      front = parse(m[1]!, { merge: true })
+    } catch (e) {
+      return { reason: `has frontmatter that is not valid YAML (${(e as Error).message.split('\n')[0]})`, fix: 'quote the value so the frontmatter parses' }
+    }
+    if (front === null || typeof front !== 'object' || Array.isArray(front)) continue
+    const key = Object.keys(front).find(k => PROCESS_KEYS.has(fold(k)))
+    if (key) return { reason: `declares ${key} in its frontmatter`, fix: RUNS }
+    // An agent definition can ask to run in a git worktree, where the gate
+    // cannot follow it.
+    if (Object.keys(front).some(k => fold(k) === 'isolation')) return { reason: 'declares isolation in its frontmatter', fix: 'remove isolation: a subagent must run inside this session' }
   }
-  if (front === null || typeof front !== 'object' || Array.isArray(front)) return undefined
-  const key = Object.keys(front).find(k => PROCESS_KEYS.has(fold(k)))
-  return key ? `declares ${key} in its frontmatter` : undefined
+  return undefined
 }
 
 // Under setting_sources [project], a fixture's settings may set only $schema.

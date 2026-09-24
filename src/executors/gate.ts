@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { fold, inside } from '../core/paths.ts'
 
 export type GatePolicy = {
   workdir: string // realpath'd by the caller once
@@ -97,10 +98,7 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
   return { allow: true }
 }
 
-export const inside = (path: string, root: string) => path === root || path.startsWith(root + sep)
-// Upper then lower: a real case fold for what APFS treats as one name
-// (ſ and S, the Kelvin sign and k), which toLowerCase alone misses.
-export const fold = (path: string) => path.normalize('NFC').toUpperCase().toLowerCase()
+
 
 const deny = (reason: string): Decision => ({ allow: false, reason })
 

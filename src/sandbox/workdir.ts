@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process'
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, parse, resolve, sep } from 'node:path'
+import { basename, dirname, join, parse, resolve } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
 import { sha256 } from '../core/hash.ts'
 import { RUN_ID } from '../core/ids.ts'
+import { fold, inside } from '../core/paths.ts'
 import type { LoadedCase } from '../suite/load.ts'
 import { snapshot, symlinksUnder, type Snapshot } from './snapshot.ts'
 
@@ -39,8 +40,7 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
   // or spelt in another case, still lands where it lands.
   const realRoot = fold(join(realExisting(resolve(base)), 'litmus', where.run))
   const under = avoid.find(a => {
-    const r = fold(realExisting(resolve(a)))
-    return realRoot === r || realRoot.startsWith(r + sep)
+    return inside(realRoot, fold(realExisting(resolve(a))))
   })
   if (under) throw new InfraError(`workdir ${root} would sit inside ${under}; point TMPDIR outside the results store and every suite root`, { retryable: false })
   rmSync(root, { recursive: true, force: true }) // fresh on every attempt, never reused
@@ -126,7 +126,6 @@ function instructionFileAbove(dir: string): string | undefined {
 }
 
 const slug = (key: string) => key.replace(/[^a-z0-9._-]+/gi, '_')
-const fold = (path: string) => path.normalize('NFC').toUpperCase().toLowerCase()
 
 // The real path of the deepest existing ancestor, with the rest appended.
 function realExisting(path: string): string {

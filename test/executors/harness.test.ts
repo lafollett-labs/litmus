@@ -346,3 +346,38 @@ test('a plugin inside a suite is refused up front, not loaded blind', async () =
   assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
   assert.match(r.reason ?? '', /lies inside .*where the gate denies every read; move it outside the suite/)
 })
+
+// Frontmatter shapes that Claude Code's own loader (its fence, plus YAML merge
+// keys) reads as declaring hooks, taken from the round-3 review probe.
+const LOADER_SHAPES: Record<string, string> = {
+  'a four-dash close': "---\nname: r\nhooks: {PreToolUse: []}\n----\nbody\n",
+  'a close on the same line': "---\nname: r\nhooks: {PreToolUse: []} ---\nbody\n",
+  'a commented close': "---\nname: r\nhooks: {PreToolUse: []}\n#---\nbody\n",
+  'an indented close': "---\nname: r\nhooks: {PreToolUse: []}\n  ---\nbody\n",
+  'a merge key': "---\nname: r\nx: &h {hooks: {PreToolUse: []}}\n<<: *h\n---\nbody\n",
+  'CRLF line ends': "---\r\nname: r\r\nhooks: {PreToolUse: []}\r\n---\r\nbody\r\n",
+}
+
+test('frontmatter is read the way Claude Code reads it, so no fence or merge-key shape hides hooks', async () => {
+  for (const [label, text] of Object.entries(LOADER_SHAPES)) {
+    const plugin = pluginTree({ 'skills/r/SKILL.md': text })
+    const r = await runHarness(job(HARNESS(`  plugins: [${plugin}]\n`)), scripted([result()]).query)
+    assert.match(r.reason ?? '', /declares hooks in its frontmatter; set allow_hooks/, label)
+  }
+  const fixture = await runHarness(job(HARNESS('  setting_sources: [project]\n'), { 'fixture/.claude/skills/x/SKILL.md': LOADER_SHAPES['a four-dash close']! }), scripted([result()]).query)
+  assert.match(fixture.reason ?? '', /declares hooks/)
+})
+
+test('a plugin manifest cannot hide a component in the plugin .git', async () => {
+  const plugin = pluginTree({ '.claude-plugin/plugin.json': '{"name":"p","skills":"./.git/extra"}', '.git/extra/r/SKILL.md': '---\nhooks: {}\n---\n' })
+  const r = await runHarness(job(HARNESS(`  plugins: [${plugin}]\n`)), scripted([result()]).query)
+  assert.match(r.reason ?? '', /\.git\/extra\/r\/SKILL\.md declares hooks/)
+})
+
+test('a frontmatter typo names the YAML error and never suggests allow_hooks; isolation in a definition is refused', async () => {
+  const run = async (text: string) => (await runHarness(job(HARNESS(`  plugins: [${pluginTree({ 'agents/a.md': text })}]\n`)), scripted([result()]).query)).reason ?? ''
+  const typo = await run('---\nname: [unclosed\n---\n')
+  assert.match(typo, /not valid YAML \(.+\); quote the value/)
+  assert.doesNotMatch(typo, /allow_hooks/)
+  assert.match(await run('---\nname: a\nisolation: worktree\n---\n'), /declares isolation in its frontmatter; remove isolation/)
+})
