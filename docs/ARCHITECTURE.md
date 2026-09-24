@@ -394,7 +394,7 @@ INCONCLUSIVE.
 **Workdirs.** Each workdir is created under
 `os.tmpdir()/litmus/<run>/<key-slug>-<key-hash>-<attempt>/`. The hash
 keeps two keys that slug alike apart. It is never placed inside the results
-store or a suite root. Nor is it placed anywhere with instructions in its
+store or a suite root, compared by real, case-folded path. Nor is it placed anywhere with instructions in its
 ancestors that Claude Code would load: `CLAUDE.md`, `CLAUDE.local.md`,
 `AGENTS.md`, `.claude/CLAUDE.md` or `.claude/rules/`. It is built in five steps:
 
@@ -567,12 +567,19 @@ scrubbed environment and these settings:
 - The case's plugins are loaded. A plugin or fixture that would start a host
   process is refused unless the case sets `allow_hooks: true`. That means
   hooks, MCP servers or LSP servers, and they are uncontained, like
-  `allow_shell`. A plugin's `plugin.json` may hold only the keys `name`,
-  `version`, `description`, `author`, `homepage`, `repository`, `license`,
-  `keywords`, `commands`, `agents`, `skills` and `$schema`. It may not ship
-  `hooks/hooks.json`, `.mcp.json` or `.lsp.json`. No skill, agent or command
-  in the plugin, or in the fixture's `.claude/`, may declare `hooks`,
-  `mcpServers` or `lspServers` in its frontmatter.
+  `allow_shell`. The rules for plugins:
+  - `plugin.json` may hold only the keys `name`, `version`, `description`,
+    `author`, `homepage`, `repository`, `license`, `keywords`, `commands`,
+    `agents`, `skills` and `$schema`.
+  - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
+    `monitors/monitors.json`.
+  - It may not contain a symlink anywhere.
+  - Every markdown file in it has its frontmatter parsed as YAML, which must
+    parse and must not declare `hooks`, `mcpServers`, `lspServers`, `monitors`
+    or `statusLine`. The same goes for markdown under a fixture `.claude/`
+    directory at any depth.
+  - A plugin that lies inside a suite root is refused before the session
+    starts: the gate would deny every read of its own files.
 - Credentials: `anthropic` requires `ANTHROPIC_API_KEY`, and a claude.ai login
   is never used. `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS
   credential variables, including `AWS_BEARER_TOKEN_BEDROCK`. With
@@ -595,7 +602,7 @@ fires on every call, subagents' included.
 | Tool | Allowed when |
 | - | - |
 | Read, Glob, Grep, LS | The realpath is inside the workdir, or inside a plugin or subject root (read-only), and not inside any suite root. A Glob or Grep is also refused when a suite root lies anywhere below its base, since it would descend into it |
-| Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` or `final_message.txt`. Under `setting_sources: [project]`, also not under `.claude/` or `.mcp.json`, which the session would read back as its own config |
+| Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` or `final_message.txt`. Under `setting_sources: [project]`, also not `.mcp.json`, and not under a `.claude/` directory at any depth: Claude Code discovers `.claude/` skills, agents and commands between a touched file and the cwd, so the session would load them as its own config |
 | Agent, Task (subagents) | With no `isolation`. Their tool calls pass through the same gate; a worktree or remote agent would not |
 | TodoWrite, Skill | Always |
 | Bash | `allow_shell: true` |
