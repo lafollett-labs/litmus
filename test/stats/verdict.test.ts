@@ -109,8 +109,16 @@ test('a canary trial that ended in model failure is not a success, since no grad
   assert.equal(run('mmmm', { expect: 'fail' }).verdict, 'FAIL')
 })
 
-test('the canary rules still yield to too few scored trials', () => {
-  assert.equal(run('pee', { expect: 'fail', min_trials: 2 }).verdict, 'INCONCLUSIVE')
+test('a canary that passes once is FAIL even when errors left too few scored trials', () => {
+  const v = run('pee', { expect: 'fail', min_trials: 2 })
+  assert.equal(v.verdict, 'FAIL')
+  assert.equal(v.inconclusive_reason, null)
+})
+
+test('an INCONCLUSIVE verdict says whether errors or an unresolved interval caused it', () => {
+  assert.equal(run('pee', { min_trials: 2 }).inconclusive_reason, 'min_trials')
+  assert.equal(rate('ppppp').inconclusive_reason, 'interval')
+  assert.equal(run('ppp').inconclusive_reason, null)
 })
 
 test('sixteen straight passes clear a 0.8 threshold under the rate policy, and fifteen cannot', () => {

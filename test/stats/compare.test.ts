@@ -116,7 +116,8 @@ test('cases only one side ran, or one side could not score, are excluded and sor
   const a = side('a', [['smoke/only-a', 'ppp'], ['smoke/errs', 'ppp'], ['smoke/fine', 'ppp']])
   const b = side('b', [['smoke/fine', 'ppp'], ['smoke/errs', 'eee'], ['smoke/only-b', 'ppp']])
   const c = compare(a, b)
-  assert.deepEqual(c.excluded, ['smoke/errs', 'smoke/only-a', 'smoke/only-b'])
+  assert.deepEqual(c.excluded.map(e => e.case), ['smoke/errs', 'smoke/only-a', 'smoke/only-b'])
+  assert.ok(c.excluded.every(e => e.reason.length > 0))
   assert.equal(c.cases, 1)
   assert.deepEqual(c.flips, [{ case: 'smoke/errs', from: 'PASS', to: 'ERROR' }])
 })
@@ -177,4 +178,30 @@ test('a resample count that is not a positive integer is rejected', () => {
   for (const resamples of [0, -1, 1.5]) {
     assert.throws(() => compare(side('a', cases(1, 'p')), side('b', cases(1, 'p')), { resamples }), RangeError)
   }
+})
+
+test('every trial passing on both sides is never a regression, whatever the trial counts', () => {
+  // A prior centred on ½ reads 5/5 as 0.92 and 1/1 as 0.75, and over 30 cases
+  // that gap looks certain. Centred on each case's pooled rate, it does not.
+  const down = compare(side('a', cases(30, p(5))), side('b', cases(30, p(1))))
+  assert.notEqual(down.verdict, 'REGRESSION')
+  const up = compare(side('a', cases(30, p(1))), side('b', cases(30, p(5))))
+  assert.notEqual(up.verdict, 'IMPROVEMENT')
+  const many = compare(side('a', cases(200, p(10))), side('b', cases(200, p(3))))
+  assert.notEqual(many.verdict, 'REGRESSION')
+})
+
+test('a real drop is still a regression when the trial counts differ', () => {
+  const c = compare(side('a', cases(30, p(5))), side('b', cases(30, f(3))))
+  assert.equal(c.verdict, 'REGRESSION')
+})
+
+test('a case whose content changed between the sides is excluded with its reason, and does not flip', () => {
+  const a: CompareSide = { ...side('a', [['smoke/x', p(3)], ['smoke/y', p(3)]]), hashes: { 'smoke/x': 'h1', 'smoke/y': 'h2' } }
+  const b: CompareSide = { ...side('b', [['smoke/x', f(3)], ['smoke/y', p(3)]]), hashes: { 'smoke/x': 'CHANGED', 'smoke/y': 'h2' }, notes: ['subject changed'] }
+  const c = compare(a, b)
+  assert.deepEqual(c.excluded, [{ case: 'smoke/x', reason: 'the case changed between the two sides' }])
+  assert.deepEqual(c.flips, [])
+  assert.equal(c.cases, 1)
+  assert.deepEqual(c.notes, ['subject changed'])
 })

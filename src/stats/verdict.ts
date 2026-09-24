@@ -32,10 +32,12 @@ export function settle(input: SettleInput): Verdict {
 
   const interval = wilson(successes, scored)
   const k = scored === 0 ? null : Math.min(3, scored)
+  const verdict = decide(input, passes, successes, scored, interval)
   return {
     case: input.case,
     config: input.config,
-    verdict: decide(input, passes, successes, scored, interval),
+    verdict,
+    inconclusive_reason: verdict !== 'INCONCLUSIVE' ? null : scored < input.min_trials ? 'min_trials' : 'interval',
     policy: input.policy,
     expect,
     unexpected_pass: expect === 'fail' && passes > 0,
@@ -62,10 +64,11 @@ function decide(
   // Infra errors say nothing about the subject, so they never count toward a
   // verdict; too few scored trials is a question left open, not a FAIL.
   if (scored === 0 || ci === null) return 'ERROR'
-  if (scored < input.min_trials) return 'INCONCLUSIVE'
-  // Never FLAKY: a canary that passes even once means the grader sometimes
-  // waves known-bad output through, and every other verdict it gave is suspect.
+  // Before the min_trials guard, and never FLAKY: a canary that passes even
+  // once means the grader sometimes waves known-bad output through. One pass
+  // is already proof; waiting for more trials would only hide it.
   if (input.expect === 'fail' && passes > 0) return 'FAIL'
+  if (scored < input.min_trials) return 'INCONCLUSIVE'
 
   if (input.policy === 'all') {
     if (successes === scored) return 'PASS'
