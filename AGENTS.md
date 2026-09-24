@@ -76,9 +76,9 @@ root, or any directory with a `CLAUDE.md` or `AGENTS.md` in its ancestors.
 for each change, one at a time:          # merge it before the next change opens a PR
     branch from main: m<N>-<slug> for PLAN milestones, else <type>/<slug>
     small commits, each passing npm run check && npm test
-    /code-reviewer:code-reviewer on the branch until APPROVED   # local, before any PR exists
+    Gate 1: /code-reviewer:code-reviewer on the branch until APPROVED   # local, before any PR exists
     push -> gh pr create
-    resolve every external review thread (Copilot, humans)      # no more local rounds once the PR is open
+    Gate 2: resolve every PR review thread (Copilot, humans)            # no more Gate 1 rounds once the PR is open
     green CI -> gh pr merge --squash --delete-branch
 never push to main   # the ruleset refuses it
 ```

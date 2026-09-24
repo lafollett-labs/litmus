@@ -14,9 +14,9 @@ to build and in what order.
 git switch -c m<N>-<slug> main             # only after the previous milestone merged
 repeat:
     one logical change → commit          # each commit passes npm run check && npm test
-/code-reviewer:code-reviewer on the branch, until APPROVED   # local, at most 3 rounds, before any PR
+Gate 1: /code-reviewer:code-reviewer on the branch, until APPROVED   # local, at most 3 rounds, before any PR
 push → gh pr create                       # body: scope, then the done-when evidence
-resolve every external review thread (Copilot included): fix it, or reply with why not
+Gate 2: resolve every PR review thread (Copilot included): fix it, or reply with why not
 CI green → gh pr merge --squash --delete-branch
 ```
 
