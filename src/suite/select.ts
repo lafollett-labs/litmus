@@ -1,5 +1,5 @@
 import { ConfigError } from '../core/errors.ts'
-import { parseTrialKey, type TrialRef } from '../core/ids.ts'
+import { parseTrialKey, trialKey, type TrialRef } from '../core/ids.ts'
 import type { LoadedCase, LoadedSuite } from './load.ts'
 
 export type Selector =
@@ -24,14 +24,19 @@ export function parseSelector(text: string): Selector {
 }
 
 // A selector that matches nothing is an error. An empty selection that exits 0
-// is a CI job reporting success on a typo.
-export function select(suites: LoadedSuite[], texts: string[]): Selection {
+// is a CI job reporting success on a typo. That includes a trial key naming a
+// config the config file does not define: the trial it names cannot exist.
+export function select(suites: LoadedSuite[], texts: string[], configs: ReadonlySet<string>): Selection {
   const all = suites.flatMap(s => s.cases)
+  if (all.length === 0) throw new ConfigError('no cases to select from')
   if (texts.length === 0) return all.map(c => ({ case: c }))
 
   const picked = new Map<string, { case: LoadedCase; trials?: TrialRef[] }>()
   for (const text of texts) {
     const sel = parseSelector(text)
+    if (sel.kind === 'trial' && !configs.has(sel.ref.config)) {
+      throw new ConfigError(`selector "${text}" names config "${sel.ref.config}", which is not defined (defined: ${[...configs].join(', ')})`)
+    }
     const hits = all.filter(c => matches(sel, c))
     if (hits.length === 0) throw new ConfigError(`selector "${text}" matched no cases`)
     for (const c of hits) {
@@ -40,7 +45,7 @@ export function select(suites: LoadedSuite[], texts: string[]): Selection {
         picked.set(c.id, { case: c })
       } else if (!prior) {
         picked.set(c.id, { case: c, trials: [sel.ref] })
-      } else if (prior.trials) {
+      } else if (prior.trials && !prior.trials.some(t => trialKey(t) === text)) {
         prior.trials.push(sel.ref)
       }
     }
