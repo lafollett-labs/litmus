@@ -8,7 +8,7 @@ type Deps = { fetch?: typeof fetch; apiKey?: string | undefined; env?: NodeJS.Pr
 type UpstreamError = { code?: number | string; message?: string }
 
 type ChatResponse = {
-  choices?: { message?: { content?: string | null }; finish_reason?: string | null; error?: UpstreamError }[]
+  choices?: { message?: { content?: string | { type?: string; text?: string }[] | null; refusal?: string | null }; finish_reason?: string | null; error?: UpstreamError }[]
   usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; is_byok?: boolean; cost_details?: { upstream_inference_cost?: number } }
   error?: UpstreamError
 }
@@ -67,7 +67,7 @@ export function openrouterProvider(deps: Deps = {}): Provider {
       // provider's own charge is reported beside it.
       const byok = usage?.is_byok === true ? (usage.cost_details?.upstream_inference_cost ?? 0) : 0
       return {
-        text: choice.message.content ?? '',
+        text: answerText(choice.message),
         stop_reason: choice.finish_reason ?? null,
         usage: {
           input_tokens: usage?.prompt_tokens ?? 0,
@@ -78,6 +78,15 @@ export function openrouterProvider(deps: Deps = {}): Provider {
       }
     },
   }
+}
+
+// The model's text, whatever shape it came in. Content may be a string or an
+// array of parts, and a refusal arrives in its own field. Either way it is
+// output for the graders. An empty answer (reasoning that spent the whole
+// budget, finish_reason "length") is the model's result too, not an error.
+function answerText(m: { content?: string | { type?: string; text?: string }[] | null; refusal?: string | null }): string {
+  const content = Array.isArray(m.content) ? m.content.flatMap(p => (p.type === 'text' && typeof p.text === 'string' ? [p.text] : [])).join('') : (m.content ?? '')
+  return content || (m.refusal ?? '')
 }
 
 // An upstream error is classified by its code the way an HTTP status is. With

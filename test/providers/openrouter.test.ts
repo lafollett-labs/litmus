@@ -43,6 +43,17 @@ test('a 200 that carries no answer is an infra error, classified by its code, ne
   }
 })
 
+test('content as parts or a refusal is the answer; an empty answer after a length stop is still the model\'s result', async () => {
+  const answer = async (message: unknown, finish_reason = 'stop') => {
+    const { fetch } = fakeFetch(200, { choices: [{ message, finish_reason }] })
+    return openrouterProvider({ fetch, apiKey: 'k' }).complete(req)
+  }
+  assert.equal((await answer({ content: [{ type: 'text', text: 'a ' }, { type: 'image_url' }, { type: 'text', text: 'b' }] })).text, 'a b')
+  assert.equal((await answer({ content: null, refusal: 'I can\'t help with that.' })).text, 'I can\'t help with that.')
+  const truncated = await answer({ content: '' }, 'length')
+  assert.deepEqual([truncated.text, truncated.stop_reason], ['', 'length'])
+})
+
 test('a body that fails after the headers is a retryable infra error, not a TypeError', async () => {
   const f = (async () =>
     new Response(new ReadableStream({ start: c => c.error(new TypeError('terminated')) }), { status: 200 })) as unknown as typeof fetch
