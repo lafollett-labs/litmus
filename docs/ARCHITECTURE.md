@@ -381,7 +381,8 @@ a harness timeout or max-turns stop is a model failure, and it is never
 retried. A single model call that times out is almost always a stalled
 connection, so for the `model` executor a timeout is a retryable infra error.
 A timeout and a cancel travel on different abort reasons, so they can't be
-confused.
+confused. An answer that arrives after either has fired is classified by it,
+never accepted: a provider or SDK that answers late did not answer in time.
 
 **Effective `min_trials`.** A run can ask for fewer trials than the case
 defines, through `--trials`, a trial-key selector, the UI, or a rerun. The
@@ -392,24 +393,31 @@ INCONCLUSIVE.
 ## Sandbox
 
 **Workdirs.** Each workdir is created under
-`os.tmpdir()/litmus/<run>/<key-slug>-<attempt>/`. It is never placed under
-`.litmus/`, a suite root, or any directory with a `CLAUDE.md` or `AGENTS.md`
-in its ancestors. It is built in five steps:
+`os.tmpdir()/litmus/<run>/<key-slug>-<key-hash>-<attempt>/`. The hash
+keeps two keys that slug alike apart. The workdir is used by its real path,
+so a `TMPDIR`, or a `litmus/` under it, that is a symlink is judged where it
+lands. It is never placed inside the results store or a suite root, compared
+case-folded. Nor is it placed anywhere with instructions in its real
+ancestors that Claude Code would load: `CLAUDE.md`, `CLAUDE.local.md`,
+`AGENTS.md`, `.claude/CLAUDE.md` or `.claude/rules/`. It is built in five steps:
 
-1. `fixture/` is copied. A symlink or a `.git` entry anywhere in it is
-   refused.
+1. `fixture/` is copied. A fixture that is itself a symlink is refused, as is
+   a symlink inside it, a `.git` entry in any case (`.GIT` is
+   `.git` on a case-insensitive volume), or anything that is not a regular file
+   or directory (a FIFO, a socket) is refused.
 2. `git init`, and the tree is committed on `main`.
 3. If the case has a `change.patch`, the branch `litmus/change` is created
    with the patch committed on it. `HEAD` is `litmus/change`.
-4. The post-change tree is scanned again, and any symlink is refused. A patch
-   can create one.
+4. The post-change tree is scanned again, `.git` included, and any symlink is
+   refused. A patch can create one.
 5. The builder takes a snapshot of every file (path, size and hash).
 
 Git runs only while the workdir is being built, before the subject starts. It
 runs with `PATH` alone for its environment, and with `GIT_CONFIG_NOSYSTEM=1`,
-`GIT_CONFIG_GLOBAL=/dev/null`, `core.hooksPath=/dev/null` and
-`core.fsmonitor=false`. The gate also refuses the subject any write under
-`<workdir>/.git/`.
+`GIT_CONFIG_GLOBAL=/dev/null`, `core.hooksPath=/dev/null`,
+`core.fsmonitor=false`, `maintenance.auto=false` and `gc.auto=0`. The last two
+stop a detached git from outliving the build. The gate also refuses the
+subject any write under `<workdir>/.git/`.
 
 After the executor exits, **the files the subject wrote** are found by
 comparing against the snapshot, not by asking git. That way nothing the
@@ -420,8 +428,9 @@ subject wrote into `.git/` ever runs.
 
 - `PATH`, `LANG`, `LC_*`, `TERM` and `TMPDIR`.
 - `HOME`, pointed at a temporary directory created for the trial.
-- The toolchain cache variables `GOCACHE`, `GOMODCACHE`, `GOPATH` and
-  `npm_config_cache`, when they are set.
+- The toolchain variables `GOCACHE`, `GOMODCACHE`, `GOPATH`, `GOFLAGS` and
+  `npm_config_cache`, when they are set. `GOFLAGS` is the operator's own
+  setting, so it carries through to the `go` runs in `command` graders.
 - For the harness only, the one credential its provider needs.
 
 This keeps credentials out of the environment and out of the usual dotfile
@@ -561,15 +570,44 @@ scrubbed environment and these settings:
 - `CLAUDE_CONFIG_DIR` is a fresh directory created for the trial, and
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` is set. MCP config is strict, with no
   servers unless `allow_hooks` is set.
-- The case's plugins are loaded. A plugin or fixture that declares hooks or MCP
-  servers is refused unless the case sets `allow_hooks: true`. Hooks run as
-  host processes outside the gate, so they are uncontained, like
-  `allow_shell`.
+- The case's plugins are loaded. A plugin or fixture that would start a host
+  process is refused unless the case sets `allow_hooks: true`. That means
+  hooks, MCP servers or LSP servers, and they are uncontained, like
+  `allow_shell`. The rules for plugins:
+  - `plugin.json` may hold only the keys `name`, `version`, `description`,
+    `author`, `homepage`, `repository`, `license`, `keywords`, `commands`,
+    `agents`, `skills` and `$schema`.
+  - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
+    `monitors/monitors.json`.
+  - It may not be a symlink, or contain one anywhere.
+  - Every markdown file in it, its `.git` included, has its frontmatter
+    checked. The frontmatter is read with Claude Code's own fence (the closing
+    `---` need not start a line) and with the strict one. It must parse, every
+    top-level key must be a plain string, and none may be a `<<` merge key.
+    That refuses outright the shapes Claude Code's YAML reads differently from
+    the spec (a quoted `<<` merges there, and `[hooks]` becomes `hooks`). No
+    key may be `hooks`, `mcpServers`, `lspServers`, `monitors`, `statusLine`
+    or `isolation`. The same goes for markdown under a fixture `.claude/`
+    directory at any depth.
+  - `allow_hooks: true` waives only the process signals (the process files,
+    manifest keys and frontmatter keys above). A symlink, a key that isn't
+    plain, a merge key, a parse failure and `isolation` are refused either
+    way, since they are the gate's own checks.
+  - A plugin that lies inside a suite root is refused before the session
+    starts: the gate would deny every read of its own files.
 - Credentials: `anthropic` requires `ANTHROPIC_API_KEY`, and a claude.ai login
   is never used. `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS
-  credential variables. Pairing a harness with `openrouter` or `fake` is a
-  config error.
+  credential variables, including `AWS_BEARER_TOKEN_BEDROCK`. With
+  `AWS_PROFILE`, it points `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`
+  at the operator's own files, because `HOME` is redirected. Pairing a harness
+  with `openrouter` or `fake` is a config error.
 - `maxTurns` comes from the case, and the trial's timeout aborts the session.
+- **Result.** A turn that ends on an API error arrives as a `success` result
+  with `is_error` set, and its text is the error. It is an `infra_error`,
+  classified by `api_error_status` like any provider error, and never graded.
+  Tokens come from `modelUsage`, which covers every model call in the session,
+  subagents included; `usage` covers the main loop only. Cost is
+  `total_cost_usd`.
 
 Every tool call passes through a default-deny gate. The gate is a PreToolUse
 hook, not only `canUseTool`: Claude Code approves read-only tools, and tools
@@ -578,9 +616,10 @@ fires on every call, subagents' included.
 
 | Tool | Allowed when |
 | - | - |
-| Read, Glob, Grep | The realpath is inside the workdir, or inside a plugin or subject root (read-only), and not inside any suite root |
-| Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` |
-| Agent (subagents), TodoWrite, Skill | Always. Subagent tool calls pass through the same gate |
+| Read, Glob, Grep, LS | The realpath is inside the workdir, or inside a plugin or subject root (read-only), and not inside any suite root. A Glob or Grep is also refused when a suite root lies anywhere below its base, since it would descend into it |
+| Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` or `final_message.txt`. Under `setting_sources: [project]`, also not `.mcp.json`, and not under a `.claude/` directory at any depth: Claude Code discovers `.claude/` skills, agents and commands between a touched file and the cwd, so the session would load them as its own config |
+| Agent, Task (subagents) | With no `isolation`. Their tool calls pass through the same gate; a worktree or remote agent would not |
+| TodoWrite, Skill | Always |
 | Bash | `allow_shell: true` |
 | WebFetch, WebSearch, `mcp__*` | `allow_network: true` (`mcp__*` also needs `allow_hooks: true`) |
 | Anything else | Never |
@@ -593,6 +632,29 @@ Every refusal is written to the transcript. The trial's artifacts are:
 The gate refuses any realpath inside a configured suite root, even one that is
 also inside a plugin or subject root. A private suite kept in the plugin repo
 it evaluates therefore stays out of reach.
+
+The case's own directory, its suite and its suite root are always deny roots,
+whatever the runner passes. The gate fails closed: a call it cannot judge (an
+unreadable path, a path through a file) is a denial with the error as its
+reason. Paths are compared by their on-disk case (`realpath.native`), and names
+that may not exist yet are compared case-folded, so a case variant on a
+case-insensitive volume is judged as the real name.
+
+Paths are resolved the way the tool would resolve them, then judged:
+
+- Only a glob field (Glob's `pattern`, Grep's `glob`) is a pattern. Every
+  other path field is judged literally, as the tool opens it.
+- A pattern is relative to the tool's `path`, and its reach is its literal
+  prefix. Wildcards, classes, braces and groups (extglob or a bare `( | )`)
+  all end that prefix.
+- A pattern holding `..` or `~`, or a brace, class or group that holds `/`, is
+  refused, and so is a path starting with `~`.
+- A `..` segment in any path field is refused. The OS applies it after any
+  symlink before it, while resolving it would drop it from the path as spelt.
+- A symlink is judged by where it lands. A dangling symlink on the way is
+  refused, since writing through it would create its target, wherever that is.
+- A directory subject is its own read root. A file subject's read root is the
+  folder it sits in.
 
 ### Extract
 
@@ -845,7 +907,11 @@ exact values of these environment variables are replaced with `[REDACTED]`:
 - every variable named in `redact`
 
 Redaction happens once, where events and records are produced, so events.jsonl,
-the SSE stream, the CLI and every reporter get the same scrubbed text.
+the SSE stream, the CLI and every reporter get the same scrubbed text. An
+executor redacts its transcript, the `trial.step` events that mirror it, every
+artifact it copies out (byte-exact, so a binary file survives) and its
+result's reason. JSON is redacted before it is stringified, and a step summary
+before it is cut.
 Credentials the AWS SDK resolves from a named profile never pass through
 litmus's environment, so they are not in this set. SECURITY.md says so.
 
