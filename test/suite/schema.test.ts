@@ -122,6 +122,8 @@ test('a count bound that can never pass, or a regex that does not compile, is re
   assert.equal(ok({ kind: 'regex', pattern: 'x', min: 3, max: 2 }), false)
   assert.equal(ok({ kind: 'regex', pattern: '(' }), false)
   assert.equal(ok({ kind: 'regex', pattern: 'x', flags: 'q' }), false)
+  const parsed = CaseFile.parse({ ...modelCase, graders: [{ kind: 'regex', pattern: 'x' }, { kind: 'tool-used', tool: 'Agent', min: 0 }] })
+  assert.deepEqual(parsed.graders.map(g => 'min' in g && g.min), [1, 0]) // the default is in the parsed spec, not only in the check
 })
 
 test('review-match accepts every documented pass bound, and min_claims_correct only with a confirming judge', () => {

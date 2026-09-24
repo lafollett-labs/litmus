@@ -117,12 +117,12 @@ export const Executor = z
   })
 export type Executor = z.infer<typeof Executor>
 
-const bounds = { min: z.int().min(0).optional(), max: z.int().min(0).optional() }
+const bounds = { min: z.int().min(0).default(1), max: z.int().min(0).optional() }
 const target = z.string().min(1).default('transcript') // an artifact name, or "transcript"
 
 // min defaults to 1 (never pass on zero), so a lone `max: 0` could never pass.
 // Refused here, at load, instead of failing every trial after the money is spent.
-const boundsOrdered = (b: { min?: number | undefined; max?: number | undefined }) => b.max === undefined || (b.min ?? 1) <= b.max
+const boundsOrdered = (b: { min: number; max?: number | undefined }) => b.max === undefined || b.min <= b.max
 const boundsMessage = 'max is below min (min defaults to 1; set min: 0 to allow zero)'
 
 function compiles(pattern: string, flags: string | undefined): boolean {
