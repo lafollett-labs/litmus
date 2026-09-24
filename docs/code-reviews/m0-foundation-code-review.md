@@ -1,6 +1,6 @@
 # Code Review: m0-foundation
 
-**Verdict:** ✅ APPROVED (round 1). Round 2 re-reviews the LOW fixes.
+**Verdict:** ✅ APPROVED (round 2, locked to `fdf7cc5`)
 
 | | |
 | - | - |
@@ -56,6 +56,47 @@ PE-AWS-Infra ran actionlint and checked the workflow is safe for fork PRs (`pull
 ## Merge Eligibility
 
 **Locked to SHA:** `61b118f`. The fix commits after it are re-reviewed in round 2.
+
+---
+
+## Review Round 2
+
+**Verdict:** ✅ APPROVED
+
+| | |
+| - | - |
+| **Reviewer** | @Cali LaFollett (PE-Vue + PE-AWS-Infra) |
+| **Reviewed SHA** | `fdf7cc5`, the range `61b118f..fdf7cc5` |
+| **Date** | 2026-09-24 |
+
+### Summary
+
+Both reviewers approved. PE-Vue verified V-LOW-001..003 and V-INFO-003 with runtime probes:
+
+- Each mangling type is refused.
+- A `__proto__` key survives.
+- `scripts/test.ts` exits 1 with no test files and passes arguments through.
+- The rebuilt trial-key regex is byte-identical to the old one.
+
+PE-AWS-Infra verified I-LOW-001..005 and I-INFO-001..003:
+
+- The v7 actions are on node24.
+- `.nvmrc` resolves to Node 26 under setup-node v7.
+- The fork-PR approval setting is `all_external_contributors`.
+
+Both ran the full checks: `npm ci` found 0 vulnerabilities, typecheck and actionlint are clean, and 12 of 12 tests pass.
+
+### Awareness, carried into M1 rather than invalidating this round
+
+| ID | Finding | Where it lands |
+| - | - | - |
+| I2-LOW-001 | A *queued* push run on `main` can still be cancelled by a later one, so the comment overstates it | M1: move `main` push runs into their own concurrency group (`github.sha`) and correct the comment |
+| I2-INFO-001 | The ruleset does not require `check` yet | After merge: add `required_status_checks` for `check` with integration 15368 |
+| I2-INFO-002 | `.code-reviewer.yml` routes nothing under `scripts/**` | M1: add `scripts/**` to the TypeScript route |
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `fdf7cc5`. The PR opens at this SHA, rebased onto `main` once PR #1 merges.
 
 ---
 
