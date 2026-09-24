@@ -398,8 +398,9 @@ store or a suite root, compared by real, case-folded path. Nor is it placed anyw
 ancestors that Claude Code would load: `CLAUDE.md`, `CLAUDE.local.md`,
 `AGENTS.md`, `.claude/CLAUDE.md` or `.claude/rules/`. It is built in five steps:
 
-1. `fixture/` is copied. A symlink, a `.git` entry, or anything that is not
-   a regular file or directory (a FIFO, a socket) is refused.
+1. `fixture/` is copied. A symlink, a `.git` entry in any case (`.GIT` is
+   `.git` on a case-insensitive volume), or anything that is not a regular file
+   or directory (a FIFO, a socket) is refused.
 2. `git init`, and the tree is committed on `main`.
 3. If the case has a `change.patch`, the branch `litmus/change` is created
    with the patch committed on it. `HEAD` is `litmus/change`.
@@ -576,10 +577,17 @@ scrubbed environment and these settings:
   - It may not contain a symlink anywhere.
   - Every markdown file in it, its `.git` included, has its frontmatter
     checked. The frontmatter is read with Claude Code's own fence (the closing
-    `---` need not start a line) and with the strict one, and YAML merge keys
-    are resolved. It must parse, and must not declare `hooks`, `mcpServers`,
-    `lspServers`, `monitors`, `statusLine` or `isolation`. The same goes for
-    markdown under a fixture `.claude/` directory at any depth.
+    `---` need not start a line) and with the strict one. It must parse, every
+    top-level key must be a plain string, and none may be a `<<` merge key.
+    That refuses outright the shapes Claude Code's YAML reads differently from
+    the spec (a quoted `<<` merges there, and `[hooks]` becomes `hooks`). No
+    key may be `hooks`, `mcpServers`, `lspServers`, `monitors`, `statusLine`
+    or `isolation`. The same goes for markdown under a fixture `.claude/`
+    directory at any depth.
+  - `allow_hooks: true` waives only the process signals (the process files,
+    manifest keys and frontmatter keys above). A symlink, a key that isn't
+    plain, a merge key, a parse failure and `isolation` are refused either
+    way, since they are the gate's own checks.
   - A plugin that lies inside a suite root is refused before the session
     starts: the gate would deny every read of its own files.
 - Credentials: `anthropic` requires `ANTHROPIC_API_KEY`, and a claude.ai login
