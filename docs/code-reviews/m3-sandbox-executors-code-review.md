@@ -1,6 +1,6 @@
 # Code Review: m3-sandbox-executors
 
-**Verdict:** 🔁 CHANGES REQUESTED (round 2, locked to `4a1b3b3`)
+**Verdict:** 🔁 CHANGES REQUESTED (round 3, locked to `0abd8b3`; round cap reached)
 
 | | |
 | - | - |
@@ -98,6 +98,40 @@ Every fix commit passes check and test on its own. At the tip, 193 pass and 4 (l
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `4a1b3b3`. The round-2 fixes are re-reviewed in round 3, the last round before the cap.
+
+## Review Round 3
+
+**Verdict:** 🔁 CHANGES REQUESTED (round cap reached)
+
+| | |
+| - | - |
+| **Review Round** | 3 of 3 |
+| **Reviewed SHA** | `0abd8b3` (round-2 fixes: `4a1b3b3..0abd8b3`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue verified 4 of the 5 round-2 findings as RESOLVED:
+
+- HIGH-002: all 26 nested and case-variant writes are denied, and six near-miss names are allowed.
+- MEDIUM-001: a plugin in the case or in `_shared` is refused up front.
+- LOW-001: the avoid guard holds through a symlink and a case variant.
+- LOW-002: `final_meſſage.txt` is denied.
+
+It also read Claude Code's frontmatter loader in the CLI binary bundled with Agent SDK 0.3.281, and found that round 2's HIGH-001 fix parsed differently from that loader.
+
+| ID | Finding | Disposition |
+| - | - | - |
+| HIGH-001 | Five frontmatter shapes load hooks in Claude Code's loader but passed litmus's strict parse: a four-dash close, a same-line close, a commented close, an indented close, and a `<<` merge key. The loader's fence is `/^---\s*\n([\s\S]*?)---\s*\n?/`, and Bun.YAML resolves merge keys | Fixed in `e1e7f90`: both fences are tried, with `{ merge: true }`. The reviewer's exact shapes and a CRLF variant are tests, in plugins and in the fixture. Mutation check: the strict fence alone fails the test. All 17 cached plugins classify as before |
+| MEDIUM-001 | The plugin walk skipped `.git`, and the manifest can point a component there | Fixed in `e1e7f90`: plugins walk their `.git`, and only the fixture walk (whose `.git` is litmus's own) skips it. Tested with the reviewer's probe |
+| LOW-001 | A frontmatter parse failure dropped the YAML error, and it suggested `allow_hooks` | Fixed in `e1e7f90`: each refusal carries its own fix. A typo names the parse error and says to quote the value |
+| LOW-002 | Two copies of `fold()` | Fixed in `e1e7f90`: `fold` and `inside` live in `src/core/paths.ts` |
+| INFO-001 | Round-2 continuity | No action |
+| INFO-002 | An agent definition can set `isolation: worktree` where the gate cannot see it | Fixed in `e1e7f90`: `isolation` in any definition's frontmatter is refused |
+
+At the tip, 196 tests pass and 4 (live) are skipped.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `0abd8b3`. The round-3 fixes (`e1e7f90`, docs in `7c64fdc`) have not been reviewed locally, and the 3-round cap is reached. Per the skill, this halts to the operator: proceed with one more round, abort, or escalate.
 
 ---
 
