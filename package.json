@@ -17,6 +17,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
+    "typecheck": "npm run check",
     "test": "node --test 'test/**/*.test.ts'"
   },
   "devDependencies": {
