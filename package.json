@@ -1,0 +1,26 @@
+{
+  "name": "litmus",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A test runner for LLM and agent evals: run all, some, or one; live status; flaky is a first-class verdict.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lafollett-labs/litmus.git"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "bin": {
+    "litmus": "src/cli/main.ts"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test 'test/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^7.0.2"
+  }
+}
