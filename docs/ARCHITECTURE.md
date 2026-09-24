@@ -104,7 +104,19 @@ redact: []                           # extra environment variable names whose va
 ```
 
 A config can also carry `params`, which are provider-specific request fields
-passed through untouched.
+passed through untouched. `params` is recorded in `run.json`, so it must never
+hold a credential; credentials come only from the environment (below), and
+`validate` refuses a `params` key whose name contains `key`, `token`, `secret`
+or `password`.
+
+`compare` values are validated when the config loads:
+
+| Key | Valid range |
+| - | - |
+| `tolerance` | 0 ≤ δ < 1 |
+| `resamples` | an integer ≥ 100 |
+| `seed` | an integer |
+| `warn_ratio` | > 1 |
 
 Keys never appear in this file. Each provider reads its key from the standard
 environment variables: `ANTHROPIC_API_KEY`, the AWS credential chain, and
@@ -280,7 +292,8 @@ for each job, at most `concurrency` at once:
             extract(result)              # InfraError → retried like grading
         grade(result)                    # InfraError → retry grading only, never the executor
     status = match:
-        the run's cancel aborted this trial         -> cancelled
+        result.exit == cancelled,
+          or the run's cancel aborted this trial    -> cancelled   # checked first, so a cancel can never pass
         result.exit == infra_error                  -> error       # never graded
         grading raised InfraError after retries     -> error
         result.exit == model_failure                -> fail        # graders ran for metrics only
@@ -296,8 +309,6 @@ on finish or cancel:
         write comparison.json
 ```
 
-| How the executor stopped | `exit` | Retried | Trial status |
-| - | - | - | - |
 | How the executor stopped | `exit` | Retried | Trial status |
 | - | - | - | - |
 | It finished, including a refusal, a truncation or unparseable output | `ok` | No | `pass` or `fail`, decided by the graders |
@@ -522,7 +533,9 @@ interface Grader {
 }
 ```
 
-A trial passes when every one of its graders passes.
+A trial passes when its executor finished (`exit == ok`) and every one of its
+graders passes. A cancelled, failed or errored trial never passes, whatever
+its graders say.
 
 | Grader | Passes when |
 | - | - |
