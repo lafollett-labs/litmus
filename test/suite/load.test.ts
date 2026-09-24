@@ -105,3 +105,27 @@ test('invalid YAML and a missing config are config errors', () => {
   const root = tree({ 'litmus.config.yaml': 'suites: [\n' })
   assert.throws(() => loadConfig(join(root, 'litmus.config.yaml')), /not valid YAML/)
 })
+
+const withParams = (params: string) =>
+  join(tree({ 'litmus.config.yaml': `suites: [./s]\nconfigs:\n  a:\n    provider: anthropic\n    model: m\n    params: ${params}\n` }), 'litmus.config.yaml')
+
+test('params pass through when they only shape model behaviour', () => {
+  const c = loadConfig(withParams('{ temperature: 0, thinking: { type: adaptive }, stop: [END] }'), {})
+  assert.deepEqual(c.configs.a && 'params' in c.configs.a && c.configs.a.params, { temperature: 0, thinking: { type: 'adaptive' }, stop: ['END'] })
+})
+
+test('params refuse a credential-shaped key or headers at any depth', () => {
+  for (const params of ['{ api_key: x }', '{ extra: { Authorization: x } }', '{ list: [{ session_id: x }] }', '{ headers: {} }', '{ Headers: {} }']) {
+    assert.throws(() => loadConfig(withParams(params), {}), /is not allowed; params is for model behaviour/, params)
+  }
+})
+
+test('params refuse a value equal to a live credential, including one named in redact', () => {
+  const key = 'sk-ant-test-0123456789'
+  assert.throws(() => loadConfig(withParams(`{ note: [${key}] }`), { ANTHROPIC_API_KEY: key }), /holds the value of a credential variable/)
+  const root = tree({
+    'litmus.config.yaml': `suites: [./s]\nredact: [MY_GATEWAY_TOKEN]\njudges:\n  j:\n    provider: fake\n    model: f\n    params: { user: gw-secret-value }\nconfigs:\n  a: { provider: fake }\n`,
+  })
+  assert.throws(() => loadConfig(join(root, 'litmus.config.yaml'), { MY_GATEWAY_TOKEN: 'gw-secret-value' }), /judges\.j\.params\.user holds/)
+  assert.doesNotThrow(() => loadConfig(join(root, 'litmus.config.yaml'), { ANTHROPIC_API_KEY: '' }))
+})

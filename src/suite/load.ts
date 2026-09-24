@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import type { z } from 'zod'
+import { CREDENTIAL_KEY, CREDENTIAL_VARS } from '../core/credentials.ts'
 import { ConfigError } from '../core/errors.ts'
 import { sha256 } from '../core/hash.ts'
 import { caseId } from '../core/ids.ts'
@@ -37,12 +38,37 @@ export type LoadedSuite = { name: string; dir: string; spec: SuiteFile; cases: L
 
 const BUILTIN = { trials: 3, policy: 'all', threshold: 0.8, timeout_s: 600 } as const
 
-export function loadConfig(file: string): Config {
+export function loadConfig(file: string, env: NodeJS.ProcessEnv = process.env): Config {
   const path = resolve(file)
   if (!existsSync(path)) throw new ConfigError(`no config at ${path} (pass --config, or create litmus.config.yaml)`)
   const spec = parseFile(path, ConfigFile)
+  const secrets = new Set([...CREDENTIAL_VARS, ...spec.redact].map(n => env[n]).filter(v => typeof v === 'string' && v !== ''))
+  for (const [section, defs] of Object.entries({ configs: spec.configs, judges: spec.judges })) {
+    for (const [name, def] of Object.entries(defs)) {
+      if ('params' in def && def.params) refuseCredentials(def.params, `${section}.${name}.params`, secrets, path)
+    }
+  }
   const dir = dirname(path)
   return { ...spec, file: path, dir, roots: spec.suites.map(r => resolve(dir, r)), resultsDir: resolve(dir, spec.results) }
+}
+
+// params is recorded in run.json, so it must never carry a credential. Keys are
+// refused by name at every depth, and any string equal to a live credential
+// value is refused wherever it sits.
+function refuseCredentials(value: unknown, where: string, secrets: Set<unknown>, file: string): void {
+  if (typeof value === 'string' && secrets.has(value)) {
+    throw new ConfigError(`${file}: ${where} holds the value of a credential variable; credentials come only from the environment`)
+  }
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => refuseCredentials(v, `${where}[${i}]`, secrets, file))
+  } else if (value !== null && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if (CREDENTIAL_KEY.test(k) || k.toLowerCase() === 'headers') {
+        throw new ConfigError(`${file}: ${where}.${k} is not allowed; params is for model behaviour, and credentials, auth and headers never go there`)
+      }
+      refuseCredentials(v, `${where}.${k}`, secrets, file)
+    }
+  }
 }
 
 // Suites are the immediate subdirectories of each root that hold a suite.yaml.
