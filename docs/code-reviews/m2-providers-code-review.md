@@ -1,6 +1,6 @@
 # Code Review: m2-providers
 
-**Verdict:** 🔁 CHANGES REQUESTED (round 1, locked to `1965d54`)
+**Verdict:** ✅ APPROVED (round 2, locked to `2a6e90d`)
 
 | | |
 | - | - |
@@ -57,6 +57,38 @@ Every fix commit passes check and test on its own (119 to 127). At the tip, 127 
 ## Merge Eligibility
 
 **Locked to SHA:** `1965d54`. The fix commits after it are re-reviewed in round 2.
+
+## Review Round 2
+
+**Verdict:** ✅ APPROVED
+
+| | |
+| - | - |
+| **Review Round** | 2 |
+| **Reviewed SHA** | `2a6e90d` (round-1 fixes: `1965d54..2a6e90d`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue re-ran every round-1 probe against the fixes and verified all 13 findings as RESOLVED:
+
+- Credentials: with a key set, the one request goes to api.anthropic.com with `X-Api-Key` only, even with `ANTHROPIC_AUTH_TOKEN` and a login profile present. Without a key, nothing is sent.
+- OpenRouter: every 200-with-error shape settles as an infra error.
+- Streams: every in-flight failure is "stream failed", retryable.
+
+Every fetch was mocked, and the AWS chain was an injected resolver. `npm audit` found 0 vulnerabilities.
+
+There are no findings at MEDIUM or above. Three LOWs were fixed after approval, so Gate 2 (the PR) reviews them:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | `credentialFailure()` made transient SSO and IMDS failures permanent, against the SDK's documented intent | Fixed in `fcaf4ee`: an AWS credential failure is retryable again. An empty chain fails before anything reaches the model, so retrying costs almost nothing. ARCHITECTURE says so (`140a3c0`) |
+| LOW-002 | The credential provider's own message (for example "run `aws sso login`") was dropped | Fixed in `fcaf4ee`: the matched error's message is used |
+| LOW-003 | No test pinned `authToken: null` | Fixed in `b960e99`: `createProvider` takes an optional `fetch`, and a test asserts `X-Api-Key` with no `authorization` header while `ANTHROPIC_AUTH_TOKEN` is set. Mutation check: dropping `authToken: null` fails it. OpenRouter now reads the `env` it is given as well |
+
+At the tip, 130 tests pass and 3 (live) are skipped.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `2a6e90d`. The PR opens with the post-approval commits `fcaf4ee`, `b960e99` and `140a3c0` (LOW fixes only), and Gate 2 reviews them.
 
 ---
 
