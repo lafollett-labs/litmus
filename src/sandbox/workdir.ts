@@ -44,9 +44,14 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
   // Checked, scanned and removed by its real path, case-folded where compared:
   // a TMPDIR, or a litmus/ under it, that is a symlink or spelt in another
   // case still lands where it lands.
-  const realParent = realExisting(parent)
-  const under = avoid.find(a => inside(fold(realParent), fold(realExisting(resolve(a)))))
-  if (under) throw new InfraError(`workdir ${join(realParent, name)} would sit inside ${under}; point TMPDIR outside the results store and every suite root`, { retryable: false })
+  // Both directions: the root is removed recursively, so a store or suite
+  // root beneath it would go with it.
+  const candidate = join(realExisting(parent), name)
+  for (const a of avoid) {
+    const [w, r] = [fold(candidate), fold(realExisting(resolve(a)))]
+    const clash = inside(w, r) ? 'sit inside' : inside(r, w) ? 'contain' : undefined
+    if (clash) throw new InfraError(`workdir ${candidate} would ${clash} ${a}; point TMPDIR outside the results store and every suite root`, { retryable: false })
+  }
   mkdirSync(parent, { recursive: true })
   const root = join(realpathSync.native(parent), name)
   rmSync(root, { recursive: true, force: true }) // fresh on every attempt, never reused

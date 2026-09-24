@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
 import { scrubbedEnv } from '../../src/sandbox/env.ts'
@@ -111,6 +111,17 @@ test('a workdir never sits inside the results store or a suite root', () => {
     // a case-insensitive volume (default APFS): the other spelling is the same directory
     assert.throws(() => buildWorkdir(c, where, base, [base.toUpperCase()]), /would sit inside/, 'spelt in another case')
   }
+})
+
+test('a store or suite root beneath the prospective workdir is refused, never removed with it', () => {
+  const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  const first = buildWorkdir(c, where, base)
+  first.cleanup()
+  const store = join(first.root, 'results')
+  mkdirSync(store, { recursive: true })
+  writeFileSync(join(store, 'keep.txt'), 'results')
+  assert.throws(() => buildWorkdir(c, where, base, [store]), (e: Error) => e instanceof InfraError && /would contain/.test(e.message))
+  assert.ok(existsSync(join(store, 'keep.txt')))
 })
 
 test('a litmus/ under TMPDIR that is a symlink is checked and scanned where it lands', () => {
