@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { redactor, secretValues } from '../../src/core/redact.ts'
 import { runHarness } from '../../src/executors/harness.ts'
 import { buildWorkdir } from '../../src/sandbox/workdir.ts'
 import { oneCase } from '../helpers/cases.ts'
@@ -22,7 +23,7 @@ test('claude-code writes a file in its workdir and nowhere else', { skip, timeou
     const r = await runHarness({
       key: 's/c@haiku#1', case: c, configName: 'haiku', config: { provider: 'anthropic', model: 'claude-haiku-4-5' },
       trial: 1, attempt: 1, workdir, suiteRoots: [], out: { artifacts: join(out, 'a'), transcript: join(out, 't.jsonl') },
-      pricing: {}, emit: () => {}, signal: new AbortController().signal,
+      pricing: {}, emit: () => {}, redact: redactor(secretValues([])), signal: new AbortController().signal,
     })
     assert.equal(r.exit, 'ok', r.reason ?? 'no reason')
     assert.match(readFileSync(r.artifacts['pong.txt']!, 'utf8'), /pong/i)

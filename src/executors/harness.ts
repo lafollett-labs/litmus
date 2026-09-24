@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
 import { isMap, isScalar, parseDocument } from 'yaml'
@@ -23,7 +23,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const exec = job.case.spec.executor
   if (exec.kind !== 'harness') throw new Error(`runHarness given a ${exec.kind} case`)
   const started = Date.now()
-  const tx = new Transcript(job.out.transcript, job.key, job.emit)
+  const tx = new Transcript(job.out.transcript, job.key, job.emit, job.redact)
   mkdirSync(job.out.artifacts, { recursive: true })
   const zero: Usage = { input_tokens: 0, output_tokens: 0 }
   const done = (exit: ExecutorResult['exit'], extra: Partial<ExecutorResult> = {}): ExecutorResult => ({
@@ -33,6 +33,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     usage: zero,
     wall_clock_ms: Date.now() - started,
     ...extra,
+    ...(extra.reason === undefined ? {} : { reason: job.redact.text(extra.reason) }),
   })
   const refuse = (reason: string) => done('infra_error', { reason, retryable: false })
 
@@ -252,17 +253,18 @@ function usageOf(result: Extract<SDKMessage, { type: 'result' }>): Usage {
 }
 
 // The files the subject wrote (by snapshot, never by asking git) plus its last
-// word, copied out so they outlive the workdir.
+// word, copied out so they outlive the workdir. Redacted on the way out: with
+// allow_shell, a subject can write a key into a file.
 function collect(job: ExecJob, final: string): Record<string, string> {
   const artifacts: Record<string, string> = {}
   for (const rel of written(job.workdir.before, snapshot(job.workdir.dir))) {
     const to = join(job.out.artifacts, rel)
     mkdirSync(dirname(to), { recursive: true })
-    copyFileSync(join(job.workdir.dir, rel), to)
+    writeFileSync(to, job.redact.bytes(readFileSync(join(job.workdir.dir, rel))))
     artifacts[rel] = to
   }
   artifacts['final_message.txt'] = join(job.out.artifacts, 'final_message.txt')
-  writeFileSync(artifacts['final_message.txt'], final)
+  writeFileSync(artifacts['final_message.txt'], job.redact.text(final))
   return artifacts
 }
 

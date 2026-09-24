@@ -15,7 +15,7 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
   const exec = job.case.spec.executor
   if (exec.kind !== 'model') throw new Error(`runModel given a ${exec.kind} case`)
   const started = Date.now()
-  const tx = new Transcript(job.out.transcript, job.key, job.emit)
+  const tx = new Transcript(job.out.transcript, job.key, job.emit, job.redact)
   mkdirSync(job.out.artifacts, { recursive: true })
   const zero: Usage = { input_tokens: 0, output_tokens: 0 }
   const done = (exit: ExecutorResult['exit'], extra: Partial<ExecutorResult> = {}): ExecutorResult => ({
@@ -25,6 +25,7 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
     usage: zero,
     wall_clock_ms: Date.now() - started,
     ...extra,
+    ...(extra.reason === undefined ? {} : { reason: job.redact.text(extra.reason) }),
   })
 
   const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch)
@@ -51,11 +52,11 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
     tx.usage(usage)
 
     const artifacts: Record<string, string> = { 'response.txt': join(job.out.artifacts, 'response.txt') }
-    writeFileSync(artifacts['response.txt']!, r.text)
+    writeFileSync(artifacts['response.txt']!, job.redact.text(r.text))
     const json = extractJson(r.text)
     if (json) {
       artifacts['findings.json'] = join(job.out.artifacts, 'findings.json')
-      writeFileSync(artifacts['findings.json'], `${JSON.stringify(json, null, 2)}\n`)
+      writeFileSync(artifacts['findings.json'], `${JSON.stringify(job.redact.json(json), null, 2)}\n`)
     }
     return done('ok', { artifacts, usage, ...(r.stop_reason ? { reason: `stop_reason: ${r.stop_reason}` } : {}) })
   } catch (e) {

@@ -6,6 +6,7 @@ import { InfraError } from '../../src/core/errors.ts'
 import type { RunEvent } from '../../src/core/types.ts'
 import { runModel } from '../../src/executors/model.ts'
 import type { ExecJob } from '../../src/executors/types.ts'
+import { redactor, secretValues } from '../../src/core/redact.ts'
 import type { Provider } from '../../src/providers/index.ts'
 import { fakeProvider } from '../../src/providers/fake.ts'
 import { buildWorkdir } from '../../src/sandbox/workdir.ts'
@@ -28,6 +29,7 @@ function job(yaml: string, files: Record<string, string>, signal = new AbortCont
     out: { artifacts: join(out, 'artifacts'), transcript: join(out, 'transcript.jsonl') },
     pricing: {},
     emit: e => events.push(e),
+    redact: redactor(secretValues([])),
     signal,
   }
   return { j, events }
@@ -50,6 +52,20 @@ test('the response, its findings, the transcript and usage all come back from on
   assert.deepEqual(lines.map(l => l.kind === 'message' ? l.role : l.kind), ['system', 'user', 'assistant', 'usage'])
   assert.match(lines[1].text, /=== a\.go ===/)
   assert.ok(events.some(e => e.type === 'trial.usage'))
+})
+
+test('a key in the answer is redacted in the response, the findings, the transcript and the live steps', async () => {
+  const { j, events } = job(REVIEW, {
+    'skill.md': 's',
+    'fake.yaml': 'responses:\n  - text: "sk-or-leak\\n```json\\n{\\"findings\\": [{\\"sk-or-leak\\": \\"sk-or-leak\\"}]}\\n```"\n',
+  })
+  j.redact = redactor(['sk-or-leak'])
+  const r = await runModel(j, fakeProvider())
+  assert.equal(r.exit, 'ok')
+  assert.match(readFileSync(r.artifacts['response.txt']!, 'utf8'), /^\[REDACTED\]/)
+  assert.deepEqual(JSON.parse(readFileSync(r.artifacts['findings.json']!, 'utf8')), { findings: [{ '[REDACTED]': '[REDACTED]' }] })
+  const everything = [readFileSync(r.transcript, 'utf8'), JSON.stringify(events), ...Object.values(r.artifacts).map(f => readFileSync(f, 'utf8'))].join('\n')
+  assert.ok(!everything.includes('sk-or-leak'))
 })
 
 test('an answer with no JSON is still ok; the graders decide what it is worth', async () => {

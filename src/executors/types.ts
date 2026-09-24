@@ -1,3 +1,4 @@
+import type { Redactor } from '../core/redact.ts'
 import type { ExecutorResult, RunEvent } from '../core/types.ts'
 import type { Workdir } from '../sandbox/workdir.ts'
 import type { LoadedCase } from '../suite/load.ts'
@@ -15,6 +16,7 @@ export type ExecJob = {
   out: { artifacts: string; transcript: string } // owned by the store; the executor writes here
   pricing: ConfigFile['pricing']
   emit: (e: RunEvent) => void
+  redact: Redactor // applied to everything the executor writes or emits: a subject with a shell can print a key
   signal: AbortSignal // the operator's cancel
 }
 

@@ -900,7 +900,11 @@ exact values of these environment variables are replaced with `[REDACTED]`:
 - every variable named in `redact`
 
 Redaction happens once, where events and records are produced, so events.jsonl,
-the SSE stream, the CLI and every reporter get the same scrubbed text.
+the SSE stream, the CLI and every reporter get the same scrubbed text. An
+executor redacts its transcript, the `trial.step` events that mirror it, every
+artifact it copies out (byte-exact, so a binary file survives) and its
+result's reason. JSON is redacted before it is stringified, and a step summary
+before it is cut.
 Credentials the AWS SDK resolves from a named profile never pass through
 litmus's environment, so they are not in this set. SECURITY.md says so.
 

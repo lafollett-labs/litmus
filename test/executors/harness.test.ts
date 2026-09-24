@@ -6,6 +6,7 @@ import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
 import { runHarness, type Query } from '../../src/executors/harness.ts'
 import type { ExecJob } from '../../src/executors/types.ts'
+import { redactor, secretValues } from '../../src/core/redact.ts'
 import { buildWorkdir } from '../../src/sandbox/workdir.ts'
 import { oneCase } from '../helpers/cases.ts'
 import { tree } from '../helpers/tmp.ts'
@@ -40,6 +41,7 @@ function job(yaml: string, files: Record<string, string> = {}, config: ConfigDef
     out: { artifacts: join(out, 'artifacts'), transcript: join(out, 'transcript.jsonl') },
     pricing: {},
     emit: () => {},
+    redact: redactor(secretValues([])),
     signal,
   }
 }
@@ -130,6 +132,29 @@ test('messages map onto the transcript, and the result onto usage, cost, final m
   assert.equal(readFileSync(r.artifacts['findings.json']!, 'utf8'), '{"findings":[]}')
   const kinds = readFileSync(r.transcript, 'utf8').trim().split('\n').map(l => JSON.parse(l).kind)
   assert.deepEqual(kinds, ['message', 'tool_call', 'tool_result', 'usage'])
+})
+
+test('a key the subject prints or writes is redacted in the transcript, the live steps and every artifact', async () => {
+  const j = job(HARNESS())
+  const steps: string[] = []
+  j.emit = e => {
+    if (e.type === 'trial.step') steps.push(e.step.summary)
+  }
+  const { query } = scripted(
+    [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'echo $ANTHROPIC_API_KEY' } }] }, parent_tool_use_id: null } as unknown as SDKMessage,
+      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'sk-ant-test' }] }, parent_tool_use_id: null } as unknown as SDKMessage,
+      result({ result: 'The key is sk-ant-test.' }),
+    ],
+    async o => writeFileSync(join(o.cwd!, 'leak.txt'), 'ANTHROPIC_API_KEY=sk-ant-test\n'),
+  )
+  const r = await runHarness(j, query)
+  assert.equal(r.exit, 'ok')
+  assert.equal(readFileSync(r.artifacts['leak.txt']!, 'utf8'), 'ANTHROPIC_API_KEY=[REDACTED]\n')
+  assert.equal(readFileSync(r.artifacts['final_message.txt']!, 'utf8'), 'The key is [REDACTED].')
+  assert.ok(steps.includes('[REDACTED]'))
+  const everything = [readFileSync(r.transcript, 'utf8'), ...steps, ...Object.values(r.artifacts).map(f => readFileSync(f, 'utf8'))].join('\n')
+  assert.ok(!everything.includes('sk-ant-test'))
 })
 
 test('max turns is a model failure; an API error turn is an infra error by its status, never a graded answer', async () => {
