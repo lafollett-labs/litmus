@@ -13,7 +13,7 @@ stacks:
     test_commands:
       - "source ~/.nvm/nvm.sh && nvm use && npm run check && npm test"
       - "source ~/.nvm/nvm.sh && nvm use && npm run test:ui  # once M9 adds it"
-  - paths: ["src/**", "test/**", "package.json", "package-lock.json", "tsconfig.json"]
+  - paths: ["src/**", "test/**", "scripts/**", "package.json", "package-lock.json", "tsconfig.json"]
     stack: "TypeScript, Node 26"
     pe: "pe-vue"
     test_commands:
