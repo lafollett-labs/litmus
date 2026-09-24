@@ -54,12 +54,12 @@ Out of scope:
 | Control | What it does |
 | - | - |
 | Disposable workdir | Each attempt runs on a fresh copy of `fixture/` plus `change.patch`, under the OS temp directory. Ground-truth files are never copied into it. Symlinks are refused both before and after the patch is applied. |
-| Settings isolation | A harness trial always passes `settingSources` explicitly: nothing, or the fixture's own project settings. It uses a fresh `CLAUDE_CONFIG_DIR` for each trial, with auto-memory off. The operator's own settings, memory and claude.ai connectors never load. |
-| Default-deny tool gate | Harness file tools are confined to the workdir by realpath. Plugin and subject roots are readable but not writable. Shell, network, hooks and MCP servers are refused unless the case opts in, and every refusal is recorded. |
+| Settings isolation | A harness trial always passes `settingSources` explicitly: nothing, or the fixture's own project settings. A fixture settings file may set only `$schema`. Each trial gets a fresh `CLAUDE_CONFIG_DIR`, with auto-memory off. The operator's user and local settings, memory and claude.ai connectors never load. Managed (policy) settings on the host always load; the SDK cannot turn them off. |
+| Default-deny tool gate | The gate is a PreToolUse hook, so it sees every tool call, including read-only tools, tools that settings allow, and subagent calls. File tools are confined to the workdir by realpath. Plugin and subject roots are readable but not writable. Writes under `.git/` and reads inside any suite root are refused. Shell, network, hooks and MCP servers are refused unless the case opts in. Every refusal is recorded. |
 | Scrubbed child environments | The harness, `command` graders and `validate` proofs get an allowlisted environment, with `HOME` pointed at a temporary directory. Only the harness gets a credential, and only the one its provider needs. |
 | Git before, snapshot after | Git runs only while the workdir is being built, with system, global and hook config disabled. The files a subject wrote are found by comparing snapshots, so nothing it writes into `.git/` ever runs. |
 | API keys only | The harness authenticates with an API key or AWS credentials. It never uses a claude.ai login. |
-| Redaction by value | Before anything is written or reported, the values of known key variables are replaced with `[REDACTED]`. That covers the Anthropic, OpenRouter and AWS keys, plus any listed under `redact`. Provider responses are stored as parsed bodies only. |
+| Redaction by value | Where events and records are produced, the values of known key variables are replaced with `[REDACTED]`, so every sink gets the same scrubbed text. That covers the Anthropic, OpenRouter and AWS keys, plus any listed under `redact`. Provider responses are stored as parsed bodies only. Credentials the AWS SDK resolves from a named profile never pass through litmus's environment, so they are not redacted. |
 | Localhost only | `litmus serve` binds to `127.0.0.1`. It accepts only its own `Host`, requires its own `Origin` on any request that changes state, and sends no CORS headers. |
 | Declarative loading | Loading a suite, case or config never runs code. |
 
@@ -75,7 +75,10 @@ Code runs only on these paths, and each one runs in a scrubbed environment:
 | `allow_hooks: true` | Plugin and project hooks and MCP servers, as host processes | No |
 
 A scrubbed environment keeps keys out of reach of casual reads. **It does not
-contain a hostile process**, which can still read any file you can read. Until
+contain a hostile process**, which can still read any file you can read. A
+shell command, hook or MCP server started by the harness is the harness's
+child, so it also holds the harness's credential: under `allow_shell`,
+`echo $ANTHROPIC_API_KEY` works. Until
 the container executor lands (see "After 0.1.0" in the plan), run the four
 uncontained paths only on a machine you are willing to lose, and only for
 suites whose authors you trust.

@@ -51,7 +51,7 @@ transcript, and a **provider** supplies the model.
 | Executor | Runs | Use it for |
 | - | - | - |
 | `model` | One model call through a provider API | Prompts, system instructions, review of inlined code |
-| `harness` | A real agent CLI, headless. Claude Code comes first | Plugins, skills, subagents, `CLAUDE.md`, hooks: anything that only behaves correctly inside the harness that loads it |
+| `harness` | A real agent CLI, headless. Claude Code comes first | Plugins, skills, subagents, `CLAUDE.md` or `AGENTS.md`, hooks: anything that only behaves correctly inside the harness that loads it |
 
 | Provider | Covers |
 | - | - |

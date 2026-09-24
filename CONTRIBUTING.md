@@ -24,8 +24,8 @@ npm test           # unit and integration tests; they use the fake provider and 
 npm run test:ui    # Playwright, against the runner UI
 ```
 
-The package scripts arrive in milestone M0. Until then, there is nothing to
-build.
+`check` and `test` arrive in milestone M0, and `test:ui` in M9. Until M0,
+there is nothing to build.
 
 Tests never call a real model. The live smoke tests run only when
 `LITMUS_LIVE=1` is set and the provider's key is in your environment, and each

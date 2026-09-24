@@ -95,7 +95,12 @@ stay on the branch, and their messages go into the squash commit's body.
     - Nothing a subject writes into `.git/` runs.
     - Child environments hold no keys.
     - The gate refuses outside paths, the shell, and hooks.
-    - A timeout is a `model_failure` and a cancel is not.
+    - A harness timeout is a `model_failure`, a model-executor timeout is a
+      retryable `infra_error`, and a cancel is neither.
+    - A fixture whose `.claude/settings.json` has `permissions.allow: ["Bash"]`
+      is refused, and Bash stays refused with `allow_shell: false`.
+    - Writes under `<workdir>/.git/` and reads inside a suite root are refused,
+      even through a plugin root.
 
     The harness tests use a scripted `query()` stream. One live harness smoke
     test runs under `LITMUS_LIVE=1`.
@@ -130,8 +135,10 @@ stay on the branch, and their messages go into the squash commit's body.
     zero-median skip.
   - Done when: tests match hand-computed values (Wilson for 3/5; 5/5 at 0.8
     is INCONCLUSIVE and 16/16 is PASS). A one-case 1/1 against 0/1 is
-    INCONCLUSIVE, not REGRESSION. The same seed gives the same interval every
-    time. Every branch of the verdict rules is covered.
+    INCONCLUSIVE, not REGRESSION. Thirty all-pass cases at 5/5 against 1/1 are
+    not a REGRESSION, and the mirror case is not an IMPROVEMENT. A case whose
+    hash changed is excluded. The same seed gives the same interval every time.
+    Every branch of the verdict rules is covered.
 
 - [ ] **M6: Runner and store**
   - Job expansion and a concurrency pool.
@@ -142,7 +149,11 @@ stay on the branch, and their messages go into the squash commit's body.
   - Rerunning by verdict set, and baselines.
   - Done when: an end-to-end test on `fake` produces all five verdicts (PASS,
     FAIL, FLAKY, ERROR and INCONCLUSIVE). The same test also shows that:
-    - only infra errors are retried
+    - only retryable infra errors are retried, and a non-retryable one is
+      attempted once
+    - a timed-out harness trial whose graders pass is still `fail`
+    - running a single trial of a passing case gives PASS (effective
+      `min_trials`)
     - a cancel leaves `cancelled` trials that are not counted as failures
     - `--rerun <run> --only fail` selects exactly the FAIL cases
     - `events.jsonl` replays to the same verdicts
@@ -152,8 +163,9 @@ stay on the branch, and their messages go into the squash commit's body.
   - `run`, `compare` (every addressing form), `baseline` and `list`.
   - The `pretty` reporter (live on a TTY, plain lines otherwise), plus `json`,
     CTRF and JUnit.
-  - Exit codes 0 to 3 as in ARCHITECTURE.md, including `--allow-flaky` and
-    `--allow-inconclusive`.
+  - Exit codes 0 to 3 as in ARCHITECTURE.md, including `--allow-flaky`,
+    `--allow-inconclusive`, and the `inconclusive_reason` split between exit 1
+    and exit 3.
   - Done when: the CLI tests start `node src/cli/main.ts` against fixture
     suites with the `fake` config and check its output and every exit code.
     CTRF output validates against a vendored copy of the CTRF schema.
@@ -211,8 +223,9 @@ These are listed in priority order. None of them is part of the 0.1.0 plan.
    the fix patches for the bugs a round found. It measures rounds to approval,
    how often the round cap is hit, how often fixed bugs are flagged again, and
    new findings on code nobody changed.
-2. **A container executor.** It contains `allow_shell`, `allow_hooks` and the
-   `command` grader. Until it exists, those three are uncontained.
+2. **A container executor.** It contains `allow_shell`, `allow_hooks`, the
+   `command` grader and `validate` proofs. Until it exists, those four are
+   uncontained.
 3. **Judge calibration.** `litmus judge calibrate` measures TPR and TNR
    against human labels, and reports pass rates corrected for judge error. An
    anchor set is re-scored whenever a judge changes.
