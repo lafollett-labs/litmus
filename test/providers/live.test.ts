@@ -15,7 +15,10 @@ test('anthropic answers a one-word prompt', { skip: skip(process.env['ANTHROPIC_
   assert.ok(r.usage.output_tokens > 0)
 })
 
-test('bedrock answers a one-word prompt', { skip: skip(process.env['LITMUS_BEDROCK_MODEL'], 'LITMUS_BEDROCK_MODEL') }, async () => {
+// Bedrock is opt-in by model and needs a region: whatever AWS credentials a
+// machine happens to hold are never spent by default.
+const bedrockReady = process.env['LITMUS_BEDROCK_MODEL'] && (process.env['AWS_REGION'] || process.env['AWS_DEFAULT_REGION'])
+test('bedrock answers a one-word prompt', { skip: skip(bedrockReady || undefined, 'LITMUS_BEDROCK_MODEL and AWS_REGION') }, async () => {
   const model = process.env['LITMUS_BEDROCK_MODEL']!
   const r = await createProvider({ provider: 'bedrock', model }).complete({ ...ask, model, signal: AbortSignal.timeout(60_000) })
   assert.match(r.text, /pong/i)
