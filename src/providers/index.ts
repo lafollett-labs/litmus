@@ -13,7 +13,8 @@ export type { CompleteRequest, CompleteResponse, Effort, Provider } from './type
 // maxRetries: 0 on every SDK client. The runner owns retries, so it can count
 // attempts, back off, and record each retry as an event; SDK retries hidden
 // underneath would make a flaky provider look like a slow one.
-export function createProvider(def: ConfigDef | JudgeDef, env: NodeJS.ProcessEnv = process.env): Provider {
+export function createProvider(def: ConfigDef | JudgeDef, env: NodeJS.ProcessEnv = process.env, fetchImpl?: typeof fetch): Provider {
+  const transport = fetchImpl ? { fetch: fetchImpl } : {}
   switch (def.provider) {
     case 'anthropic': {
       // The key is ANTHROPIC_API_KEY and nothing else. Left to itself the SDK
@@ -22,17 +23,17 @@ export function createProvider(def: ConfigDef | JudgeDef, env: NodeJS.ProcessEnv
       // billed to another account.
       const apiKey = env['ANTHROPIC_API_KEY']
       if (!apiKey) return unavailable('anthropic', 'ANTHROPIC_API_KEY is not set')
-      return messagesProvider('anthropic', streamingSend(new Anthropic({ apiKey, authToken: null, maxRetries: 0 })))
+      return messagesProvider('anthropic', streamingSend(new Anthropic({ apiKey, authToken: null, maxRetries: 0, ...transport })))
     }
     case 'bedrock': {
       // Resolved here so a missing region is a config error before any trial,
       // not an SDK error thrown from inside one.
       const awsRegion = ('region' in def && def.region) || env['AWS_REGION'] || env['AWS_DEFAULT_REGION']
       if (!awsRegion) throw new ConfigError(`bedrock ${def.model} has no region: set region on the config, or AWS_REGION`)
-      return messagesProvider('bedrock', streamingSend(new AnthropicBedrockMantle({ maxRetries: 0, awsRegion })))
+      return messagesProvider('bedrock', streamingSend(new AnthropicBedrockMantle({ maxRetries: 0, awsRegion, ...transport })))
     }
     case 'openrouter':
-      return openrouterProvider()
+      return openrouterProvider({ ...transport, env })
     case 'fake':
       return fakeProvider()
   }

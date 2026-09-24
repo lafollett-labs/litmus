@@ -3,7 +3,7 @@ import type { CompleteRequest, CompleteResponse, Provider } from './types.ts'
 
 const URL = 'https://openrouter.ai/api/v1/chat/completions'
 
-type Deps = { fetch?: typeof fetch; apiKey?: string | undefined }
+type Deps = { fetch?: typeof fetch; apiKey?: string | undefined; env?: NodeJS.ProcessEnv }
 
 type UpstreamError = { code?: number | string; message?: string }
 
@@ -20,7 +20,7 @@ export function openrouterProvider(deps: Deps = {}): Provider {
   return {
     id: 'openrouter',
     async complete(req: CompleteRequest): Promise<CompleteResponse> {
-      const key = deps.apiKey ?? process.env['OPENROUTER_API_KEY']
+      const key = deps.apiKey ?? (deps.env ?? process.env)['OPENROUTER_API_KEY']
       if (!key) throw new InfraError('OPENROUTER_API_KEY is not set', { retryable: false })
       const reasoning = req.params?.['reasoning'] as Record<string, unknown> | undefined
       const body = {

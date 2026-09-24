@@ -33,6 +33,31 @@ test('anthropic uses ANTHROPIC_API_KEY and nothing else: an auth token or a logi
   }
 })
 
+test('with a key set, anthropic sends only X-Api-Key, never a bearer token from ANTHROPIC_AUTH_TOKEN', async () => {
+  const seen: Headers[] = []
+  const f = (async (_url: string, init: RequestInit) => (seen.push(new Headers(init.headers)), new Response('{}', { status: 401 }))) as unknown as typeof fetch
+  const saved = process.env['ANTHROPIC_AUTH_TOKEN']
+  process.env['ANTHROPIC_AUTH_TOKEN'] = 'bearer-from-env' // where the SDK would look for it
+  try {
+    await createProvider({ provider: 'anthropic', model: 'm' }, { ANTHROPIC_API_KEY: 'k', ANTHROPIC_AUTH_TOKEN: 'bearer-from-env' }, f)
+      .complete({ model: 'm', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1, signal: new AbortController().signal })
+      .catch(() => {})
+  } finally {
+    if (saved === undefined) delete process.env['ANTHROPIC_AUTH_TOKEN']
+    else process.env['ANTHROPIC_AUTH_TOKEN'] = saved
+  }
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0]!.get('x-api-key'), 'k')
+  assert.equal(seen[0]!.get('authorization'), null)
+})
+
+test('openrouter reads its key from the env it is given', async () => {
+  await assert.rejects(
+    createProvider({ provider: 'openrouter', model: 'x/y' }, {}).complete({ model: 'x/y', messages: [], max_tokens: 1, signal: new AbortController().signal }),
+    /OPENROUTER_API_KEY is not set/,
+  )
+})
+
 test('bedrock takes its region from the config or AWS_REGION, and has none is a config error before any trial', () => {
   assert.equal(createProvider({ provider: 'bedrock', model: 'm' }, { AWS_REGION: 'eu-west-1' }).id, 'bedrock')
   assert.equal(createProvider({ provider: 'bedrock', model: 'm' }, { AWS_DEFAULT_REGION: 'eu-west-1' }).id, 'bedrock')
