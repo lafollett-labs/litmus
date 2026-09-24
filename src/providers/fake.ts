@@ -49,7 +49,7 @@ export function fakeProvider(): Provider {
       await sleep(entry.delay_ms, req.signal)
       if (entry.fatal) throw new InfraError(`fake fatal: ${entry.fatal}`, { retryable: false })
       if ((req.trace?.attempt ?? 1) <= entry.infra_errors) throw new InfraError(`fake infra error on attempt ${req.trace?.attempt ?? 1}`)
-      const text = entry.text_file ? readFileSync(resolve(dirname(file), entry.text_file), 'utf8') : (entry.text ?? '')
+      const text = entry.text_file ? readText(resolve(dirname(file), entry.text_file), file) : (entry.text ?? '')
       const usage = entry.usage ?? { input_tokens: 0, output_tokens: 0 }
       return {
         text,
@@ -61,10 +61,23 @@ export function fakeProvider(): Provider {
   }
 }
 
+function readText(path: string, from: string): string {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch (e) {
+    throw new ConfigError(`${from}: text_file ${path}: ${(e as Error).message}`)
+  }
+}
+
+// A cancel before or during the delay rejects at once, and a delay that runs
+// out removes its listener: a long run makes thousands of these calls on one
+// signal.
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason)
   if (ms === 0) return Promise.resolve()
   return new Promise((ok, fail) => {
-    const t = setTimeout(ok, ms)
-    signal.addEventListener('abort', () => (clearTimeout(t), fail(signal.reason)), { once: true })
+    const onAbort = () => (clearTimeout(t), fail(signal.reason))
+    const t = setTimeout(() => (signal.removeEventListener('abort', onAbort), ok()), ms)
+    signal.addEventListener('abort', onAbort, { once: true })
   })
 }

@@ -19,6 +19,7 @@ const root = tree({
 `,
   'second.txt': 'from a file',
   'bad.yaml': 'responses: []\n',
+  'missing.yaml': 'responses:\n  - text_file: nowhere.txt\n',
 })
 const fake = fakeProvider()
 const ask = (trial: number, attempt = 1, file = join(root, 'fake.yaml'), signal = new AbortController().signal) =>
@@ -54,6 +55,19 @@ test('a delay honours the abort signal instead of sleeping it out', async () => 
   const started = Date.now()
   await assert.rejects(pending, /cancelled/)
   assert.ok(Date.now() - started < 1000)
+})
+
+test('an already-cancelled request rejects at once, with or without a delay', async () => {
+  const ctl = new AbortController()
+  ctl.abort(new Error('cancelled first'))
+  const started = Date.now()
+  await assert.rejects(ask(5, 1, join(root, 'fake.yaml'), ctl.signal), /cancelled first/)
+  await assert.rejects(ask(1, 1, join(root, 'fake.yaml'), ctl.signal), /cancelled first/)
+  assert.ok(Date.now() - started < 1000)
+})
+
+test('a missing text_file is a config error, not a crash', async () => {
+  await assert.rejects(ask(1, 1, join(root, 'missing.yaml')), (e: unknown) => e instanceof ConfigError && /text_file .*nowhere\.txt/.test(e.message))
 })
 
 test('no fake.yaml is a non-retryable infra error, and a bad script is a config error', async () => {
