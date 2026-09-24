@@ -1,10 +1,10 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
 import { scrubbedEnv } from '../sandbox/env.ts'
-import { snapshot, written } from '../sandbox/snapshot.ts'
+import { snapshot, walk, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
 import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
 import { renderPrompt } from './render.ts'
@@ -38,13 +38,14 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   if (typeof creds === 'string') return refuse(creds)
 
   const plugins = job.case.plugins // absolute, and checked to exist, at load
+  const project = exec.setting_sources.includes('project')
   if (!exec.allow_hooks) {
-    const hooked = [...plugins.filter(declaresHooks), ...(exec.setting_sources.includes('project') && existsSync(join(job.workdir.dir, '.mcp.json')) ? ['the fixture'] : [])]
-    // Hooks and MCP servers run as host processes, outside the gate; a case
-    // has to say it accepts that before any of them load.
-    if (hooked.length) return refuse(`${hooked.join(', ')} declares hooks or MCP servers; set allow_hooks: true to run them uncontained`)
+    // Hooks, MCP and LSP servers run as host processes, outside the gate; a
+    // case has to say it accepts that before any of them load.
+    const hooked = [...plugins.map(p => pluginRunsProcesses(p)), project ? fixtureRunsProcesses(job.workdir.dir) : undefined].filter(x => x !== undefined)
+    if (hooked.length) return refuse(`${hooked.join('; ')}; set allow_hooks: true to run them uncontained`)
   }
-  if (exec.setting_sources.includes('project')) {
+  if (project) {
     const bad = fixtureSettings(job.workdir.dir)
     if (bad) return refuse(bad)
   }
@@ -52,18 +53,32 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   // A directory subject is its own root; a file subject's root is the folder
   // it lives in (a skill's SKILL.md beside its references).
   const subjectRoot = job.case.subject ? (job.case.subject.kind === 'dir' ? job.case.subject.path : dirname(job.case.subject.path)) : undefined
-  const real = (paths: string[]) => paths.filter(existsSync).map(p => realpathSync(p))
+  // .native: the on-disk case, so the gate compares like with like.
+  const real = (paths: string[]) => paths.filter(existsSync).map(p => realpathSync.native(p))
+  // The case's own directory, its suite and its root are denied whatever the
+  // caller passes: the ground truth is always somewhere in there.
+  const suiteDir = dirname(dirname(job.case.dir))
   const policy: GatePolicy = {
-    workdir: realpathSync(job.workdir.dir),
+    workdir: realpathSync.native(job.workdir.dir),
     readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]),
-    denyRoots: real(job.suiteRoots),
+    denyRoots: real([...job.suiteRoots, job.case.dir, suiteDir, dirname(suiteDir)]),
+    // Written mid-session, these would be read back as the session's own
+    // config (project settings, MCP, skills and agents) or overwrite an
+    // artifact litmus writes itself.
+    protect: ['final_message.txt', ...(project ? ['.claude', '.mcp.json'] : [])],
     allowShell: exec.allow_shell,
     allowNetwork: exec.allow_network,
     allowHooks: exec.allow_hooks,
   }
   const gate = (tool: string, input: Record<string, unknown>) => {
     const d = decide(tool, input, policy)
-    if (!d.allow) tx.denied(tool, d.reason)
+    if (!d.allow) {
+      try {
+        tx.denied(tool, d.reason)
+      } catch {
+        // an unwritable transcript must not turn a denial into a hook error
+      }
+    }
     return d
   }
 
@@ -128,6 +143,14 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
 
   let final = ''
   let result: Extract<SDKMessage, { type: 'result' }> | undefined
+  // A harness timeout is the subject's session running long: a model failure,
+  // graded for metrics like max_turns, so it keeps what the subject wrote.
+  const byClock = (): ExecutorResult | undefined => {
+    const why = clock.stopped()
+    if (why === 'cancelled') return done('cancelled')
+    if (why === 'timeout') return done('model_failure', { reason: `timeout after ${job.case.settings.timeout_s}s`, artifacts: collect(job, final) })
+    return undefined
+  }
   try {
     for await (const m of query({ prompt, options })) {
       if (m.type === 'assistant') {
@@ -151,12 +174,18 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
       }
     }
   } catch (e) {
-    const why = clock.stopped()
-    if (why === 'cancelled') return done('cancelled')
-    if (why === 'timeout') return done('model_failure', { reason: `timeout after ${job.case.settings.timeout_s}s` })
+    const stopped = byClock()
+    if (stopped) return stopped
     return done('infra_error', { reason: `harness failed: ${(e as Error).message}`, retryable: true })
   } finally {
     clock.clear()
+  }
+  // The SDK may end the stream quietly, or with an error result, after an
+  // abort: the clock's reason still decides, unless the session had already
+  // finished cleanly before it stopped.
+  if (!(result?.subtype === 'success' && !result.is_error)) {
+    const stopped = byClock()
+    if (stopped) return stopped
   }
 
   if (!result) return done('infra_error', { reason: 'harness ended without a result message', retryable: true })
@@ -173,12 +202,17 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   if (result.subtype === 'error_max_turns') return done('model_failure', { reason: `stopped at max_turns (${exec.max_turns})`, artifacts, usage })
   if (result.subtype === 'error_max_budget_usd') return done('model_failure', { reason: 'stopped at the budget cap', artifacts, usage })
   const status = result.subtype === 'success' && typeof result.api_error_status === 'number' ? result.api_error_status : null
-  // No status means the harness itself broke, not the model: retry it.
-  const retryable = status === null || status === 408 || status === 409 || status === 429 || (status >= 500 && status < 600)
   const detail = result.subtype === 'success' ? result.result : result.errors.join('; ')
+  // No status usually means the harness itself broke, or the connection did:
+  // retry it. An API-error turn with no status whose text says auth or
+  // billing will fail the same way every time.
+  const retryable =
+    status === null ? !(apiError && FAILS_AGAIN_TEXT.test(detail)) : status === 408 || status === 409 || status === 429 || (status >= 500 && status < 600)
   const reason = `harness error (${apiError ? 'api error' : result.subtype}${status ? ` ${status}` : ''})${detail ? `: ${detail.slice(0, 300)}` : ''}`
   return done('infra_error', { reason, retryable, artifacts, usage })
 }
+
+const FAILS_AGAIN_TEXT = /authentication|invalid (x-)?api[ -]key|permission|credit balance|billing|unauthori[sz]ed|forbidden/i
 
 // Tokens from modelUsage, which covers every model call in the session:
 // subagents included. `usage` is the main loop only, and a review skill that
@@ -242,16 +276,51 @@ function credentials(job: ExecJob): Record<string, string> | string {
   }
 }
 
-export function declaresHooks(pluginDir: string): boolean {
-  if (existsSync(join(pluginDir, 'hooks/hooks.json')) || existsSync(join(pluginDir, '.mcp.json'))) return true
-  const manifest = join(pluginDir, '.claude-plugin/plugin.json')
-  if (!existsSync(manifest)) return false
-  try {
-    const m = JSON.parse(readFileSync(manifest, 'utf8')) as Record<string, unknown>
-    return 'hooks' in m || 'mcpServers' in m
-  } catch {
-    return true // unreadable manifest: assume the worst
+// A plugin may carry prompts: skills, agents and commands. Anything that makes
+// Claude Code start a host process (hooks, MCP or LSP servers) needs
+// allow_hooks. The manifest is judged by an allowlist, so a component type
+// Claude Code adds later is refused until it is classified here. Returns why a
+// plugin is refused, if it is.
+const SAFE_MANIFEST_KEYS = new Set(['$schema', 'name', 'version', 'description', 'author', 'homepage', 'repository', 'license', 'keywords', 'commands', 'agents', 'skills'])
+const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json']
+const COMPONENT_DIRS = ['agents', 'skills', 'commands']
+
+export function pluginRunsProcesses(dir: string): string | undefined {
+  for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return `plugin ${dir} has ${f}`
+  const manifest = join(dir, '.claude-plugin/plugin.json')
+  if (existsSync(manifest)) {
+    let m: unknown
+    try {
+      m = JSON.parse(readFileSync(manifest, 'utf8'))
+    } catch {
+      return `plugin ${dir} has a plugin.json that is not valid JSON`
+    }
+    if (m === null || typeof m !== 'object' || Array.isArray(m)) return `plugin ${dir}'s plugin.json is not an object`
+    const extra = Object.keys(m).filter(k => !SAFE_MANIFEST_KEYS.has(k))
+    if (extra.length) return `plugin ${dir}'s plugin.json declares ${extra.join(', ')}`
   }
+  return componentsRunProcesses(dir, `plugin ${dir}`)
+}
+
+function fixtureRunsProcesses(dir: string): string | undefined {
+  if (existsSync(join(dir, '.mcp.json'))) return 'the fixture has .mcp.json'
+  return componentsRunProcesses(join(dir, '.claude'), 'the fixture')
+}
+
+// A skill, agent or command can declare its own hooks or servers in its
+// frontmatter, and those run as host processes too.
+function componentsRunProcesses(root: string, who: string): string | undefined {
+  for (const d of COMPONENT_DIRS) {
+    const base = join(root, d)
+    if (!existsSync(base)) continue
+    for (const file of walk(base, () => false)) {
+      if (!file.endsWith('.md')) continue
+      const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(file, 'utf8'))?.[1] ?? ''
+      const key = /^\s*(hooks|mcpServers|lspServers)\s*:/m.exec(front)?.[1]
+      if (key) return `${who}: ${relative(root, file)} declares ${key} in its frontmatter`
+    }
+  }
+  return undefined
 }
 
 // Under setting_sources [project], a fixture's settings may set only $schema.

@@ -1,6 +1,6 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
@@ -175,7 +175,7 @@ test('a plugin that declares hooks is refused unless the case sets allow_hooks',
   const files = { 'plugin/hooks/hooks.json': '{}', 'plugin/.claude-plugin/plugin.json': '{"name":"p"}' }
   const { query, calls } = scripted([result()])
   const refused = await runHarness(job(HARNESS('  plugins: [plugin]\n'), files), query)
-  assert.match(refused.reason ?? '', /declares hooks or MCP servers/)
+  assert.match(refused.reason ?? '', /has hooks\/hooks\.json; set allow_hooks: true/)
   assert.equal(calls.length, 0)
   const allowed = await runHarness(job(HARNESS('  plugins: [plugin]\n  allow_hooks: true\n'), files), query)
   assert.equal(allowed.exit, 'ok')
@@ -217,6 +217,7 @@ test('the harness prompt is rendered with the model prompt\'s placeholders', asy
 })
 
 test('a suite root is never readable, even inside a plugin, and a directory subject is its own read root', async () => {
+  const pluginRoot = realpathSync(tree({ 'SKILL.md': 's', 'evals/private/case.yaml': 'secret' }))
   let policyChecks: { allow: boolean }[] = []
   const { query } = scripted([result()], async o => {
     const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
@@ -228,9 +229,8 @@ test('a suite root is never readable, even inside a plugin, and a directory subj
     await ask(join(o.plugins![0]!.path, 'evals/private/case.yaml'))
     await ask(join(o.plugins![0]!.path, '../sibling/x.md'))
   })
-  const files = { 'plugin/SKILL.md': 's', 'plugin/evals/private/case.yaml': 'secret', 'sibling/x.md': 'not the subject' }
-  const j = job(HARNESS('  plugins: [plugin]\n').replace('name: c\n', 'name: c\nsubject: plugin\n'), files)
-  j.suiteRoots = [join(j.case.dir, 'plugin/evals')]
+  const j = job(HARNESS(`  plugins: [${pluginRoot}]\n`).replace('name: c\n', `name: c\nsubject: ${pluginRoot}\n`))
+  j.suiteRoots = [join(pluginRoot, 'evals')]
   await runHarness(j, query)
   assert.deepEqual(policyChecks.map(p => p.allow), [true, false, false])
   policyChecks = []
@@ -248,4 +248,62 @@ test('a timeout is a model failure and a cancel is cancelled', async () => {
   const pending = runHarness(job(HARNESS(), {}, undefined, ctl.signal), hang)
   setTimeout(() => ctl.abort(), 20)
   assert.equal((await pending).exit, 'cancelled')
+})
+
+const ask = async (o: Options, tool_name: string, tool_input: Record<string, unknown>) => {
+  const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
+  const out = (await hook({ tool_name, tool_input } as never, undefined, { signal: new AbortController().signal })) as { hookSpecificOutput: { permissionDecision: string } }
+  return out.hookSpecificOutput.permissionDecision
+}
+
+test('the case, its suite and its root are denied even when the caller passes no suite roots', async () => {
+  const decisions: string[] = []
+  const j = job(HARNESS(), { 'truth.yaml': 'kind: clean\n' })
+  const { query } = scripted([result()], async o => {
+    decisions.push(await ask(o, 'Read', { file_path: join(j.case.dir, 'truth.yaml') }))
+  })
+  await runHarness(j, query)
+  assert.deepEqual(decisions, ['deny'])
+})
+
+test('under project settings the subject may not write .claude, .mcp.json or the reserved final_message.txt', async () => {
+  const decisions: string[] = []
+  const { query } = scripted([result()], async o => {
+    for (const file_path of ['.claude/settings.json', '.CLAUDE/skills/x/SKILL.md', '.mcp.json', 'final_message.txt', 'notes.md']) decisions.push(await ask(o, 'Write', { file_path }))
+  })
+  await runHarness(job(HARNESS('  setting_sources: [project]\n')), query)
+  assert.deepEqual(decisions, ['deny', 'deny', 'deny', 'deny', 'allow'])
+})
+
+test('a plugin manifest key outside the allowlist, or hooks in component frontmatter, needs allow_hooks', async () => {
+  const run = (files: Record<string, string>, extra = '') => runHarness(job(HARNESS(`  plugins: [plugin]\n${extra}`), files), scripted([result()]).query)
+  assert.match((await run({ 'plugin/.claude-plugin/plugin.json': '{"name":"p","lspServers":{}}' })).reason ?? '', /plugin\.json declares lspServers/)
+  assert.match((await run({ 'plugin/.lsp.json': '{}' })).reason ?? '', /has \.lsp\.json/)
+  assert.match((await run({ 'plugin/skills/review/SKILL.md': '---\nname: review\nhooks:\n  PreToolUse: []\n---\nbody' })).reason ?? '', /skills\/review\/SKILL\.md declares hooks in its frontmatter/)
+  assert.equal((await run({ 'plugin/.claude-plugin/plugin.json': '{"name":"p","version":"1","author":{"name":"a"},"keywords":[]}', 'plugin/skills/r/SKILL.md': '---\nname: r\n---\nx' })).exit, 'ok')
+  assert.equal((await run({ 'plugin/.lsp.json': '{}' }, '  allow_hooks: true\n')).exit, 'ok')
+  const fixture = await runHarness(job(HARNESS('  setting_sources: [project]\n'), { 'fixture/.claude/agents/a.md': '---\nmcpServers: {}\n---\n' }), scripted([result()]).query)
+  assert.match(fixture.reason ?? '', /the fixture: agents\/a\.md declares mcpServers/)
+})
+
+test('a stream that ends quietly after the clock stops is classified by the clock', async () => {
+  const quiet = (then: SDKMessage[]): Query => ({ options }) =>
+    (async function* () {
+      await new Promise(ok => options.abortController!.signal.addEventListener('abort', ok))
+      for (const m of then) yield m
+    })()
+  const ctl = new AbortController()
+  const cancelled = runHarness(job(HARNESS(), {}, undefined, ctl.signal), quiet([]))
+  setTimeout(() => ctl.abort(), 20)
+  assert.equal((await cancelled).exit, 'cancelled')
+  const timedOut = await runHarness(job(HARNESS().replace('timeout_s: 5', 'timeout_s: 1')), quiet([result({ subtype: 'error_during_execution', is_error: true, errors: ['aborted'] })]))
+  assert.equal(timedOut.exit, 'model_failure')
+  assert.ok(timedOut.artifacts['final_message.txt'], 'a timeout keeps what the subject wrote, like max_turns')
+})
+
+test('an API-error turn with no status retries, unless its text says auth or billing', async () => {
+  const noStatus = (text: string) => runHarness(job(HARNESS()), scripted([result({ is_error: true, result: text })]).query)
+  assert.equal((await noStatus('API Error: Connection error.')).retryable, true)
+  assert.equal((await noStatus('Invalid API key · Please run /login')).retryable, false)
+  assert.equal((await noStatus('Credit balance is too low')).retryable, false)
 })
