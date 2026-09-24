@@ -579,7 +579,7 @@ scrubbed environment and these settings:
     `agents`, `skills` and `$schema`.
   - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
     `monitors/monitors.json`.
-  - It may not contain a symlink anywhere.
+  - It may not be a symlink, or contain one anywhere.
   - Every markdown file in it, its `.git` included, has its frontmatter
     checked. The frontmatter is read with Claude Code's own fence (the closing
     `---` need not start a line) and with the strict one. It must parse, every
@@ -649,6 +649,8 @@ Paths are resolved the way the tool would resolve them, then judged:
   all end that prefix.
 - A pattern holding `..` or `~`, or a brace, class or group that holds `/`, is
   refused, and so is a path starting with `~`.
+- A `..` segment in any path field is refused. The OS applies it after any
+  symlink before it, while resolving it would drop it from the path as spelt.
 - A symlink is judged by where it lands. A dangling symlink on the way is
   refused, since writing through it would create its target, wherever that is.
 - A directory subject is its own read root. A file subject's read root is the
