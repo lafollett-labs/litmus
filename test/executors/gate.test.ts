@@ -99,3 +99,38 @@ test('writing through a dangling symlink is refused: it would create the target,
 test('a non-string path is refused rather than guessed at', () => {
   assert.equal(allowed('Read', { file_path: ['a', 'b'] }), false)
 })
+
+test('the gate fails closed: a path it cannot judge is a denial, not a throw', () => {
+  const d = decide('Read', { file_path: join(work, 'src/a.ts/x') }, base) // ENOTDIR through a file
+  assert.equal(d.allow, false)
+})
+
+test('a subagent is allowed only in this session: worktree or remote isolation is refused', () => {
+  assert.equal(allowed('Agent', { prompt: 'p', description: 'd' }), true)
+  assert.equal(allowed('Agent', { prompt: 'p', isolation: 'worktree' }), false)
+  assert.equal(allowed('Task', { prompt: 'p', isolation: 'remote' }), false)
+})
+
+test('brace and class forms that could climb or go absolute are refused', () => {
+  for (const pattern of ['{..,src}/*', '{/etc,src}/*', 'src/{a,../../x}/*', '[/]etc/*', 'src/**/~/x']) {
+    assert.equal(allowed('Glob', { pattern }), false, pattern)
+  }
+  assert.equal(allowed('Glob', { pattern: 'src/{a,b}.ts' }), true)
+})
+
+// Only meaningful where the volume ignores case, as default APFS does.
+const caseInsensitive = (() => {
+  try {
+    return realpathSync.native(join(work, 'SRC')) === join(work, 'src')
+  } catch {
+    return false
+  }
+})()
+
+test('a case variant cannot get past the .git refusal or into a suite root', { skip: caseInsensitive ? false : 'case-sensitive filesystem' }, () => {
+  mkdirSync(join(work, '.git/hooks'), { recursive: true })
+  assert.equal(allowed('Write', { file_path: join(work, '.GIT/hooks/post-checkout') }), false)
+  assert.equal(allowed('Write', { file_path: '.Git/config' }), false)
+  const p = { ...base, denyRoots: [join(root, 'plugin/skills')] }
+  assert.equal(allowed('Read', { file_path: join(root, 'plugin/SKILLS/review/SKILL.md') }, p), false)
+})

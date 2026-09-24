@@ -1,10 +1,11 @@
 import { existsSync, lstatSync, realpathSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export type GatePolicy = {
   workdir: string // realpath'd by the caller once
   readRoots: string[] // plugin and subject roots: readable, never writable
   denyRoots: string[] // suite roots: never readable, even inside a read root
+  protect?: string[] // workdir-relative names never written, beside .git (e.g. .claude under project settings)
   allowShell: boolean
   allowNetwork: boolean
   allowHooks: boolean
@@ -17,9 +18,13 @@ const READ: Record<string, string[]> = { Read: ['file_path'], Glob: ['path', 'pa
 // reached, so it is refused as surely as one named directly.
 const RECURSIVE = new Set(['Glob', 'Grep'])
 const WRITE: Record<string, string[]> = { Write: ['file_path'], Edit: ['file_path'], MultiEdit: ['file_path'], NotebookEdit: ['notebook_path'] }
+// Bookkeeping tools that take no path and start nothing.
+const ALWAYS = new Set(['TodoWrite', 'Skill'])
 // Subagents are allowed because a subject's fan-out is part of what is being
-// measured; their own tool calls come back through this same gate.
-const ALWAYS = new Set(['Agent', 'Task', 'TodoWrite', 'Skill'])
+// measured, and their tool calls come back through this same gate. That holds
+// only in this session, so `isolation` (a git worktree mid-session, or a remote
+// agent outside the local gate) is refused.
+const SUBAGENT = new Set(['Agent', 'Task'])
 export const SHELL_TOOLS = ['Bash', 'BashOutput', 'KillShell', 'KillBash']
 export const NETWORK_TOOLS = ['WebFetch', 'WebSearch']
 const SHELL = new Set(SHELL_TOOLS)
@@ -28,8 +33,21 @@ const NETWORK = new Set(NETWORK_TOOLS)
 // Default-deny (docs/ARCHITECTURE.md § Executor). A tool this function does
 // not name is refused: a new tool Claude Code ships next month has to be
 // classified here before a subject can use it.
+// A gate that throws has not decided, so any failure to judge is a denial
+// with the error as its reason: an unreadable path never becomes an allowed one.
 export function decide(tool: string, input: Record<string, unknown>, p: GatePolicy): Decision {
+  try {
+    return judge(tool, input, p)
+  } catch (e) {
+    return deny(`${tool}: the gate could not judge this call (${(e as Error).message})`)
+  }
+}
+
+function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Decision {
   if (ALWAYS.has(tool)) return { allow: true }
+  if (SUBAGENT.has(tool)) {
+    return input['isolation'] === undefined || input['isolation'] === null ? { allow: true } : deny(`${tool} with isolation "${String(input['isolation'])}" runs outside this session's gate`)
+  }
   if (SHELL.has(tool)) return p.allowShell ? { allow: true } : deny(`${tool} needs allow_shell: true`)
   if (NETWORK.has(tool)) return p.allowNetwork ? { allow: true } : deny(`${tool} needs allow_network: true`)
   if (tool.startsWith('mcp__')) {
@@ -40,7 +58,7 @@ export function decide(tool: string, input: Record<string, unknown>, p: GatePoli
   if (!reads && !writes) return deny(`${tool} is not a tool litmus allows`)
 
   const roots = writes ? [p.workdir] : [p.workdir, ...p.readRoots]
-  const gitDir = join(p.workdir, '.git')
+  const protectedPaths = ['.git', ...(p.protect ?? [])].map(n => join(p.workdir, n))
   // A pattern is relative to the tool's search path, not to the workdir.
   const path = input['path']
   const searchBase = typeof path === 'string' && path !== '' ? resolve(p.workdir, path) : p.workdir
@@ -48,11 +66,14 @@ export function decide(tool: string, input: Record<string, unknown>, p: GatePoli
     const raw = input[field]
     if (raw === undefined || raw === null || raw === '') continue // tool default: the cwd, which is the workdir
     if (typeof raw !== 'string') return deny(`${tool}.${field} is not a path`)
-    // A glob's base is its literal prefix, so ".." after a wildcard
-    // ("*/../../etc") would be judged by the prefix alone; and "~" is
-    // expanded by the tool, not by resolve(). Both are refused outright.
-    if (raw.split(/[\\/]/).includes('..') && /[*?[{]/.test(raw)) return deny(`${tool}.${field} may not climb with .. in a pattern: ${raw}`)
     if (raw.startsWith('~')) return deny(`${tool}.${field} may not start with ~: ${raw}`)
+    // A pattern's reach is judged by its literal prefix, so anything that lets
+    // the tool's own glob grammar reach further is refused rather than parsed
+    // here: .. or ~ anywhere, or a brace or class holding a / (an absolute or
+    // climbing alternative).
+    if (/[*?[{]/.test(raw) && (raw.includes('..') || raw.includes('~') || /\{[^}]*\/|\[[^\]]*\//.test(raw))) {
+      return deny(`${tool}.${field} is a pattern that could reach outside its base: ${raw}`)
+    }
     const target = globBase(raw)
     const from = field === 'path' || field === 'file_path' || field === 'notebook_path' ? p.workdir : searchBase
     const real = realpathOf(isAbsolute(target) ? target : resolve(from, target))
@@ -61,12 +82,16 @@ export function decide(tool: string, input: Record<string, unknown>, p: GatePoli
       return deny(`${tool} may only ${writes ? 'write inside the workdir' : 'read the workdir or its plugin and subject roots'}: ${raw}`)
     }
     if (p.denyRoots.some(r => inside(real, r) || (RECURSIVE.has(tool) && inside(r, real)))) return deny(`${tool} may not reach a suite root: ${raw}`)
-    if (writes && inside(real, gitDir)) return deny(`${tool} may not write under .git: ${raw}`)
+    // Folded: a protected name may not exist yet, so realpath cannot supply its
+    // on-disk case, and on a case-insensitive volume .CLAUDE is .claude.
+    const guarded = writes ? protectedPaths.find(g => inside(fold(real), fold(g))) : undefined
+    if (guarded) return deny(`${tool} may not write ${relative(p.workdir, guarded)}: ${raw}`)
   }
   return { allow: true }
 }
 
 const inside = (path: string, root: string) => path === root || path.startsWith(root + sep)
+const fold = (path: string) => path.normalize('NFC').toLowerCase()
 
 const deny = (reason: string): Decision => ({ allow: false, reason })
 
@@ -95,5 +120,8 @@ export function realpathOf(path: string): string | undefined {
     tail.unshift(basename(head))
     head = parent
   }
-  return tail.length ? join(realpathSync(head), ...tail) : realpathSync(head)
+  // .native returns the on-disk case and normalization. The JS realpath keeps
+  // the case as typed, and on a case-insensitive volume ".GIT/hooks" opens
+  // .git/hooks while failing a startsWith against ".git".
+  return tail.length ? join(realpathSync.native(head), ...tail) : realpathSync.native(head)
 }
