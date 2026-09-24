@@ -25,7 +25,7 @@ stay on the branch, and their messages go into the squash commit's body.
 
 ## Milestones
 
-- [ ] **M0: Foundation**
+- [x] **M0: Foundation**
   - `package.json`: `type: module`, `engines.node >= 26`, `bin: litmus`, and
     the scripts `check`, `typecheck` (an alias for `check`, which the review
     agents run) and `test`.
