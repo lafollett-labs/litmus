@@ -251,7 +251,7 @@ test('harness plugins and json-schema files are resolved and checked at load', (
 test('a case part that is present but broken is an error, not an absence', () => {
   const dangling = tree(suite('s'))
   symlinkSync('../_shared/renamed', join(dangling, 's/cases/c/fixture'))
-  assert.throws(() => discoverSuites([dangling]), configError(/fixture is not a directory/))
+  assert.throws(() => discoverSuites([dangling]), configError(/fixture at .* is a broken symlink/))
   const wrongType: Record<string, string>[] = [
     { 's/cases/c/fixture': 'a file, not a tree' },
     { 's/cases/c/change.patch/x': '' },
@@ -261,7 +261,7 @@ test('a case part that is present but broken is an error, not an absence', () =>
   for (const files of wrongType) assert.throws(() => discoverSuites([tree({ ...suite('s'), ...files })]), ConfigError, Object.keys(files)[0])
   const gone = tree(suite('s'))
   symlinkSync('nowhere.yaml', join(gone, 's/cases/c/truth.yaml'))
-  assert.throws(() => discoverSuites([gone]), configError(/truth\.yaml at .* not found|truth\.yaml not found/))
+  assert.throws(() => discoverSuites([gone]), configError(/truth\.yaml at .* is a broken symlink/))
 })
 
 test('. and _ entries are skipped before they are stat-ed, so a dangling lock link never blocks a run', () => {
@@ -275,7 +275,7 @@ test('a prompt_file or subject reaching the answers through a symlink, a case va
   const answers = { ...suite('s'), 's/cases/c/truth.yaml': 'kind: clean\n', 's/cases/c/fix/b.patch': 'ANSWER' }
   const viaLink = tree({ ...answers, 's/cases/d/case.yaml': 'name: d\nexecutor: { kind: model, prompt_file: p.md }\ngraders: [{ kind: regex, pattern: x }]\n' })
   symlinkSync('../c/truth.yaml', join(viaLink, 's/cases/d/p.md'))
-  assert.throws(() => discoverSuites([viaLink]), /is a case's ground truth/)
+  assert.throws(() => discoverSuites([viaLink]), /p\.md \(real path .*c\/truth\.yaml\) is a case's ground truth/)
 
   const viaDirLink = tree({ ...answers, 's/cases/d/case.yaml': 'name: d\nexecutor: { kind: model, prompt_file: answers/b.patch }\ngraders: [{ kind: regex, pattern: x }]\n' })
   symlinkSync('../c/fix', join(viaDirLink, 's/cases/d/answers'))

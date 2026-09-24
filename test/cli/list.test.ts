@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
+import { tree } from '../helpers/tmp.ts'
 
 const MAIN = join(import.meta.dirname, '../../src/cli/main.ts')
 const CONFIG = join(import.meta.dirname, '../fixtures/project/litmus.config.yaml')
@@ -50,6 +51,17 @@ test('help exits 0 with usage on stdout; no command at all exits 2 with usage on
   assert.equal(none.status, 2)
   assert.equal(none.stdout, '')
   assert.match(none.stderr, /usage: litmus/)
+})
+
+test('an undefined judge name exits 2 through the CLI, so every command that loads a project checks it', () => {
+  const root = tree({
+    'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\n',
+    'suites/s/suite.yaml': 'name: s\n',
+    'suites/s/cases/c/case.yaml': 'name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: judge, judge: nope, question: q }]\n',
+  })
+  const r = litmus('list', '--config-file', join(root, 'litmus.config.yaml'))
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /judge "nope" is not defined/)
 })
 
 test('the same trial named twice is listed once', () => {

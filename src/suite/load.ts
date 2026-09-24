@@ -233,8 +233,11 @@ function refuseAnswers(path: string, from: string, what: string): void {
     }
     return false
   }
-  if (isAnswer(path) || isAnswer(fsCall(path, () => realpathSync.native(path)))) {
-    throw new ConfigError(`${from}: ${what} ${path} is a case's ground truth, which never reaches the subject`)
+  const written = isAnswer(path)
+  const real = fsCall(path, () => realpathSync.native(path))
+  if (written || isAnswer(real)) {
+    const via = written ? '' : ` (real path ${real})` // name the target when only a link led there
+    throw new ConfigError(`${from}: ${what} ${path}${via} is a case's ground truth, which never reaches the subject`)
   }
 }
 
@@ -243,6 +246,7 @@ function refuseAnswers(path: string, from: string, what: string): void {
 // against an empty workdir and read as the model's failure.
 function optional(path: string, kind: 'file' | 'dir', from: string): string | undefined {
   if (!fsCall(path, () => lstatSync(path, { throwIfNoEntry: false }))) return undefined
+  if (!stat(path)) throw new ConfigError(`${from}: ${basename(path)} at ${path} is a broken symlink`)
   return kind === 'dir' ? requireDir(path, from, basename(path)) : requireFile(path, from, basename(path))
 }
 
