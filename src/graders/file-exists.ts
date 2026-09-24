@@ -9,10 +9,11 @@ import type { Grader } from './types.ts'
 // grade fails whatever `exists` asked for.
 export const fileExists: Grader<'file-exists'> = async (spec, trial) => {
   const rel = relativeInside(spec.path, 'file-exists path')
-  const root = realpathSync(trial.workdir)
+  const root = realpathOrUndefined(trial.workdir)
+  if (root === undefined) return { grader: 'file-exists', pass: false, rationale: `the workdir ${trial.workdir} is gone` }
   const abs = join(trial.workdir, rel)
   let probe = abs
-  while (probe !== trial.workdir && !lexists(probe)) probe = dirname(probe)
+  while (probe !== trial.workdir && probe !== dirname(probe) && !lexists(probe)) probe = dirname(probe)
   const real = realpathOrUndefined(probe)
   if (real === undefined || (real !== root && !real.startsWith(root + sep))) {
     return { grader: 'file-exists', pass: false, rationale: `${rel} leads outside the workdir through a symlink` }
@@ -35,6 +36,6 @@ function realpathOrUndefined(p: string): string | undefined {
   try {
     return realpathSync(p)
   } catch {
-    return undefined // a dangling link
+    return undefined // missing, or a dangling link
   }
 }

@@ -38,3 +38,10 @@ test('canary: a symlink out of the workdir fails whichever way exists points', a
     assert.match(r.rationale ?? '', /outside the workdir/)
   }
 })
+
+test('a workdir that is gone fails the grade instead of throwing', async () => {
+  const t = { ...trial(), workdir: '/nonexistent/litmus-workdir' }
+  const r = await fileExists(spec({ kind: 'file-exists', path: 'out.txt', exists: false }), t, ctx())
+  assert.equal(r.pass, false)
+  assert.match(r.rationale ?? '', /gone/)
+})

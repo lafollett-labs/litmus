@@ -8,7 +8,7 @@ import type { Grader as GraderSpec, JudgeDef } from '../suite/schema.ts'
 export type TrialResult = ExecutorResult & { workdir: string; home: string }
 
 // A judge or extractor model, pinned. `hash` covers provider, model, effort,
-// params and the prompt version, so two results graded by different judges
+// region, params and the prompt version, so two results graded by different judges
 // can never be silently compared.
 export type Judge = { name: string; def: JudgeDef; hash: string; provider: Provider }
 
