@@ -137,6 +137,14 @@ test('a litmus/ under TMPDIR that is a symlink is checked and scanned where it l
   assert.throws(() => buildWorkdir(other.c, where, other.base), (e: Error) => e instanceof InfraError && /AGENTS\.md/.test(e.message))
 })
 
+test('a dangling litmus/ link into the store is never followed: mkdir fails and nothing lands in the store', () => {
+  const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
+  const store = realpathSync(tree({ 'keep.txt': 'results' }))
+  symlinkSync(join(store, 'not-yet'), join(base, 'litmus'))
+  assert.throws(() => buildWorkdir(c, where, base, [store]), /ENOENT/)
+  assert.deepEqual(readdirSync(store), ['keep.txt'])
+})
+
 test('a fixture that is itself a symlink is refused, so another case\'s truth never comes in with it', () => {
   const { c, base } = oneCase(CASE, { 'fixture/a.txt': 'x' })
   const peer = tree({ 'truth.yaml': 'kind: clean\n', 'a.go': 'package a\n' })

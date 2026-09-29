@@ -52,6 +52,8 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
     const clash = inside(w, r) ? 'sit inside' : inside(r, w) ? 'contain' : undefined
     if (clash) throw new InfraError(`workdir ${candidate} would ${clash} ${a}; point TMPDIR outside the results store and every suite root`, { retryable: false })
   }
+  // A dangling link on the way is never followed: recursive mkdir fails on it
+  // with ENOENT and creates nothing.
   mkdirSync(parent, { recursive: true })
   const root = join(realpathSync.native(parent), name)
   rmSync(root, { recursive: true, force: true }) // fresh on every attempt, never reused
