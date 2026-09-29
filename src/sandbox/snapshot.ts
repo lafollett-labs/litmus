@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { lstatSync, readFileSync, readdirSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readdirSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
 export type Snapshot = Map<string, { size: number; hash: string }>
@@ -9,10 +9,29 @@ export type Snapshot = Map<string, { size: number; hash: string }>
 export function snapshot(dir: string): Snapshot {
   const out: Snapshot = new Map()
   for (const path of walk(dir)) {
-    const data = readFileSync(path)
-    out.set(toKey(dir, path), { size: data.length, hash: createHash('sha256').update(data).digest('hex') })
+    const data = readRegular(path)
+    if (data) out.set(toKey(dir, path), { size: data.length, hash: digest(data) })
   }
   return out
+}
+
+export const digest = (data: Buffer): string => createHash('sha256').update(data).digest('hex')
+
+// A subject with a shell can swap a listed file for a link or a FIFO before it
+// is read. Opened without following a final link or blocking on a FIFO, then
+// judged by the open file itself: anything but a regular file is undefined.
+export function readRegular(path: string): Buffer | undefined {
+  let fd: number
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch {
+    return undefined
+  }
+  try {
+    return fstatSync(fd).isFile() ? readFileSync(fd) : undefined
+  } finally {
+    closeSync(fd)
+  }
 }
 
 export function written(before: Snapshot, after: Snapshot): string[] {
