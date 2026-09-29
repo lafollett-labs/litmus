@@ -383,6 +383,8 @@ connection, so for the `model` executor a timeout is a retryable infra error.
 A timeout and a cancel travel on different abort reasons, so they can't be
 confused. An answer that arrives after either has fired is classified by it,
 never accepted: a provider or SDK that answers late did not answer in time.
+The model executor races the call against the clock, so a provider that
+ignores its signal and never settles still times out.
 
 **Effective `min_trials`.** A run can ask for fewer trials than the case
 defines, through `--trials`, a trial-key selector, the UI, or a rerun. The
@@ -583,6 +585,8 @@ scrubbed environment and these settings:
     other key is refused either way.
   - `commands`, `agents` and `skills` are a path or a list of paths, and each
     must resolve inside the plugin.
+  - `plugin.json` must be a regular file, and anything in the tree that is
+    neither a regular file nor a directory (a FIFO, a socket) is refused.
   - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
     `monitors/monitors.json`.
   - It may not be a symlink, or contain one anywhere.

@@ -108,6 +108,14 @@ test('an answer that arrives after the clock stopped is never accepted', async (
   assert.equal((await pending).exit, 'cancelled')
 })
 
+test('a provider that ignores its signal and never settles still times out on the clock', async () => {
+  const stuck: Provider = { id: 'fake', complete: () => new Promise(() => {}) }
+  const slow = job(REVIEW.replace('timeout_s: 5', 'timeout_s: 1'), { 'skill.md': 's' })
+  const t = await runModel(slow.j, stuck)
+  assert.deepEqual([t.exit, t.retryable], ['infra_error', true])
+  assert.ok(t.wall_clock_ms < 3000)
+})
+
 test('an error that is not an infra error is a bug, and propagates', async () => {
   const { j } = job(REVIEW, { 'skill.md': 's' })
   const broken: Provider = { id: 'fake', complete: async () => { throw new TypeError('oops') } }

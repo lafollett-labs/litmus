@@ -47,7 +47,7 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
   }
   try {
     const model = 'model' in job.config ? job.config.model : 'fake'
-    const r = await provider.complete({
+    const call = provider.complete({
       model,
       ...(system === undefined ? {} : { system }),
       messages: [{ role: 'user', content: prompt }],
@@ -57,6 +57,10 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
       signal: clock.signal,
       trace: { case_id: job.case.id, trial: job.trial, attempt: job.attempt, ...(job.case.fakeFile ? { fake_file: job.case.fakeFile } : {}) },
     })
+    call.catch(() => {}) // a call that loses the race below may still reject later
+    // Raced against the clock: a provider that ignores its signal and never
+    // settles would otherwise hold the trial past timeout_s forever.
+    const r = await Promise.race([call, stopped(clock.signal)])
     // A provider that answers after its signal fired did not answer in time.
     const late = byClock()
     if (late) return late
@@ -81,3 +85,9 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
     clock.clear()
   }
 }
+
+const stopped = (signal: AbortSignal): Promise<never> =>
+  new Promise((_ok, fail) => {
+    if (signal.aborted) fail(signal.reason)
+    else signal.addEventListener('abort', () => fail(signal.reason), { once: true })
+  })
