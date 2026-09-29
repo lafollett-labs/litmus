@@ -420,7 +420,9 @@ stop a detached git from outliving the build. The gate also refuses the
 subject any write under `<workdir>/.git/`.
 
 After the executor exits, **the files the subject wrote** are found by
-comparing against the snapshot, not by asking git. That way nothing the
+comparing against the snapshot, not by asking git. Files are read without
+following a link or blocking on a FIFO, and an artifact is copied only if its
+bytes still hash to what the snapshot saw. That way nothing the
 subject wrote into `.git/` ever runs.
 
 **Child processes.** Litmus spawns three kinds of child process: the harness,
@@ -915,8 +917,9 @@ exact values of these environment variables are replaced with `[REDACTED]`:
 Redaction happens once, where events and records are produced, so events.jsonl,
 the SSE stream, the CLI and every reporter get the same scrubbed text. An
 executor redacts its transcript, the `trial.step` events that mirror it, every
-artifact it copies out (byte-exact, so a binary file survives) and its
-result's reason. JSON is redacted before it is stringified, and a step summary
+artifact it copies out (byte-exact, so a binary file survives), each
+artifact's name (a name that redaction makes collide takes a `~n` suffix) and
+its result's reason. JSON is redacted before it is stringified, and a step summary
 before it is cut.
 Credentials the AWS SDK resolves from a named profile never pass through
 litmus's environment, so they are not in this set. SECURITY.md says so.

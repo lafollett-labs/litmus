@@ -157,6 +157,31 @@ test('a key the subject prints or writes is redacted in the transcript, the live
   assert.ok(!everything.includes('sk-ant-test'))
 })
 
+test('a structured tool result is redacted before it is stringified, and a file named after a key is renamed', async () => {
+  const j = job(HARNESS())
+  j.redact = redactor(['k"e\\y', 'sk-ant-test'])
+  const steps: string[] = []
+  j.emit = e => {
+    if (e.type === 'trial.step') steps.push(e.step.summary)
+  }
+  const { query } = scripted(
+    [
+      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'text', text: 'got k"e\\y' }] }] }, parent_tool_use_id: null } as unknown as SDKMessage,
+      result(),
+    ],
+    async o => {
+      writeFileSync(join(o.cwd!, '[REDACTED].txt'), 'mine')
+      writeFileSync(join(o.cwd!, 'sk-ant-test.txt'), 'named after the key')
+    },
+  )
+  const r = await runHarness(j, query)
+  const transcript = readFileSync(r.transcript, 'utf8')
+  assert.ok(!transcript.includes('k\\"e') && !transcript.includes('k"e') && !steps.join().includes('k\\"e'))
+  assert.deepEqual(Object.keys(r.artifacts).sort(), ['[REDACTED].txt', '[REDACTED].txt~2', 'final_message.txt'])
+  assert.equal(readFileSync(r.artifacts['[REDACTED].txt~2']!, 'utf8'), 'named after the key')
+  assert.ok(!JSON.stringify(r.artifacts).includes('sk-ant-test'))
+})
+
 test('max turns is a model failure; an API error turn is an infra error by its status, never a graded answer', async () => {
   assert.equal((await runHarness(job(HARNESS()), scripted([result({ subtype: 'error_max_turns', errors: [] })]).query)).exit, 'model_failure')
   // The SDK reports an API error turn as a success result with is_error set and the error as its result text.

@@ -5,7 +5,7 @@ import { isMap, isScalar, parseDocument } from 'yaml'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
 import { scrubbedEnv } from '../sandbox/env.ts'
-import { snapshot, written } from '../sandbox/snapshot.ts'
+import { digest, readRegular, snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
 import { fold, inside } from '../core/paths.ts'
 import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
@@ -187,7 +187,8 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
       } else if (m.type === 'user' && Array.isArray(m.message.content)) {
         for (const block of m.message.content) {
           if (typeof block === 'object' && block.type === 'tool_result') {
-            const text = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '')
+            // Redacted before it is stringified: escaping would hide a value holding " or \.
+            const text = typeof block.content === 'string' ? block.content : JSON.stringify(job.redact.json(block.content ?? ''))
             tx.toolResult(block.tool_use_id, text, block.is_error === true)
           }
         }
@@ -263,11 +264,21 @@ function usageOf(result: Extract<SDKMessage, { type: 'result' }>): Usage {
 // allow_shell, a subject can write a key into a file.
 function collect(job: ExecJob, final: string): Record<string, string> {
   const artifacts: Record<string, string> = {}
-  for (const rel of written(job.workdir.before, snapshot(job.workdir.dir))) {
-    const to = join(job.out.artifacts, rel)
+  const after = snapshot(job.workdir.dir)
+  for (const rel of written(job.workdir.before, after)) {
+    // Copied only as the bytes the snapshot hashed: a file swapped for a link,
+    // a FIFO or new content since then is left out, never followed.
+    const data = readRegular(join(job.workdir.dir, rel))
+    if (!data || digest(data) !== after.get(rel)!.hash) continue
+    // A name is output too: a file named after a key is renamed, and a name
+    // that redaction makes collide takes a ~n suffix.
+    const base = job.redact.text(rel)
+    let name = base
+    for (let n = 2; Object.hasOwn(artifacts, name) || name === 'final_message.txt'; n++) name = `${base}~${n}`
+    const to = join(job.out.artifacts, name)
     mkdirSync(dirname(to), { recursive: true })
-    writeFileSync(to, job.redact.bytes(readFileSync(join(job.workdir.dir, rel))))
-    artifacts[rel] = to
+    writeFileSync(to, job.redact.bytes(data))
+    artifacts[name] = to
   }
   artifacts['final_message.txt'] = join(job.out.artifacts, 'final_message.txt')
   writeFileSync(artifacts['final_message.txt'], job.redact.text(final))
