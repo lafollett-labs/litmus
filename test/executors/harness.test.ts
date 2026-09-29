@@ -331,6 +331,23 @@ test('allow_hooks waives classified process keys in plugin.json, never a key lit
   assert.doesNotMatch(unknown.reason ?? '', /allow_hooks/)
 })
 
+test('a manifest component path must stay inside the plugin, allow_hooks or not', async () => {
+  const run = (manifest: string, extra = '') => runHarness(job(HARNESS(`  plugins: [${pluginTree({ '.claude-plugin/plugin.json': manifest, 'skills/r/SKILL.md': '---\nname: r\n---\nx' })}]\n${extra}`)), scripted([result()]).query)
+  for (const [manifest, reason] of [
+    ['{"name":"p","skills":"../suite/cases/c"}', /points skills at \.\.\/suite\/cases\/c, outside the plugin/],
+    ['{"name":"p","agents":["./agents","/etc"]}', /points agents at \/etc, outside the plugin/],
+    ['{"name":"p","commands":"x/../../y"}', /points commands at x\/\.\.\/\.\.\/y/],
+    ['{"name":"p","skills":{"r":"./skills/r"}}', /skills is not a path or a list of paths/],
+  ] as const) {
+    for (const extra of ['', '  allow_hooks: true\n']) {
+      const r = await run(manifest, extra)
+      assert.deepEqual([r.exit, r.retryable], ['infra_error', false], manifest)
+      assert.match(r.reason ?? '', reason)
+    }
+  }
+  assert.equal((await run('{"name":"p","skills":["./skills","skills/r"],"agents":"./"}')).exit, 'ok')
+})
+
 test('a stream that ends quietly after the clock stops is classified by the clock', async () => {
   const quiet = (then: SDKMessage[]): Query => ({ options }) =>
     (async function* () {

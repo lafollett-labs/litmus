@@ -579,6 +579,8 @@ scrubbed environment and these settings:
     `agents`, `skills` and `$schema`. `allow_hooks` also admits the process
     keys (`hooks`, `mcpServers`, `lspServers`, `monitors`, `statusLine`); any
     other key is refused either way.
+  - `commands`, `agents` and `skills` are a path or a list of paths, and each
+    must resolve inside the plugin.
   - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
     `monitors/monitors.json`.
   - It may not be a symlink, or contain one anywhere.

@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, relative, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { isMap, isScalar, parseDocument } from 'yaml'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
@@ -338,6 +338,18 @@ export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | 
     const unknown = extra.filter(k => !PROCESS_KEYS.has(k.toLowerCase()))
     if (unknown.length) return blocks(`plugin ${dir}'s plugin.json declares ${unknown.join(', ')}, which litmus does not know`, 'remove the key, or classify it in litmus first')
     if (extra.length && !allowHooks) return runs(`plugin ${dir}'s plugin.json declares ${extra.join(', ')}`)
+    // The walk below sees only what is inside the plugin, so a component may
+    // not point outside it (../suite/cases/c would load a case's markdown before
+    // the gate runs). No link exists in the tree or at its root, so staying
+    // inside by spelling is staying inside on disk.
+    for (const key of ['commands', 'agents', 'skills']) {
+      const v = (m as Record<string, unknown>)[key]
+      if (v === undefined) continue
+      const paths = typeof v === 'string' ? [v] : Array.isArray(v) && v.every(x => typeof x === 'string') ? (v as string[]) : undefined
+      if (!paths) return blocks(`plugin ${dir}'s plugin.json ${key} is not a path or a list of paths`, 'give it paths inside the plugin')
+      const outside = paths.find(p => !inside(resolve(dir, p), resolve(dir)))
+      if (outside !== undefined) return blocks(`plugin ${dir}'s plugin.json points ${key} at ${outside}, outside the plugin`, 'keep every component inside the plugin directory')
+    }
   }
   // A plugin's .git is walked too: its manifest can point a component there.
   return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks)
