@@ -576,7 +576,9 @@ scrubbed environment and these settings:
   `allow_shell`. The rules for plugins:
   - `plugin.json` may hold only the keys `name`, `version`, `description`,
     `author`, `homepage`, `repository`, `license`, `keywords`, `commands`,
-    `agents`, `skills` and `$schema`.
+    `agents`, `skills` and `$schema`. `allow_hooks` also admits the process
+    keys (`hooks`, `mcpServers`, `lspServers`, `monitors`, `statusLine`); any
+    other key is refused either way.
   - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
     `monitors/monitors.json`.
   - It may not be a symlink, or contain one anywhere.

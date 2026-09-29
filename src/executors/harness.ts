@@ -332,7 +332,11 @@ export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | 
       return blocks(`plugin ${dir} has a plugin.json that is not valid JSON (${(e as Error).message})`, 'fix the JSON')
     }
     if (m === null || typeof m !== 'object' || Array.isArray(m)) return blocks(`plugin ${dir}'s plugin.json is not an object`, 'fix the JSON')
+    // allow_hooks waives the process keys litmus has classified, never a key it
+    // has not: that could load a capability nothing here scans.
     const extra = Object.keys(m).filter(k => !SAFE_MANIFEST_KEYS.has(k))
+    const unknown = extra.filter(k => !PROCESS_KEYS.has(k.toLowerCase()))
+    if (unknown.length) return blocks(`plugin ${dir}'s plugin.json declares ${unknown.join(', ')}, which litmus does not know`, 'remove the key, or classify it in litmus first')
     if (extra.length && !allowHooks) return runs(`plugin ${dir}'s plugin.json declares ${extra.join(', ')}`)
   }
   // A plugin's .git is walked too: its manifest can point a component there.

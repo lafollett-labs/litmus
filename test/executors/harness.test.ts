@@ -322,6 +322,15 @@ test('a plugin manifest key outside the allowlist, or hooks in component frontma
   assert.match(fixture.reason ?? '', /the fixture: \.claude\/agents\/a\.md declares mcpServers/)
 })
 
+test('allow_hooks waives classified process keys in plugin.json, never a key litmus does not know', async () => {
+  const run = (manifest: string) => runHarness(job(HARNESS(`  plugins: [${pluginTree({ '.claude-plugin/plugin.json': manifest })}]\n  allow_hooks: true\n`)), scripted([result()]).query)
+  assert.equal((await run('{"name":"p","lspServers":{},"mcpServers":{}}')).exit, 'ok')
+  const unknown = await run('{"name":"p","hooks":{},"outputStyles":"./styles"}')
+  assert.deepEqual([unknown.exit, unknown.retryable], ['infra_error', false])
+  assert.match(unknown.reason ?? '', /declares outputStyles, which litmus does not know; remove the key, or classify it in litmus first/)
+  assert.doesNotMatch(unknown.reason ?? '', /allow_hooks/)
+})
+
 test('a stream that ends quietly after the clock stops is classified by the clock', async () => {
   const quiet = (then: SDKMessage[]): Query => ({ options }) =>
     (async function* () {
