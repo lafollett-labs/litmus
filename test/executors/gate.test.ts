@@ -101,8 +101,11 @@ test('a non-string path is refused rather than guessed at', () => {
 })
 
 test('the gate fails closed: a path it cannot judge is a denial, not a throw', () => {
-  const d = decide('Read', { file_path: join(work, 'src/a.ts/x') }, base) // ENOTDIR through a file
-  assert.equal(d.allow, false)
+  for (const file_path of [join(work, 'src/a.ts/x'), 'src/a.ts/x/y']) {
+    const d = decide('Read', { file_path }, base)
+    // lstat below a regular file is ENOTDIR at any depth, never ENOENT, so the walk cannot climb past it.
+    assert.deepEqual([d.allow, !d.allow && /ENOTDIR/.test(d.reason)], [false, true], file_path)
+  }
 })
 
 test('a subagent is allowed only in this session: worktree or remote isolation is refused', () => {
@@ -162,5 +165,6 @@ test('a .. segment is refused in every path field: the OS applies it after a lin
   assert.equal(allowed('Read', { file_path: 'hop/../truth.yaml' }), false)
   assert.equal(allowed('Grep', { pattern: 'x', path: 'hop/..' }), false)
   assert.equal(allowed('Write', { file_path: 'src/../findings.json' }), false)
+  assert.equal(allowed('Read', { file_path: 'hop\\..\\truth.yaml' }), false)
   assert.equal(allowed('Read', { file_path: 'src/a..b.ts' }), true)
 })

@@ -77,7 +77,8 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
     // resolve() drops a .. against the path as spelt; the OS applies it after
     // any link before it, so with link -> /tmp, link/../etc/passwd opens
     // /etc/passwd. A .. segment is refused, never resolved.
-    if (raw.split('/').includes('..')) return deny(`${tool}.${field} may not climb with ..: ${raw}`)
+    // Either slash: litmus is POSIX-only, where \ is a name character, so refusing it costs nothing.
+    if (raw.split(/[\\/]/).includes('..')) return deny(`${tool}.${field} may not climb with ..: ${raw}`)
     // A pattern's reach is judged by its literal prefix, so anything that lets
     // the tool's own glob grammar reach further is refused rather than parsed
     // here: .. or ~ anywhere, or a brace, class or group holding a / (an
