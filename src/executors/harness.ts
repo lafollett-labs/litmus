@@ -335,10 +335,13 @@ export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | 
   if (lstatSync(dir).isSymbolicLink()) return blocks(`plugin ${dir} is a symlink`, 'name the directory it points at')
   if (!allowHooks) for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return runs(`plugin ${dir} has ${f}`)
   const manifest = join(dir, '.claude-plugin/plugin.json')
-  if (existsSync(manifest)) {
+  if (lstatSync(manifest, { throwIfNoEntry: false })) {
+    // Read before the walk refuses links and special files, so it is read the same way.
+    const data = readRegular(manifest)
+    if (!data) return blocks(`plugin ${dir}'s plugin.json is not a regular file`, 'replace it with the file itself')
     let m: unknown
     try {
-      m = JSON.parse(readFileSync(manifest, 'utf8'))
+      m = JSON.parse(data.toString('utf8'))
     } catch (e) {
       return blocks(`plugin ${dir} has a plugin.json that is not valid JSON (${(e as Error).message})`, 'fix the JSON')
     }
@@ -382,10 +385,12 @@ function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => 
       const rel = relative(root, path).split(sep).join('/')
       const st = lstatSync(path)
       if (st.isSymbolicLink()) return blocks(`${who}: ${rel} is a symlink, which could point a component at a file this check never reads`, 'replace the link with the files it points at')
+      // A FIFO or socket named like a component would block whatever reads it.
+      if (!st.isDirectory() && !st.isFile()) return blocks(`${who}: ${rel} is neither a regular file nor a directory`, 'remove it')
       if (st.isDirectory()) {
         const found = visit(path)
         if (found) return found
-      } else if (st.isFile() && /\.md$/i.test(name) && inScope(rel)) {
+      } else if (/\.md$/i.test(name) && inScope(rel)) {
         const found = frontmatterRunsProcesses(readFileSync(path, 'utf8'), allowHooks)
         if (found) return { ...found, reason: `${who}: ${rel} ${found.reason}` }
       }

@@ -1,6 +1,7 @@
+import { spawnSync } from 'node:child_process'
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
@@ -371,6 +372,21 @@ test('a manifest component path must stay inside the plugin, allow_hooks or not'
     }
   }
   assert.equal((await run('{"name":"p","skills":["./skills","skills/r"],"agents":"./"}')).exit, 'ok')
+})
+
+test('a FIFO in a plugin, as its manifest or as a component, is refused without ever being read', async () => {
+  const run = (plugin: string) => runHarness(job(HARNESS(`  plugins: [${plugin}]\n  allow_hooks: true\n`)), scripted([result()]).query)
+  const asManifest = pluginTree({ 'skills/r/SKILL.md': '---\nname: r\n---\nx' })
+  mkdirSync(join(asManifest, '.claude-plugin'))
+  spawnSync('mkfifo', [join(asManifest, '.claude-plugin/plugin.json')])
+  assert.match((await run(asManifest)).reason ?? '', /plugin\.json is not a regular file/)
+  const linked = pluginTree({ 'real.json': '{"name":"p"}' })
+  mkdirSync(join(linked, '.claude-plugin'))
+  symlinkSync(join(linked, 'real.json'), join(linked, '.claude-plugin/plugin.json'))
+  assert.match((await run(linked)).reason ?? '', /plugin\.json is not a regular file/)
+  const asSkill = pluginTree({ 'skills/x/.keep': '' })
+  spawnSync('mkfifo', [join(asSkill, 'skills/x/SKILL.md')])
+  assert.match((await run(asSkill)).reason ?? '', /skills\/x\/SKILL\.md is neither a regular file nor a directory/)
 })
 
 test('a stream that ends quietly after the clock stops is classified by the clock', async () => {
