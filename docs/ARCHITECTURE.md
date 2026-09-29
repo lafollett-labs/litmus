@@ -580,6 +580,8 @@ scrubbed environment and these settings:
   - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
     `monitors/monitors.json`.
   - It may not be a symlink, or contain one anywhere.
+  - It may not lie inside a suite, nor contain one: its manifest could point a
+    component into the suite, and the loader reads it before the gate runs.
   - Every markdown file in it, its `.git` included, has its frontmatter
     checked. The frontmatter is read with Claude Code's own fence (the closing
     `---` need not start a line) and with the strict one. It must parse, every

@@ -66,10 +66,14 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const denyRoots = real([...job.suiteRoots, job.case.dir, suiteDir, dirname(suiteDir)])
   const trapped = (r: string) => denyRoots.find(d => inside(r, d))
   // A plugin inside a suite would load but could not read a single one of its
-  // own files, and the skill failing would read as the model's fault.
+  // own files, and the skill failing would read as the model's fault. A suite
+  // inside a plugin is worse: the manifest can point skills or agents into it,
+  // and the SDK loads those files before the gate sees a single call.
   for (const plugin of real(plugins)) {
     const under = trapped(plugin)
     if (under) return refuse(`plugin ${plugin} lies inside ${under}, where the gate denies every read; move it outside the suite`)
+    const holds = denyRoots.find(d => inside(d, plugin))
+    if (holds) return refuse(`plugin ${plugin} contains ${holds}, which the plugin loader could read before the gate runs; move the suite out of the plugin`)
   }
   const policy: GatePolicy = {
     workdir: realpathSync.native(job.workdir.dir),

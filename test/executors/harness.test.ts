@@ -1,7 +1,7 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
 import { runHarness, type Query } from '../../src/executors/harness.ts'
@@ -256,24 +256,20 @@ test('the harness prompt is rendered with the model prompt\'s placeholders', asy
   assert.match(prompts[0]!, /^\/review === a\.go ===\n1 \| package a/)
 })
 
-test('a suite root is never readable, even inside a plugin, and a directory subject is its own read root', async () => {
-  const pluginRoot = realpathSync(tree({ 'SKILL.md': 's', 'evals/private/case.yaml': 'secret' }))
-  let policyChecks: { allow: boolean }[] = []
+test('a suite root is never readable, even inside a directory subject, which is its own read root', async () => {
+  const subject = realpathSync(tree({ 'SKILL.md': 's', 'evals/private/case.yaml': 'secret' }))
+  const verdicts: boolean[] = []
   const { query } = scripted([result()], async o => {
     const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
-    const ask = async (file_path: string) => {
+    for (const file_path of [join(subject, 'SKILL.md'), join(subject, 'evals/private/case.yaml'), join(dirname(subject), 'sibling/x.md')]) {
       const out = (await hook({ tool_name: 'Read', tool_input: { file_path } } as never, undefined, { signal: new AbortController().signal })) as { hookSpecificOutput: { permissionDecision: string } }
-      policyChecks.push({ allow: out.hookSpecificOutput.permissionDecision === 'allow' })
+      verdicts.push(out.hookSpecificOutput.permissionDecision === 'allow')
     }
-    await ask(join(o.plugins![0]!.path, 'SKILL.md'))
-    await ask(join(o.plugins![0]!.path, 'evals/private/case.yaml'))
-    await ask(join(o.plugins![0]!.path, '../sibling/x.md'))
   })
-  const j = job(HARNESS(`  plugins: [${pluginRoot}]\n`).replace('name: c\n', `name: c\nsubject: ${pluginRoot}\n`))
-  j.suiteRoots = [join(pluginRoot, 'evals')]
+  const j = job(HARNESS().replace('name: c\n', `name: c\nsubject: ${subject}\n`))
+  j.suiteRoots = [join(subject, 'evals')]
   await runHarness(j, query)
-  assert.deepEqual(policyChecks.map(p => p.allow), [true, false, false])
-  policyChecks = []
+  assert.deepEqual(verdicts, [true, false, false])
 })
 
 const hang: Query = ({ options }) =>
@@ -395,6 +391,17 @@ test('a plugin inside a suite is refused up front, not loaded blind', async () =
   const r = await runHarness(j, scripted([result()]).query)
   assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
   assert.match(r.reason ?? '', /lies inside .*where the gate denies every read; move it outside the suite/)
+})
+
+test('a plugin that contains a suite root is refused before the SDK can load from it', async () => {
+  const plugin = pluginTree({ '.claude-plugin/plugin.json': '{"name":"p","skills":"./suites"}', 'suites/s/cases/c/SKILL.md': '---\nname: leak\n---\nthe answer' })
+  const j = job(HARNESS(`  plugins: [${plugin}]\n`))
+  j.suiteRoots = [join(plugin, 'suites')]
+  const { query, calls } = scripted([result()])
+  const r = await runHarness(j, query)
+  assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
+  assert.match(r.reason ?? '', /contains .*suites, which the plugin loader could read before the gate runs/)
+  assert.equal(calls.length, 0)
 })
 
 // Frontmatter shapes that Claude Code's own loader (its fence, plus YAML merge
