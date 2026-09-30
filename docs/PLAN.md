@@ -144,7 +144,7 @@ stay on the branch, and their messages go into the squash commit's body.
     hash changed is excluded. The same records give the same interval every time.
     Every branch of the verdict rules is covered.
 
-- [ ] **M6: Runner and store**
+- [x] **M6: Runner and store**
   - Job expansion and a concurrency pool.
   - Attempts, each in a fresh workdir, with infra-only retries and backoff.
     Grading is retried on its own, and usage is summed across attempts.

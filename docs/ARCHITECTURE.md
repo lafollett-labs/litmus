@@ -373,6 +373,7 @@ on finish or cancel:
 | A model-executor timeout, throttling (408, 409, 429), 5xx or network | `infra_error` (retryable) | Up to `retries`, with backoff | `error` once the retries run out |
 | Auth failure, another 4xx, or a missing key | `infra_error` (not retryable) | Never | `error` |
 | The operator cancelled | `cancelled` | Never | `cancelled` |
+| The workdir could not be built (a patch that no longer applies), or an executor threw | none | Only a retryable `InfraError` | `error`, with the reason; the run goes on |
 
 A review loop that never converges is exactly what litmus is meant to catch, so
 a harness timeout or max-turns stop is a model failure, and it is never
@@ -383,6 +384,17 @@ confused. An answer that arrives after either has fired is classified by it,
 never accepted: a provider or SDK that answers late did not answer in time.
 The model executor races the call against the clock, so a provider that
 ignores its signal and never settles still times out.
+
+Retries back off exponentially with jitter (1 s, 2 s, 4 s ... up to 30 s), and
+a cancel cuts a backoff short. Once a run is cancelled no new trial starts, the
+ones in flight end `cancelled`, and no further case settles. The run writes the
+verdicts of the cases that settled before it stopped.
+
+A case's hash covers its whole directory (`case.yaml`, `truth.yaml`,
+`fixture/`, `change.patch`, `proof/`, `fix/`, `fake.yaml`), the prompt it
+resolved, its settings (tags aside), and the hashes of the judges and
+extractor it calls. WARN compares per-trial medians over a side's scored
+trials only, since an errored or cancelled trial did no work.
 
 **Effective `min_trials`.** A run can ask for fewer trials than the case
 defines, through `--trials`, a trial-key selector, the UI, or a rerun. The
@@ -961,7 +973,7 @@ the cases both of them scored.
 ├── baselines.json                        # { "<name>": "<run id>" }
 └── runs/<run id>/
     ├── run.json                          # manifest: id, parent, status, started/finished, litmus version,
-    │                                     #   selection, configs (no secrets), hashes
+    │                                     #   selection, configs (no secrets), case, subject, judge and plugin hashes
     ├── events.jsonl                      # every event, in order; the UI can replay a run from it
     ├── verdicts.json                     # Verdict[]
     ├── comparison.json                   # Comparison[], when there are any
@@ -972,6 +984,13 @@ the cases both of them scored.
 ```
 
 The record shapes are the types in `src/core/types.ts`. Runs are append-only.
+Each attempt writes under the trial's `.attempts/<n>/`, so a retry never
+appends to the transcript of the attempt before it. Only the kept attempt
+becomes the trial's `transcript.jsonl` and `artifacts/`, and the others are
+removed. `trial.json` records the subject's usage summed over every attempt,
+and, separately, `grading_usage`: the judge, confirm and extract calls, each
+priced by its judge's model. It also records the extractor's reason when an
+extraction yielded nothing.
 A rerun is a new run, and its `run.json` names the parent run it came from.
 `run.json` also records each case's case hash, and a hash of each plugin root
 the run loaded.
