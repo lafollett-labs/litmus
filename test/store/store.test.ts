@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { ConfigError } from '../../src/core/errors.ts'
 import { redactor } from '../../src/core/redact.ts'
 import { baselineRun, baselines, listRuns, readEvents, readRun, RunStore, setBaseline, type RunManifest } from '../../src/store/store.ts'
 import { tree } from '../helpers/tmp.ts'
@@ -24,7 +25,7 @@ test('every record and event is redacted before it is written, even one no produ
 test('a run id is never reused, and readers refuse what is not a run id', () => {
   const results = join(tree({ '.keep': '' }), 'runs')
   RunStore.create(results, manifest(ID), redactor([]))
-  assert.throws(() => RunStore.create(results, manifest(ID), redactor([])), /already exists/)
+  assert.throws(() => RunStore.create(results, manifest(ID), redactor([])), (e: Error) => e instanceof ConfigError && e.message === `run ${ID} already exists`)
   assert.throws(() => readRun(results, '../etc'), /not a run id/)
   assert.equal(listRuns(results)[0]!.id, ID)
 })
@@ -54,6 +55,8 @@ test('baselines name runs beside the runs directory, and an unknown name says wh
 test('records are replaced whole, never left half-written, and one torn run.json hides no other run', () => {
   const results = join(tree({ '.keep': '' }), 'runs')
   const s = RunStore.create(results, manifest(ID), redactor([]))
+  // A leftover from a write that was killed is replaced by the rename, never left beside it.
+  writeFileSync(join(s.dir, 'verdicts.json.tmp'), 'torn')
   s.verdicts([])
   s.finish('finished')
   assert.deepEqual(readdirSync(s.dir).sort(), ['run.json', 'trials', 'verdicts.json'])

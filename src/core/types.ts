@@ -121,3 +121,4 @@ export type RunEvent =
   | { type: 'trial.finished'; key: string; status: TrialStatus; graders: { grader: string; pass: boolean }[] }
   | { type: 'case.settled'; case: string; config: string; verdict: Verdict }
   | { type: 'run.finished' | 'run.cancelled'; run: string; summary: Record<VerdictKind, number> }
+  | { type: 'run.failed'; run: string; error: string }

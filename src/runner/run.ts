@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
@@ -116,10 +116,17 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
     return await execute()
   } catch (e) {
     fault.abort(e)
+    // Best effort on both: the store is what failed. The event lets a live
+    // view (and a replay of events.jsonl, when it can still be written) end.
+    try {
+      emit({ type: 'run.failed', run: id, error: redact.text((e as Error)?.message ?? String(e)) })
+    } catch {
+      // the error below says why
+    }
     try {
       store.finish('failed', now())
     } catch {
-      // the store is what failed; the error below says why
+      // the error below says why
     }
     throw e
   }
@@ -261,128 +268,154 @@ async function trial(job: Job, x: Ctx): Promise<TrialRecord> {
   const executor = x.o.executors?.[job.case.spec.executor.kind] ?? (job.case.spec.executor.kind === 'model' ? (j: ExecJob) => runModel(j, createProvider(def, x.env)) : runHarness)
 
   try {
-    for (let attempt = 1; attempt <= 1 + config.retries && !signal.aborted; attempt++) {
-      attempts = attempt
-      workdir?.cleanup()
-      workdir = undefined
-      try {
-        workdir = buildWorkdir(job.case, { run: x.store.manifest.id, key: job.key, attempt }, x.o.workBase ?? tmpdir(), [config.resultsDir, ...config.roots])
-        result = await executor({
-          key: job.key,
-          case: job.case,
-          configName: job.configName,
-          config: def,
-          trial: job.ref.trial,
-          attempt,
-          workdir,
-          suiteRoots: config.roots,
-          out: x.store.attemptDir(job.ref, attempt),
-          pricing: config.pricing,
-          emit: x.emit,
-          redact: x.redact,
-          signal,
-        })
-        kept = attempt
-        failure = undefined
-      } catch (e) {
-        // A case that cannot be built (a patch that no longer applies) or an
-        // executor bug: the trial is an error with the reason, and the run goes on.
-        result = undefined
-        failure = x.redact.text(`${e instanceof ConfigError ? 'case error' : e instanceof InfraError ? 'infra error' : 'internal error'}: ${(e as Error).message}`)
-        if (!(e instanceof InfraError && e.retryable)) break
-      }
-      if (result) spent.push(result.usage)
-      const retryable = result ? result.exit === 'infra_error' && result.retryable === true : failure !== undefined
-      if (!retryable || attempt > config.retries || signal.aborted) break
-      x.emit({ type: 'trial.retry', key: job.key, attempt, reason: result?.reason ?? failure ?? 'infra error' })
-      await sleep(x.backoff(attempt), signal)
-    }
-
-    artifacts = result && kept ? x.store.keepAttempt(job.ref, kept, result.artifacts) : (x.store.keepAttempt(job.ref, 0, {}), {})
-    if (result && workdir && (result.exit === 'ok' || result.exit === 'model_failure') && !signal.aborted) {
-      const gctx: GradeContext = { case: job.case, judge: x.judge, signal, redact: x.redact }
-      const executed = artifacts
-      for (let g = 1; g <= 1 + config.retries; g++) {
-        // Every grading attempt starts from what the executor left, so a
-        // findings.json an earlier extraction wrote cannot outlive a later
-        // extraction that failed.
-        extractError = undefined
-        try {
-          let t: TrialResult = { ...result, artifacts: executed, transcript: join(x.store.trialDir(job.ref), 'transcript.jsonl'), workdir: workdir.dir, home: workdir.home }
-          if (result.exit === 'ok' && job.case.spec.extract) {
-            const ex = await runExtract(t, gctx)
-            t = ex.trial
-            extractorHash = ex.extractor_hash
-            extractError = ex.error
-            if (ex.usage) gradingSpent.push(priceFor(ex.usage, job.case.spec.extract.with, x))
-          }
-          graders = await gradeAll(t, gctx)
-          // Results come back in case order, so each lines up with its spec and its judge.
-          graders.forEach((r, i) => {
-            const spec = job.case.spec.graders[i]!
-            const by = spec.kind === 'judge' ? spec.judge : spec.kind === 'review-match' ? spec.confirm : undefined
-            if (r.usage && by !== undefined) gradingSpent.push(priceFor(r.usage, by, x))
-          })
-          artifacts = t.artifacts
-          gradeError = undefined
-          break
-        } catch (e) {
-          if (signal.aborted) break
-          gradeError = x.redact.text(`grading failed: ${(e as Error).message}`)
-          if (!(e instanceof InfraError && e.retryable) || g > config.retries) break
-          x.emit({ type: 'trial.retry', key: job.key, attempt: g, reason: `grading: ${gradeError}` })
-          await sleep(x.backoff(g), signal)
-        }
-      }
-    }
+    return await attemptAndGrade()
+  } catch (e) {
+    // What the trial spent is known here and nowhere else.
+    throw new TrialCrash(e, attempts, total(spent), gradingSpent.length ? total(gradingSpent) : undefined)
   } finally {
     workdir?.cleanup()
   }
 
-  const status: TrialStatus =
-    signal.aborted || result?.exit === 'cancelled'
-      ? 'cancelled'
-      : !result || result.exit === 'infra_error' || gradeError !== undefined
-        ? 'error'
-        : result.exit === 'model_failure'
-          ? 'fail'
-          : graders.every(r => r.pass)
-            ? 'pass'
-            : 'fail'
-  const reason = [failure ?? result?.reason, gradeError, extractError && `extraction: ${extractError}`].filter(Boolean).join('; ')
-  const detail = readTrial(x.store.trialDir(job.ref), artifacts)
-  const record: TrialRecord = {
-    key: job.key,
-    run: x.store.manifest.id,
-    case: job.case.id,
-    config: job.configName,
-    trial: job.ref.trial,
-    status,
-    exit: result?.exit ?? 'infra_error',
-    ...(reason ? { reason } : {}),
-    attempts,
-    graders,
-    usage: total(spent),
-    ...(gradingSpent.length ? { grading_usage: total(gradingSpent) } : {}),
-    wall_clock_ms: result?.wall_clock_ms ?? 0,
-    started_at: started.toISOString(),
-    finished_at: (x.o.now?.() ?? new Date()).toISOString(),
-    artifacts: Object.keys(artifacts).sort(),
-    tool_calls: detail.tool_calls,
-    findings: detail.findings,
-    ...(job.case.subject ? { subject_hash: job.case.subject.hash } : {}),
-    ...(extractorHash ? { extractor_hash: extractorHash } : {}),
-    ...(judgesOf(job.case).length ? { judge_hashes: Object.fromEntries(judgesOf(job.case).map(n => [n, x.judge(n).hash])) } : {}),
+  async function attemptAndGrade(): Promise<TrialRecord> {
+      for (let attempt = 1; attempt <= 1 + config.retries && !signal.aborted; attempt++) {
+        attempts = attempt
+        workdir?.cleanup()
+        workdir = undefined
+        try {
+          workdir = buildWorkdir(job.case, { run: x.store.manifest.id, key: job.key, attempt }, x.o.workBase ?? tmpdir(), [config.resultsDir, ...config.roots])
+          result = await executor({
+            key: job.key,
+            case: job.case,
+            configName: job.configName,
+            config: def,
+            trial: job.ref.trial,
+            attempt,
+            workdir,
+            suiteRoots: config.roots,
+            out: x.store.attemptDir(job.ref, attempt),
+            pricing: config.pricing,
+            emit: x.emit,
+            redact: x.redact,
+            signal,
+          })
+          kept = attempt
+          failure = undefined
+        } catch (e) {
+          // A case that cannot be built (a patch that no longer applies) or an
+          // executor bug: the trial is an error with the reason, and the run goes on.
+          result = undefined
+          failure = x.redact.text(`${e instanceof ConfigError ? 'case error' : e instanceof InfraError ? 'infra error' : 'internal error'}: ${(e as Error).message}`)
+          if (!(e instanceof InfraError && e.retryable)) break
+        }
+        if (result) spent.push(result.usage)
+        const retryable = result ? result.exit === 'infra_error' && result.retryable === true : failure !== undefined
+        if (!retryable || attempt > config.retries || signal.aborted) break
+        x.emit({ type: 'trial.retry', key: job.key, attempt, reason: result?.reason ?? failure ?? 'infra error' })
+        await sleep(x.backoff(attempt), signal)
+      }
+
+      artifacts = result && kept ? x.store.keepAttempt(job.ref, kept, result.artifacts) : (x.store.keepAttempt(job.ref, 0, {}), {})
+      if (result && workdir && (result.exit === 'ok' || result.exit === 'model_failure') && !signal.aborted) {
+        const gctx: GradeContext = { case: job.case, judge: x.judge, signal, redact: x.redact }
+        const executed = artifacts
+        let written: string | undefined // the file this attempt's extraction wrote
+        for (let g = 1; g <= 1 + config.retries; g++) {
+          // Every grading attempt starts from what the executor left, so a
+          // findings.json an earlier extraction wrote cannot outlive a later
+          // extraction that failed, in the record or on disk.
+          extractError = undefined
+          if (written !== undefined) rmSync(written, { force: true })
+          written = undefined
+          try {
+            let t: TrialResult = { ...result, artifacts: executed, transcript: join(x.store.trialDir(job.ref), 'transcript.jsonl'), workdir: workdir.dir, home: workdir.home }
+            if (result.exit === 'ok' && job.case.spec.extract) {
+              const ex = await runExtract(t, gctx)
+              t = ex.trial
+              written = Object.values(t.artifacts).find(p => !Object.values(executed).includes(p))
+              extractorHash = ex.extractor_hash
+              extractError = ex.error
+              if (ex.usage) gradingSpent.push(priceFor(ex.usage, job.case.spec.extract.with, x))
+            }
+            graders = await gradeAll(t, gctx)
+            // Results come back in case order, so each lines up with its spec and its judge.
+            graders.forEach((r, i) => {
+              const spec = job.case.spec.graders[i]!
+              const by = spec.kind === 'judge' ? spec.judge : spec.kind === 'review-match' ? spec.confirm : undefined
+              if (r.usage && by !== undefined) gradingSpent.push(priceFor(r.usage, by, x))
+            })
+            artifacts = t.artifacts
+            gradeError = undefined
+            break
+          } catch (e) {
+            if (signal.aborted) break
+            gradeError = x.redact.text(`grading failed: ${(e as Error).message}`)
+            if (!(e instanceof InfraError && e.retryable) || g > config.retries) break
+            x.emit({ type: 'trial.retry', key: job.key, attempt: g, reason: `grading: ${gradeError}` })
+            await sleep(x.backoff(g), signal)
+          }
+        }
+        if (written !== undefined && !Object.values(artifacts).includes(written)) rmSync(written, { force: true })
+      }
+
+    const status: TrialStatus =
+      signal.aborted || result?.exit === 'cancelled'
+        ? 'cancelled'
+        : !result || result.exit === 'infra_error' || gradeError !== undefined
+          ? 'error'
+          : result.exit === 'model_failure'
+            ? 'fail'
+            : graders.every(r => r.pass)
+              ? 'pass'
+              : 'fail'
+    const reason = [failure ?? result?.reason, gradeError, extractError && `extraction: ${extractError}`].filter(Boolean).join('; ')
+    const detail = readTrial(x.store.trialDir(job.ref), artifacts)
+    const record: TrialRecord = {
+      key: job.key,
+      run: x.store.manifest.id,
+      case: job.case.id,
+      config: job.configName,
+      trial: job.ref.trial,
+      status,
+      exit: result?.exit ?? 'infra_error',
+      ...(reason ? { reason } : {}),
+      attempts,
+      graders,
+      usage: total(spent),
+      ...(gradingSpent.length ? { grading_usage: total(gradingSpent) } : {}),
+      wall_clock_ms: result?.wall_clock_ms ?? 0,
+      started_at: started.toISOString(),
+      finished_at: (x.o.now?.() ?? new Date()).toISOString(),
+      artifacts: Object.keys(artifacts).sort(),
+      tool_calls: detail.tool_calls,
+      findings: detail.findings,
+      ...(job.case.subject ? { subject_hash: job.case.subject.hash } : {}),
+      ...(extractorHash ? { extractor_hash: extractorHash } : {}),
+      ...(judgesOf(job.case).length ? { judge_hashes: Object.fromEntries(judgesOf(job.case).map(n => [n, x.judge(n).hash])) } : {}),
+    }
+    x.store.writeTrial(record)
+    x.emit({ type: 'trial.finished', key: job.key, status, graders: graders.map(g => ({ grader: g.grader, pass: g.pass })) })
+    return record
   }
-  x.store.writeTrial(record)
-  x.emit({ type: 'trial.finished', key: job.key, status, graders: graders.map(g => ({ grader: g.grader, pass: g.pass })) })
-  return record
+}
+
+// A trial that threw after it began, with what it had spent by then.
+class TrialCrash extends Error {
+  readonly attempts: number
+  readonly usage: Usage
+  readonly grading: Usage | undefined
+  constructor(error: unknown, attempts: number, usage: Usage, grading: Usage | undefined) {
+    super((error as Error)?.message ?? String(error), { cause: error })
+    this.attempts = attempts
+    this.usage = usage
+    this.grading = grading
+  }
 }
 
 // A trial that threw outside its attempts (the store could not move its files,
 // say) is an error trial with the reason, like a workdir that would not build.
 // If this cannot be written either, the throw stops the run.
 function crashed(job: Job, e: unknown, x: Ctx): TrialRecord {
+  const known = e instanceof TrialCrash ? e : undefined
   const at = (x.o.now?.() ?? new Date()).toISOString()
   const status: TrialStatus = x.signal.aborted ? 'cancelled' : 'error'
   const record: TrialRecord = {
@@ -394,9 +427,10 @@ function crashed(job: Job, e: unknown, x: Ctx): TrialRecord {
     status,
     exit: 'infra_error',
     reason: x.redact.text(`internal error: ${(e as Error)?.message ?? String(e)}`),
-    attempts: 0,
+    attempts: known?.attempts ?? 0,
     graders: [],
-    usage: { input_tokens: 0, output_tokens: 0 },
+    usage: known?.usage ?? { input_tokens: 0, output_tokens: 0 },
+    ...(known?.grading ? { grading_usage: known.grading } : {}),
     wall_clock_ms: 0,
     started_at: at,
     finished_at: at,

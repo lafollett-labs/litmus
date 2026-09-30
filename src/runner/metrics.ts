@@ -34,20 +34,27 @@ export function readTrial(dir: string, artifacts: Record<string, string>): { too
   return { tool_calls: toolCalls, findings }
 }
 
-// The per-trial median of each WARN metric over a side's scored trials. A
+const METRIC: Record<Warn['metric'], (r: TrialRecord) => number | null | undefined> = {
+  tokens: r => r.usage.input_tokens + r.usage.output_tokens,
+  cost_usd: r => r.usage.cost_usd,
+  wall_clock_ms: r => r.wall_clock_ms,
+  tool_calls: r => r.tool_calls,
+  findings: r => r.findings,
+}
+
+// Each WARN metric as the median over cases of each case's median over its
+// scored trials. Every case counts once, so a side that scored more trials of
+// an expensive case does not read as the model getting more expensive. A
 // cancelled or errored trial did not do the work, so it would drag a median
 // toward zero and read as an agent quitting early.
 export function sideMetrics(records: TrialRecord[]): Partial<Record<Warn['metric'], number>> {
-  const scored = records.filter(r => r.status === 'pass' || r.status === 'fail')
+  const byCase = new Map<string, TrialRecord[]>()
+  for (const r of records) if (r.status === 'pass' || r.status === 'fail') byCase.set(r.case, [...(byCase.get(r.case) ?? []), r])
+  const finite = (xs: (number | null | undefined)[]) => xs.filter((x): x is number => typeof x === 'number' && Number.isFinite(x))
   const out: Partial<Record<Warn['metric'], number>> = {}
-  const put = (metric: Warn['metric'], xs: (number | null | undefined)[]) => {
-    const m = median(xs.filter((x): x is number => typeof x === 'number' && Number.isFinite(x)))
+  for (const [metric, of] of Object.entries(METRIC) as [Warn['metric'], (r: TrialRecord) => number | null | undefined][]) {
+    const m = median(finite([...byCase.values()].map(rs => median(finite(rs.map(of))))))
     if (m !== null) out[metric] = m
   }
-  put('tokens', scored.map(r => r.usage.input_tokens + r.usage.output_tokens))
-  put('cost_usd', scored.map(r => r.usage.cost_usd))
-  put('wall_clock_ms', scored.map(r => r.wall_clock_ms))
-  put('tool_calls', scored.map(r => r.tool_calls))
-  put('findings', scored.map(r => r.findings))
   return out
 }

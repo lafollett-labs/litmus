@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { InfraError } from '../../src/core/errors.ts'
+import { ConfigError, InfraError } from '../../src/core/errors.ts'
 import type { ExecutorResult, RunEvent } from '../../src/core/types.ts'
 import type { Executor } from '../../src/executors/types.ts'
 import type { Provider } from '../../src/providers/types.ts'
@@ -207,4 +207,75 @@ test('a json-schema file outside the case is part of the case hash', async () =>
   writeFileSync(join(root, 'suites/e2e/schemas/s.json'), '{"type":"array"}')
   const next = await run(options(root, { executors: { harness: executor }, baseline: baselineSide(runs(root), base.id) }))
   assert.deepEqual(next.comparisons[0]!.excluded, [{ case: 'e2e/c', reason: 'the case changed between the two sides' }])
+})
+
+test('an attempt that spent nothing leaves the cost of the priced attempts standing', async () => {
+  const root = project(harness('c', 1))
+  const priced = { input_tokens: 4, output_tokens: 1, cost_usd: 0.5 }
+  const r = await run(options(root, { executors: { harness: async job => (job.attempt === 1 ? blip(job, { input_tokens: 0, output_tokens: 0 }) : done(job, { usage: priced })) } }))
+  assert.deepEqual(readTrials(runs(root), r.id)[0]!.usage, priced)
+})
+
+test('a plugin that changed, or that only one side loaded, is noted', async () => {
+  const plugged = (name: string, plugin: string) => ({
+    [`suites/e2e/cases/${name}/case.yaml`]: `name: ${name}\nexecutor: { kind: harness, harness: claude-code, prompt: go, plugins: [../../../../${plugin}] }\ngraders: [{ kind: regex, target: out.txt, pattern: done }]\ntrials: 1\n`,
+    [`suites/e2e/cases/${name}/fixture/a.txt`]: 'x\n',
+  })
+  const root = project({ ...plugged('a', 'plug-a'), ...plugged('b', 'plug-b'), 'plug-a/x.md': 'v1\n', 'plug-b/x.md': 'v1\n' })
+  const base = await run(options(root, { executors: { harness: async job => done(job) } }))
+  writeFileSync(join(root, 'plug-a/x.md'), 'v2\n')
+  const next = await run(options(root, { executors: { harness: async job => done(job) }, baseline: baselineSide(runs(root), base.id, 'main') }, ['e2e/a']))
+  const notes = next.comparisons[0]!.notes
+  assert.equal(notes.length, 2, JSON.stringify(notes))
+  assert.match(notes[0]!, /^plugin \/.*\/plug-a: changed \([0-9a-f]{12} → [0-9a-f]{12}\)$/)
+  assert.match(notes[1]!, /^plugin \/.*\/plug-b: loaded only by main:fake$/)
+})
+
+test('WARN medians count each case once, however many of its trials each side scored', async () => {
+  const root = project({ ...harness('big', 3), ...harness('small', 3) })
+  const tokens = (job: Parameters<Executor>[0]) => ({ input_tokens: job.case.name === 'big' ? 100 : 10, output_tokens: 0 })
+  const base = await run(options(root, { executors: { harness: async job => done(job, { usage: tokens(job) }) } }))
+  // Two of big's three trials end in an infra error: fewer big trials scored, none cheaper.
+  const next = await run(options(root, { executors: { harness: async job => (job.case.name === 'big' && job.trial > 1 ? { ...done(job), exit: 'infra_error', retryable: false, reason: 'auth' } : done(job, { usage: tokens(job) })) }, baseline: baselineSide(runs(root), base.id, 'main') }))
+  assert.deepEqual(next.comparisons.map(c => [c.cases, c.warns]), [[2, []]])
+})
+
+test('a trial that crashes after its attempts keeps what it spent; one that crashes during a cancel is cancelled', async () => {
+  const root = project(harness('c', 1))
+  const inTheWay = (job: Parameters<Executor>[0]) => mkdirSync(join(dirname(dirname(dirname(job.out.transcript))), 'artifacts/in-the-way'), { recursive: true })
+  const r = await run(options(root, { executors: { harness: async job => (inTheWay(job), done(job, { usage: { input_tokens: 5900, output_tokens: 1, cost_usd: 1.2 } })) } }))
+  assert.deepEqual(readTrials(runs(root), r.id).map(t => [t.status, t.attempts, t.usage]), [['error', 1, { input_tokens: 5900, output_tokens: 1, cost_usd: 1.2 }]])
+
+  const ctl = new AbortController()
+  const c = await run(options(root, { signal: ctl.signal, executors: { harness: async job => (inTheWay(job), ctl.abort(new Error('cancelled')), done(job)) } }))
+  assert.deepEqual(readTrials(runs(root), c.id).map(t => t.status), ['cancelled'])
+})
+
+test('an extraction that a later grading attempt replaced leaves no findings.json on disk', async () => {
+  const root = project({
+    'suites/e2e/cases/x/case.yaml': 'name: x\nexecutor: { kind: harness, harness: claude-code, prompt: go }\nextract: { from: out.txt, to: findings.json, with: j }\ngraders: [{ kind: judge, judge: j, question: "fine?", target: out.txt }]\ntrials: 1\n',
+    'suites/e2e/cases/x/fixture/a.txt': 'x\n',
+  })
+  let calls = 0
+  const finding = '{"findings":[{"file":"a.txt","line":1,"severity":"high","category":"bug","title":"t","explanation":"e"}]}'
+  const answers = [() => reply(finding), () => { throw new InfraError('judge 429', { retryable: true }) }, () => reply('not json'), () => reply('{"pass": true, "rationale": "ok"}')]
+  const provider = { id: 'anthropic', complete: async () => answers[calls++]!() } as unknown as Provider
+  const r = await run(options(root, { executors: { harness: async job => done(job) }, judgeProvider: () => provider }))
+  assert.deepEqual(readdirSync(join(r.dir, 'trials/e2e/x/fake/1/artifacts')), ['out.txt'])
+})
+
+test('a failed run ends its event stream with run.failed', async () => {
+  const root = project(harness('c', 1))
+  const events: RunEvent[] = []
+  const executor: Executor = async job => (mkdirSync(join(dirname(dirname(dirname(job.out.transcript))), 'trial.json'), { recursive: true }), done(job))
+  await assert.rejects(run(options(root, { executors: { harness: executor }, listener: e => events.push(e) })))
+  assert.equal(events.at(-1)!.type, 'run.failed')
+})
+
+test('a schema file gone since load is a config error, before any run is written', async () => {
+  const root = project({ ...harness('c', 1, '[{ kind: json-schema, artifact: out.json, schema: ../../schemas/s.json }]'), 'suites/e2e/schemas/s.json': '{}' })
+  const o = options(root, { executors: { harness: async job => done(job) } })
+  rmSync(join(root, 'suites/e2e/schemas/s.json'))
+  await assert.rejects(run(o), (e: Error) => e instanceof ConfigError && /e2e\/c: schema \.\.\/\.\.\/schemas\/s\.json cannot be read: ENOENT/.test(e.message))
+  assert.equal(existsSync(runs(root)), false)
 })

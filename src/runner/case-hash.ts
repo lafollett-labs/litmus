@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { ConfigError } from '../core/errors.ts'
 import { hashJson, sha256 } from '../core/hash.ts'
 import { EXTRACT_PROMPT_VERSION } from '../graders/index.ts'
 import type { LoadedCase } from '../suite/load.ts'
@@ -29,7 +30,7 @@ export function judgesOf(c: LoadedCase): string[] {
 export function caseHash(c: LoadedCase, judgeHash: (name: string) => string): string {
   const judges = Object.fromEntries(judgesOf(c).map(n => [n, judgeHash(n)]))
   const schemas = Object.fromEntries(
-    c.spec.graders.flatMap((g, i) => (g.kind === 'json-schema' && !g.schema.startsWith('litmus:') ? [[String(i), sha256(readFileSync(resolve(c.dir, g.schema)))]] : [])),
+    c.spec.graders.flatMap((g, i) => (g.kind === 'json-schema' && !g.schema.startsWith('litmus:') ? [[String(i), sha256(readSchema(c, g.schema))]] : [])),
   )
   return hashJson({
     tree: hashTree(c.dir),
@@ -39,4 +40,13 @@ export function caseHash(c: LoadedCase, judgeHash: (name: string) => string): st
     ...(Object.keys(schemas).length ? { schemas } : {}),
     ...(c.spec.extract ? { extract_prompt: EXTRACT_PROMPT_VERSION } : {}),
   })
+}
+
+// Checked at load, but it can go (or lose its permissions) before the run.
+function readSchema(c: LoadedCase, schema: string): Buffer {
+  try {
+    return readFileSync(resolve(c.dir, schema))
+  } catch (e) {
+    throw new ConfigError(`${c.id}: schema ${schema} cannot be read: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`)
+  }
 }
