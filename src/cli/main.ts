@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { ConfigError } from '../core/errors.ts'
 import { redactor, secretValues } from '../core/redact.ts'
 import { loadConfig } from '../suite/load.ts'
-import { baselineCommand, compareCommand, runCommand, serveCommand } from './commands.ts'
+import { baselineCommand, compareCommand, runCommand, serveCommand, validateCommand } from './commands.ts'
 import { list } from './list.ts'
 
 const USAGE = `usage: litmus <command> [options]
@@ -16,6 +16,7 @@ commands:
   run --rerun <run> --only fail,flaky,error,inconclusive
   compare <side> <side> [--allow-inconclusive] [--out path]
   baseline set <name> <run> | baseline list
+  validate [select...]                 check cases, and run every seeded bug's proof
   serve [--port 4317]                  the API and UI on 127.0.0.1 until Ctrl-C
 
 a side is <run id>, <run id>:<config>, baseline:<name>[:<config>] or config:<name>
@@ -114,6 +115,11 @@ export async function main(argv: string[], io: Io): Promise<number> {
         const { values: v, positionals } = parseArgs({ args: rest, allowPositionals: true, options: COMMON })
         if (v.help) return help(io)
         return baselineCommand({ configFile: v['config-file'], args: positionals }, io)
+      }
+      case 'validate': {
+        const { values: v, positionals } = parseArgs({ args: rest, allowPositionals: true, options: COMMON })
+        if (v.help) return help(io)
+        return await validateCommand({ configFile: v['config-file'], selectors: positionals }, io)
       }
       case 'serve': {
         const { values: v, positionals } = parseArgs({ args: rest, allowPositionals: true, options: SERVE })
