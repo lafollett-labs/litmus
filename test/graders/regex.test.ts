@@ -33,11 +33,22 @@ test('flags apply, and a pattern that is never found fails', async () => {
   assert.equal((await regex(spec({ kind: 'regex', target: 'response.txt', pattern: 'sql injection', flags: 'i' }), t, ctx())).pass, true)
 })
 
-test('the transcript target covers assistant text, tool calls and tool results', async () => {
+test('the transcript target covers assistant text and tool calls', async () => {
   const t = trial({ transcript: session })
-  for (const pattern of ['expiry bug', 'Read .*token\\.go', 'expiry check']) {
+  for (const pattern of ['expiry bug', 'Read .*token\\.go']) {
     assert.equal((await regex(spec({ kind: 'regex', pattern }), t, ctx())).pass, true, pattern)
   }
+})
+
+test('canary: a pattern that appears only in a tool result, the fixture the subject read, does not pass', async () => {
+  const r = await regex(spec({ kind: 'regex', pattern: 'expiry check' }), trial({ transcript: session }), ctx())
+  assert.equal(r.pass, false)
+})
+
+test('canary: a pattern that matches the empty string counts only real matches', async () => {
+  const t = trial({ artifacts: { 'response.txt': 'nothing relevant here' } })
+  for (const pattern of ['TODO|', 'x*', '(foo)?']) assert.equal((await regex(spec({ kind: 'regex', target: 'response.txt', pattern }), t, ctx())).pass, false, pattern)
+  assert.equal((await regex(spec({ kind: 'regex', target: 'response.txt', pattern: 'TODO|here' }), t, ctx())).pass, true)
 })
 
 test('canary: a pattern that appears only in the prompt litmus sent does not pass', async () => {

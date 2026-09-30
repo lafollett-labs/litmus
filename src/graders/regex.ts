@@ -22,7 +22,8 @@ export const regex: Grader<'regex'> = async (spec, trial) => {
     if (!art) return { grader: 'regex', pass: false, rationale: `${spec.target} was not produced` }
     text = art.text
   }
-  const n = [...text.matchAll(re)].length
+  // An empty match is no match: `TODO|` or `x*` would otherwise count every position.
+  const n = [...text.matchAll(re)].filter(m => m[0].length > 0).length
   const c = countCheck(n, spec)
   return { grader: 'regex', pass: c.pass, metrics: { matches: n }, rationale: `/${spec.pattern}/${flags} matched ${spec.target} ${n} time(s); want ${c.want}` }
 }

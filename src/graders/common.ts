@@ -1,7 +1,8 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync } from 'node:fs'
 import { isAbsolute, posix } from 'node:path'
 import { ConfigError } from '../core/errors.ts'
 import type { TranscriptEntry } from '../core/types.ts'
+import { readRegular } from '../sandbox/snapshot.ts'
 import type { TrialResult } from './types.ts'
 
 // What every grader reads, and the rule they share: anything missing is a
@@ -13,13 +14,22 @@ export function normPath(p: string): string {
   return n.startsWith('./') ? n.slice(2) : n
 }
 
-// An artifact by name, as long as its file is really there.
+// Far past anything a review or a findings file needs, and short of the
+// string length a utf8 read would throw on.
+export const ARTIFACT_MAX_BYTES = 64 << 20
+
+// An artifact by name, as long as its file is really there: a regular file,
+// read without following a link or blocking on a FIFO (a subject with a shell
+// may still be running), and not too large to read.
 export function readArtifact(trial: TrialResult, name: string): { name: string; path: string; text: string } | undefined {
   const want = normPath(name)
   const key = Object.keys(trial.artifacts).find(k => k === name || normPath(k) === want)
   const path = key === undefined ? undefined : trial.artifacts[key]
-  if (key === undefined || path === undefined || !existsSync(path) || !statSync(path).isFile()) return undefined
-  return { name: key, path, text: readFileSync(path, 'utf8') }
+  if (key === undefined || path === undefined) return undefined
+  const size = lstatSync(path, { throwIfNoEntry: false })?.size
+  if (size === undefined || size > ARTIFACT_MAX_BYTES) return undefined
+  const data = readRegular(path)
+  return data === undefined ? undefined : { name: key, path, text: data.toString('utf8') }
 }
 
 // A torn last line (a process killed mid-write) is skipped rather than failing
@@ -38,15 +48,16 @@ export function readTranscript(path: string): TranscriptEntry[] | undefined {
   return entries
 }
 
-// What the subject did: assistant messages, tool calls (name and input) and
-// tool results. System and user messages are litmus's own input; a pattern
-// that appears in the prompt or the fixture it renders would match every trial.
+// What the subject wrote: assistant messages and tool calls (name and input).
+// System and user messages are litmus's own input, and tool results are the
+// environment's: a Read result is the fixture, so a pattern in the fixture
+// would match every harness trial that opened the file, and none on the model
+// executor, where the fixture sits in the prompt.
 export function subjectText(entries: TranscriptEntry[]): string {
   const parts: string[] = []
   for (const e of entries) {
     if (e.kind === 'message' && e.role === 'assistant') parts.push(e.text)
     else if (e.kind === 'tool_call') parts.push(`${e.tool} ${JSON.stringify(e.input)}`)
-    else if (e.kind === 'tool_result') parts.push(e.text)
   }
   return parts.join('\n')
 }

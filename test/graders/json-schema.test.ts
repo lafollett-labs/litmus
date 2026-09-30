@@ -1,6 +1,10 @@
+import { spawnSync } from 'node:child_process'
+import { rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ConfigError } from '../../src/core/errors.ts'
+import { ARTIFACT_MAX_BYTES } from '../../src/graders/common.ts'
 import { jsonSchema } from '../../src/graders/json-schema.ts'
 import { oneCase } from '../helpers/cases.ts'
 import { CASE, ctx, spec, trial } from '../helpers/grading.ts'
@@ -53,4 +57,24 @@ test('a missing schema file, an unknown built-in, or an unknown format is a conf
   await assert.rejects(jsonSchema(spec({ kind: 'json-schema', artifact: 'out.json', schema: 'nope.json' }), t, ctx(c)), ConfigError)
   await assert.rejects(jsonSchema(spec({ kind: 'json-schema', artifact: 'out.json', schema: 'litmus:verdicts' }), t, ctx(c)), ConfigError)
   await assert.rejects(jsonSchema(spec({ kind: 'json-schema', artifact: 'out.json', schema: 'fmt.json' }), t, ctx(c)), ConfigError)
+})
+
+test('canary: an artifact that is a link, a FIFO or too large is not read, and the grade fails', async () => {
+  const t = trial({ artifacts: { 'findings.json': '{"findings":[]}' } })
+  const path = t.artifacts['findings.json']!
+  const g = () => jsonSchema(spec({ kind: 'json-schema', artifact: 'findings.json', schema: 'litmus:findings' }), t, ctx())
+  assert.equal((await g()).pass, true)
+  // Each of these holds valid findings if read, so only the read rule can fail it.
+  const outside = join(dirname(t.workdir), 'outside.json')
+  writeFileSync(outside, '{"findings":[]}')
+  rmSync(path)
+  symlinkSync(outside, path)
+  assert.equal((await g()).pass, false, 'a link')
+  rmSync(path)
+  spawnSync('mkfifo', [path])
+  assert.equal((await g()).pass, false, 'a FIFO')
+  rmSync(path)
+  writeFileSync(path, '{"findings":[]}')
+  writeFileSync(path, `{"findings":[]}${' '.repeat(ARTIFACT_MAX_BYTES)}`)
+  assert.equal((await g()).pass, false, 'too large')
 })
