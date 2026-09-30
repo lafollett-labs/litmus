@@ -54,5 +54,5 @@ test('canary: a missing artifact or transcript fails, even when zero matches wou
 })
 
 test('an invalid pattern is a config error, not a failed trial', async () => {
-  await assert.rejects(regex({ kind: 'regex', target: 'transcript', pattern: '(' }, trial(), ctx()), ConfigError)
+  await assert.rejects(regex({ kind: 'regex', target: 'transcript', pattern: '(', min: 1 }, trial(), ctx()), ConfigError)
 })

@@ -12,7 +12,9 @@ export { EXTRACT_PROMPT_VERSION, JUDGE_PROMPT_VERSION } from './prompts.ts'
 const JUDGE_MAX_TOKENS = 4096
 
 export function judgeHash(def: JudgeDef): string {
-  return hashJson({ provider: def.provider, model: def.model, effort: def.effort, region: def.region, params: def.params, prompt_version: JUDGE_PROMPT_VERSION })
+  // A fake judge has none of effort, region or params; each is hashed as unset.
+  const pick = <K extends 'effort' | 'region' | 'params'>(k: K) => (k in def ? (def as Partial<Record<K, unknown>>)[k] : undefined)
+  return hashJson({ provider: def.provider, model: def.model, effort: pick('effort'), region: pick('region'), params: pick('params'), prompt_version: JUDGE_PROMPT_VERSION })
 }
 
 // One provider per judge name, made on first use: a config may name judges a
@@ -39,8 +41,8 @@ export async function ask(judge: Judge, system: string, user: string, maxTokens:
     system,
     messages: [{ role: 'user', content: user }],
     max_tokens: maxTokens,
-    ...(judge.def.effort ? { effort: judge.def.effort } : {}),
-    ...(judge.def.params ? { params: judge.def.params } : {}),
+    ...('effort' in judge.def && judge.def.effort ? { effort: judge.def.effort } : {}),
+    ...('params' in judge.def && judge.def.params ? { params: judge.def.params } : {}),
     signal,
   })
   return r.text
