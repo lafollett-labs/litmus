@@ -109,10 +109,11 @@ export class RunStore {
     if (c.length) this.#writeJson('comparison.json', c)
   }
 
+  // Returns the manifest as written: redacted, like everything a reporter prints.
   finish(status: 'finished' | 'cancelled' | 'failed', at: Date = new Date()): RunManifest {
     this.#manifest = { ...this.#manifest, status, finished_at: at.toISOString() }
     this.#writeJson('run.json', this.#manifest)
-    return this.#manifest
+    return this.#redact.json(this.#manifest)
   }
 
   #writeJson(name: string, value: unknown): void {
@@ -145,16 +146,18 @@ export function readRun(resultsDir: string, id: string): StoredRun {
   return { manifest: read<RunManifest>('run.json', undefined as never), verdicts: read<Verdict[]>('verdicts.json', []), comparisons: read<Comparison[]>('comparison.json', []) }
 }
 
-// Newest first: run ids sort chronologically as strings by construction. A
-// run whose run.json does not parse (written by hand, or by an older litmus
-// without atomic writes) is skipped, so one bad run cannot hide the others.
+// Newest first, by start time to the millisecond: a run id sorts only to the
+// second, and two runs started in that second would otherwise come back in
+// the order of their random suffixes. A run whose run.json does not parse
+// (written by hand, or by an older litmus without atomic writes) is skipped,
+// so one bad run cannot hide the others.
 export function listRuns(resultsDir: string): RunManifest[] {
   if (!existsSync(resultsDir)) return []
+  const key = (m: RunManifest) => `${m.started_at} ${m.id}`
   return readdirSync(resultsDir)
     .filter(d => RUN_ID.test(d))
-    .sort()
-    .reverse()
     .flatMap(d => parse<RunManifest>(join(resultsDir, d, 'run.json')) ?? [])
+    .sort((a, b) => (key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0))
 }
 
 // A torn last line (the process killed mid-append) is skipped, as the
@@ -184,7 +187,10 @@ export function readTrials(resultsDir: string, id: string): TrialRecord[] {
       if (e.name === '.attempts') continue
       const path = join(dir, e.name)
       if (e.isDirectory()) walk(path)
-      else if (e.name === 'trial.json') out.push(JSON.parse(readFileSync(path, 'utf8')) as TrialRecord)
+      else if (e.name === 'trial.json') {
+        const record = parse<TrialRecord>(path)
+        if (record) out.push(record) // a torn record is skipped, as listRuns skips one
+      }
     }
   }
   walk(join(resultsDir, id, 'trials'))
@@ -198,14 +204,20 @@ const baselinesFile = (resultsDir: string) => join(dirname(resultsDir), 'baselin
 
 export function baselines(resultsDir: string): Record<string, string> {
   const f = baselinesFile(resultsDir)
-  return existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')) as Record<string, string>) : {}
+  if (!existsSync(f)) return {}
+  const all = parse<Record<string, string>>(f)
+  if (all === undefined || typeof all !== 'object' || all === null || Array.isArray(all)) throw new ConfigError(`${f} is not a JSON object of baseline names; fix it or remove it`)
+  return all
 }
 
 // NAME, so `baseline:<name>[:<config>]` parses: a ':' in a name would be read
 // as the config.
 export function setBaseline(resultsDir: string, name: string, runId: string): void {
   if (!NAME.test(name)) throw new ConfigError(`baseline name "${name}" must match ${NAME} (lowercase, digits, . _ -)`)
-  readRun(resultsDir, runId)
+  // A cancelled or failed run holds only some of its cases; as a baseline it
+  // would quietly shrink every comparison against it.
+  const { status } = readRun(resultsDir, runId).manifest
+  if (status !== 'finished') throw new ConfigError(`run ${runId} is ${status}; only a finished run can be a baseline`)
   const all = { ...baselines(resultsDir), [name]: runId }
   mkdirSync(dirname(baselinesFile(resultsDir)), { recursive: true })
   writeAtomic(baselinesFile(resultsDir), `${JSON.stringify(all, null, 2)}\n`)

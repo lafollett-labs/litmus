@@ -124,12 +124,19 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
     return await execute()
   } catch (e) {
     fault.abort(e)
-    // Best effort on both: the store is what failed. The event lets a live
-    // view (and a replay of events.jsonl, when it can still be written) end.
+    // Best effort on each: the store is what failed. The event lets a live
+    // view end, and a replay of events.jsonl too when it can still be written;
+    // the listener hears it even when the store cannot.
+    const failed: RunEvent = { type: 'run.failed', run: id, error: redact.text((e as Error)?.message ?? String(e)) }
     try {
-      emit({ type: 'run.failed', run: id, error: redact.text((e as Error)?.message ?? String(e)) })
+      store.event(failed)
     } catch {
       // the error below says why
+    }
+    try {
+      o.listener?.(redact.json(failed))
+    } catch {
+      // the listener's failure is not the run's
     }
     try {
       store.finish('failed', now())
@@ -224,7 +231,8 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
     const summary = Object.fromEntries((['PASS', 'FAIL', 'FLAKY', 'ERROR', 'INCONCLUSIVE'] as VerdictKind[]).map(k => [k, verdicts.filter(v => v.verdict === k).length])) as Record<VerdictKind, number>
     emit({ type: cancelled ? 'run.cancelled' : 'run.finished', run: id, summary })
     const manifest = store.finish(cancelled ? 'cancelled' : 'finished', now())
-    return { id, dir: store.dir, manifest, verdicts, comparisons, notes: [...notes, ...leaks] }
+    // Redacted like the files, so a reporter prints nothing the store would not write.
+    return { id, dir: store.dir, manifest, verdicts: redact.json(verdicts), comparisons: redact.json(comparisons), notes: redact.json([...notes, ...leaks]) }
   }
 }
 
