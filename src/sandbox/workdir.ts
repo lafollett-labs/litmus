@@ -124,28 +124,31 @@ function writable(dir: string): void {
 // A symlink could resolve to ground truth (or anywhere) outside the workdir; a
 // .git directory would bring its own config and hooks into the one git step
 // litmus does run; a FIFO or socket would hang or reach out when read.
-function copyTree(from: string, to: string, caseId: string): void {
+// Exported for validate, which overlays proof/ on a copy the same way.
+export function copyTree(from: string, to: string, caseId: string, what = 'fixture'): void {
   for (const name of readdirSync(from).sort()) {
     const src = join(from, name)
     const dst = join(to, name)
     const st = lstatSync(src)
-    if (st.isSymbolicLink()) throw new ConfigError(`${caseId}: fixture contains a symlink at ${src}`)
+    if (st.isSymbolicLink()) throw new ConfigError(`${caseId}: ${what} contains a symlink at ${src}`)
     // Folded: on a case-insensitive volume .GIT is .git, and git init would
     // adopt it, config and all.
-    if (fold(name) === '.git') throw new ConfigError(`${caseId}: fixture contains a .git directory at ${src}`)
+    if (fold(name) === '.git') throw new ConfigError(`${caseId}: ${what} contains a .git directory at ${src}`)
     if (st.isDirectory()) {
       mkdirSync(dst, { recursive: true })
-      copyTree(src, dst, caseId)
+      copyTree(src, dst, caseId, what)
     } else if (st.isFile()) {
       copyFileSync(src, dst)
       chmodSync(dst, st.mode & 0o777)
     } else {
-      throw new ConfigError(`${caseId}: fixture contains ${src}, which is neither a regular file nor a directory`)
+      throw new ConfigError(`${caseId}: ${what} contains ${src}, which is neither a regular file nor a directory`)
     }
   }
 }
 
-function git(cwd: string, args: string[], failure?: string): void {
+// Exported for validate, which applies a bug's fix patch to its proof copy
+// with the same isolated git.
+export function git(cwd: string, args: string[], failure?: string): void {
   const r = spawnSync('git', [...GIT_ARGS, ...args], {
     cwd,
     env: { PATH: process.env['PATH'] ?? '', HOME: cwd, ...GIT_ENV },

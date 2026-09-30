@@ -12,6 +12,7 @@ import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
 import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
 import type { ExecJob } from './types.ts'
+import type { LoadedCase } from '../suite/load.ts'
 
 export type Query = (params: { prompt: string; options: Options }) => AsyncIterable<SDKMessage>
 
@@ -40,41 +41,12 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const creds = credentials(job)
   if (typeof creds === 'string') return refuse(creds)
 
-  const plugins = job.case.plugins // absolute, and checked to exist, at load
+  const refused = harnessPreflight(job.case, job.workdir.dir, job.suiteRoots)
+  if (refused) return refuse(refused)
+  const plugins = job.case.plugins
   const project = exec.setting_sources.includes('project')
-  // Hooks, MCP and LSP servers run as host processes, outside the gate, and a
-  // case has to say it accepts that (allow_hooks) before any of them load. The
-  // scan runs either way: what allow_hooks waives is only those process
-  // signals, never the gate's own checks (isolation, links, unparseable keys).
-  const found = [...plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks)), project ? fixtureRunsProcesses(job.workdir.dir, exec.allow_hooks) : undefined].find(
-    x => x !== undefined,
-  )
-  if (found) return refuse(`${found.reason}; ${found.fix}`)
-  if (project) {
-    const bad = fixtureSettings(job.workdir.dir)
-    if (bad) return refuse(bad)
-  }
-
-  // A directory subject is its own root; a file subject's root is the folder
-  // it lives in (a skill's SKILL.md beside its references).
-  const subjectRoot = job.case.subject ? (job.case.subject.kind === 'dir' ? job.case.subject.path : dirname(job.case.subject.path)) : undefined
-  // .native: the on-disk case, so the gate compares like with like.
-  const real = (paths: string[]) => paths.filter(existsSync).map(p => realpathSync.native(p))
-  // The case's own directory, its suite and its root are denied whatever the
-  // caller passes: the ground truth is always somewhere in there.
-  const suiteDir = dirname(dirname(job.case.dir))
-  const denyRoots = real([...job.suiteRoots, job.case.dir, suiteDir, dirname(suiteDir)])
-  const trapped = (r: string) => denyRoots.find(d => inside(r, d))
-  // A plugin inside a suite would load but could not read a single one of its
-  // own files, and the skill failing would read as the model's fault. A suite
-  // inside a plugin is worse: the manifest can point skills or agents into it,
-  // and the SDK loads those files before the gate sees a single call.
-  for (const plugin of real(plugins)) {
-    const under = trapped(plugin)
-    if (under) return refuse(`plugin ${plugin} lies inside ${under}, where the gate denies every read; move it outside the suite`)
-    const holds = denyRoots.find(d => inside(d, plugin))
-    if (holds) return refuse(`plugin ${plugin} contains ${holds}, which the plugin loader could read before the gate runs; move the suite out of the plugin`)
-  }
+  const subjectRoot = subjectRootOf(job.case)
+  const { real, denyRoots, trapped } = roots(job.case, job.suiteRoots)
   const policy: GatePolicy = {
     workdir: realpathSync.native(job.workdir.dir),
     // A subject root inside a deny root is only a version for the harness, so
@@ -329,6 +301,52 @@ type Refusal = { reason: string; fix: string; waivable: boolean }
 const RUNS = 'set allow_hooks: true to run them uncontained'
 const runs = (reason: string): Refusal => ({ reason, fix: RUNS, waivable: true })
 const blocks = (reason: string, fix: string): Refusal => ({ reason, fix, waivable: false })
+
+// A directory subject is its own root; a file subject's root is the folder it
+// lives in (a skill's SKILL.md beside its references).
+export const subjectRootOf = (c: LoadedCase): string | undefined => (c.subject ? (c.subject.kind === 'dir' ? c.subject.path : dirname(c.subject.path)) : undefined)
+
+// .native: the on-disk case, so the gate compares like with like. The case's
+// own directory, its suite and its root are denied whatever the caller passes:
+// the ground truth is always somewhere in there.
+function roots(c: LoadedCase, suiteRoots: string[]) {
+  const real = (paths: string[]) => paths.filter(existsSync).map(p => realpathSync.native(p))
+  const suiteDir = dirname(dirname(c.dir))
+  const denyRoots = real([...suiteRoots, c.dir, suiteDir, dirname(suiteDir)])
+  const trapped = (r: string) => denyRoots.find(d => inside(r, d))
+  return { real, denyRoots, trapped }
+}
+
+// Everything a harness case must pass before the SDK loads a thing, on the
+// workdir it would run in; `litmus validate` runs the same checks. Returns
+// why the case is refused, and what would fix it, or undefined.
+export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: string[]): string | undefined {
+  const exec = c.spec.executor
+  if (exec.kind !== 'harness') return undefined
+  const project = exec.setting_sources.includes('project')
+  // Hooks, MCP and LSP servers run as host processes, outside the gate, and a
+  // case has to say it accepts that (allow_hooks) before any of them load. The
+  // scan runs either way: what allow_hooks waives is only those process
+  // signals, never the gate's own checks (isolation, links, unparseable keys).
+  const found = [...c.plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks)), project ? fixtureRunsProcesses(workdir, exec.allow_hooks) : undefined].find(x => x !== undefined)
+  if (found) return `${found.reason}; ${found.fix}`
+  if (project) {
+    const bad = fixtureSettings(workdir)
+    if (bad) return bad
+  }
+  const { real, denyRoots, trapped } = roots(c, suiteRoots)
+  // A plugin inside a suite would load but could not read a single one of its
+  // own files, and the skill failing would read as the model's fault. A suite
+  // inside a plugin is worse: the manifest can point skills or agents into it,
+  // and the SDK loads those files before the gate sees a single call.
+  for (const plugin of real(c.plugins)) {
+    const under = trapped(plugin)
+    if (under) return `plugin ${plugin} lies inside ${under}, where the gate denies every read; move it outside the suite`
+    const holds = denyRoots.find(d => inside(d, plugin))
+    if (holds) return `plugin ${plugin} contains ${holds}, which the plugin loader could read before the gate runs; move the suite out of the plugin`
+  }
+  return undefined
+}
 
 export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | undefined {
   // The walk lstats everything below the root; the root itself is checked here.
