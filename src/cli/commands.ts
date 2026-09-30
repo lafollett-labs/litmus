@@ -7,11 +7,11 @@ import { colour, comparisonLines, plain, type Paint, type RunReport } from '../r
 import { render, type DocumentFormat } from '../report/documents.ts'
 import { compareExit, runExit, type Gate } from '../report/gate.ts'
 import { pretty } from '../report/pretty.ts'
-import { baselineSide, rerunPairs } from '../runner/rerun.ts'
+import { serve } from '../server/server.ts'
+import { planRun } from '../runner/plan.ts'
 import { pair, run } from '../runner/run.ts'
-import { baselineRun, baselines, readRun, readTrials, setBaseline } from '../store/store.ts'
-import { loadConfig, loadProject } from '../suite/load.ts'
-import { select } from '../suite/select.ts'
+import { baselines, readTrials, setBaseline } from '../store/store.ts'
+import { loadConfig } from '../suite/load.ts'
 import { resolveSide } from './address.ts'
 import type { Io } from './main.ts'
 
@@ -41,37 +41,27 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
   if (!(FORMATS as readonly string[]).includes(f.reporter)) throw new ConfigError(`--reporter must be one of ${FORMATS.join(', ')}, got "${f.reporter}"`)
   const format = f.reporter as (typeof FORMATS)[number]
   if (f.out !== undefined) writable(f.out)
-  const trials = f.trials === undefined ? undefined : positive('--trials', f.trials)
-  const { config, suites } = loadProject(f.configFile)
-
-  let names: string[]
-  let selectors = f.selectors
-  let only: Set<string> | undefined
-  let parent: string | undefined
-  if (f.rerun !== undefined) {
-    if (f.selectors.length) throw new ConfigError('--rerun takes no selectors: it reruns the pairs --only picks')
-    if (f.config !== undefined) throw new ConfigError('--rerun runs the configs of the run it reruns; drop --config')
-    const kinds = (f.only ?? '').split(',').map(s => s.trim()).filter(Boolean).map(k => {
-      if (!Object.hasOwn(ONLY, k)) throw new ConfigError(`--only takes ${Object.keys(ONLY).join(', ')}; got "${k}"`)
-      return ONLY[k]!
-    })
-    const stored = readRun(config.resultsDir, f.rerun)
-    only = rerunPairs(stored, kinds)
-    if (only.size === 0) {
-      // A machine-readable stdout stays parseable: the note goes to stderr.
-      const say = format === 'pretty' ? io.out : io.err
-      say(`nothing to rerun: run ${stored.manifest.id} has no ${kinds.join(', ')} verdict`)
-      return 0
-    }
-    names = Object.keys(stored.manifest.configs)
-    selectors = [...new Set([...only].map(k => k.slice(0, k.lastIndexOf('@'))))]
-    parent = stored.manifest.id
-  } else {
-    if (f.only !== undefined) throw new ConfigError('--only needs --rerun <run>')
-    names = configNames(f.config, Object.keys(config.configs))
+  // The flag rules are checked here, so their errors name the flags.
+  if (f.only !== undefined && f.rerun === undefined) throw new ConfigError('--only needs --rerun <run>')
+  if (f.rerun !== undefined && f.selectors.length) throw new ConfigError('--rerun takes no selectors: it reruns the pairs --only picks')
+  if (f.rerun !== undefined && f.config !== undefined) throw new ConfigError('--rerun runs the configs of the run it reruns; drop --config')
+  const plan = planRun(
+    f.configFile,
+    {
+      selectors: f.selectors,
+      ...(f.config === undefined ? {} : { configs: configNames(f.config) }),
+      ...(f.trials === undefined ? {} : { trials: positive('--trials', f.trials) }),
+      ...(f.rerun === undefined ? {} : { rerun: { run: f.rerun, only: onlyKinds(f.only ?? '') } }),
+      ...(f.baseline === undefined ? {} : { baseline: f.baseline }),
+    },
+    { configs: '--config a,b' },
+  )
+  if (plan.kind === 'nothing') {
+    // A machine-readable stdout stays parseable: the note goes to stderr.
+    ;(format === 'pretty' ? io.out : io.err)(plan.message)
+    return 0
   }
 
-  const baseline = f.baseline === undefined ? undefined : baselineSide(config.resultsDir, baselineRun(config.resultsDir, f.baseline), `baseline:${f.baseline}`)
   const gate: Gate = { allowFlaky: f.allowFlaky, allowInconclusive: f.allowInconclusive }
   const live = format === 'pretty' || f.out !== undefined ? pretty({ write: io.write, tty: io.tty }, paintFor(io)) : undefined
   const saved: string[] = []
@@ -81,14 +71,7 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
   let r
   try {
     r = await run({
-      config,
-      selection: select(suites, selectors, new Set(Object.keys(config.configs))),
-      configs: names,
-      selectors,
-      ...(trials === undefined ? {} : { trials }),
-      ...(only ? { only } : {}),
-      ...(parent ? { parent } : {}),
-      ...(baseline ? { baseline } : {}),
+      ...plan.options,
       ...(io.signal ? { signal: io.signal } : {}),
       listener: e => {
         if (e.type === 'trial.queued') scheduled.add(e.key.slice(0, e.key.lastIndexOf('#')))
@@ -100,13 +83,13 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
     if (e instanceof ConfigError) throw e
     // litmus itself broke (the store could not be written): infrastructure
     // trouble, not a regression. The live view has already said so.
-    io.err(`litmus: the run failed: ${redactor(secretValues(config.redact)).text((e as Error).message)}`)
+    io.err(`litmus: the run failed: ${redactor(secretValues(plan.options.config.redact)).text((e as Error).message)}`)
     if (live) io.write('exit 3\n')
     return 3
   }
 
   const exit = r.manifest.status === 'cancelled' ? (io.cancelCode?.() ?? 130) : runExit(r.verdicts, r.comparisons, gate)
-  const report: RunReport = { manifest: r.manifest, verdicts: r.verdicts, comparisons: r.comparisons, notes: r.notes, trials: readTrials(config.resultsDir, r.id), scheduled: [...scheduled], gate, exit }
+  const report: RunReport = { manifest: r.manifest, verdicts: r.verdicts, comparisons: r.comparisons, notes: r.notes, trials: readTrials(plan.options.config.resultsDir, r.id), scheduled: [...scheduled], gate, exit }
   // The document is written before the live view ends, so the view's last
   // line is the exit the process really returns.
   toFile?.finish(report)
@@ -130,9 +113,9 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
 
 // --out is checked before anything is spent: a typo in a path must be a usage
 // error (exit 2), not a finished run whose result could not be kept. Links are
-// followed, as the write will follow them.
-// Returns the path to write, which is the path checked: the kernel walks every
-// segment (`gone/../x` needs gone), so the raw spelling is kept, never resolve()d.
+// followed, as the write will follow them. Returns the path to write, which is
+// the path checked: the kernel walks every segment (`gone/../x` needs gone),
+// so the raw spelling is kept, never resolve()d.
 function writable(out: string): string {
   if (out === '' || out.endsWith('/') || out.endsWith(sep)) throw new ConfigError(`--out ${JSON.stringify(out)} names a directory; name a file`)
   const fail = (why: string) => new ConfigError(`--out ${out}: ${why}`)
@@ -168,16 +151,19 @@ function writable(out: string): string {
   return out
 }
 
-function configNames(flag: string | undefined, defined: string[]): string[] {
-  if (flag === undefined) {
-    if (defined.length === 1) return defined
-    throw new ConfigError(`name the configs to run with --config a,b (defined: ${defined.join(', ')})`)
-  }
+function configNames(flag: string): string[] {
   const names = flag.split(',').map(s => s.trim()).filter(Boolean)
   if (names.length === 0) throw new ConfigError('--config needs at least one config name')
   const dup = names.find((n, i) => names.indexOf(n) !== i)
   if (dup !== undefined) throw new ConfigError(`--config names "${dup}" twice`)
   return names
+}
+
+function onlyKinds(text: string): VerdictKind[] {
+  return text.split(',').map(s => s.trim()).filter(Boolean).map(k => {
+    if (!Object.hasOwn(ONLY, k)) throw new ConfigError(`--only takes ${Object.keys(ONLY).join(', ')}; got "${k}"`)
+    return ONLY[k]!
+  })
 }
 
 function positive(flag: string, text: string): number {
@@ -224,4 +210,24 @@ export function baselineCommand(f: { configFile: string; args: string[] }, io: I
     return 0
   }
   throw new ConfigError('usage: litmus baseline set <name> <run> | litmus baseline list')
+}
+
+// Until the signal: a Ctrl-C cancels the live runs, waits for them to be
+// written, and stops the server. That is the operator's intent, so it exits 0.
+export async function serveCommand(f: { configFile: string; port: string }, io: Io): Promise<number> {
+  const port = Number(f.port)
+  if (!/^[0-9]+$/.test(f.port) || port > 65535) throw new ConfigError(`--port must be 0 to 65535, got "${f.port}"`)
+  loadConfig(f.configFile) // a bad config is a usage error now, not a 400 on every request
+  let litmus
+  try {
+    litmus = await serve({ configFile: f.configFile, port })
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EADDRINUSE') throw new ConfigError(`port ${port} is in use; pick another with --port`)
+    throw e
+  }
+  io.out(`litmus serving ${litmus.url} (Ctrl-C to stop)`)
+  const signal = io.signal
+  if (signal) await new Promise(ok => (signal.aborted ? ok(undefined) : signal.addEventListener('abort', ok, { once: true })))
+  await litmus.close()
+  return 0
 }

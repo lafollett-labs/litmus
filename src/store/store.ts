@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { ConfigError } from '../core/errors.ts'
 import { NAME, parseTrialKey, RUN_ID, type TrialRef } from '../core/ids.ts'
 import type { Redactor } from '../core/redact.ts'
-import type { Comparison, RunEvent, TrialRecord, Verdict } from '../core/types.ts'
+import type { Comparison, RunEvent, TrialRecord, Verdict, VerdictKind } from '../core/types.ts'
 import type { ConfigDef } from '../suite/schema.ts'
 
 export type RunManifest = {
@@ -216,6 +216,28 @@ export function readTrials(resultsDir: string, id: string): TrialRecord[] {
   }
   walk(join(resultsDir, id, 'trials'))
   return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+}
+
+// case id -> config -> the verdict from the newest run that settled it. A
+// cancelled run's settled verdicts count: those cases did finish. A run whose
+// verdicts cannot be read is skipped, so one bad run cannot hide the others.
+export function latestVerdicts(resultsDir: string): Map<string, Map<string, VerdictKind>> {
+  const out = new Map<string, Map<string, VerdictKind>>()
+  for (const m of listRuns(resultsDir)) {
+    if (m.status !== 'finished' && m.status !== 'cancelled') continue
+    let verdicts: Verdict[]
+    try {
+      verdicts = readRun(resultsDir, m.id).verdicts
+    } catch {
+      continue
+    }
+    for (const v of verdicts) {
+      const byConfig = out.get(v.case) ?? new Map<string, VerdictKind>()
+      if (!byConfig.has(v.config)) byConfig.set(v.config, v.verdict)
+      out.set(v.case, byConfig)
+    }
+  }
+  return out
 }
 
 // ── baselines ────────────────────────────────────────────────────────────────
