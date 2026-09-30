@@ -1162,9 +1162,13 @@ verdict or comparison that decided the exit code, and `exit <n>`.
 
 A cancelled run's CTRF and JUnit also list each (case, config) it stopped
 before it settled, as skipped, so a cancelled run never reads as a clean one.
-`--out` is checked before anything runs: a directory that does not exist, or
-a path that cannot be written, is exit 2. If the write still fails after the
-run (a full disk), the run is already recorded and `run` exits 3. A reader
+`--out` is checked before anything runs, links followed: a path ending in `/`,
+a directory, a parent that is not an existing directory, or a path that cannot
+be written is exit 2. If the write still fails after the run (a full disk, a
+directory removed meanwhile), the run is already recorded, and a `run` or
+`compare` that would have exited 0 exits 3; a blocking result keeps its code.
+A run record that does not parse (hand-edited, or a disk fault) is a config
+error wherever a command must read it. A reader
 that closes early (`litmus run | head`) stops the output, not the run: it
 finishes, is written, and exits with its real code.
 
