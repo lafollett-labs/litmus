@@ -34,7 +34,7 @@ npm ci
 alias litmus="node $PWD/src/cli/main.ts"
 
 litmus list                            # the example suites: smoke, canaries, code-review
-litmus run smoke --config fake         # every verdict, from scripted replies; exits 1, since FAIL, FLAKY, ERROR and INCONCLUSIVE block
+litmus run smoke --config fake         # every verdict, from scripted replies; exits 1, since FAIL, FLAKY and INCONCLUSIVE block (ERROR alone would exit 3)
 litmus run code-review --config fake   # seeded-bug review; one case is FLAKY by design, so it exits 1 too
 litmus validate                        # each case is valid; each seeded bug's proof fails before its fix and passes after
 npm run ui:build

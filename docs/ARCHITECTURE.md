@@ -142,8 +142,10 @@ environment variables: `ANTHROPIC_API_KEY`, the AWS credential chain, and
 nothing else. It never falls back to `ANTHROPIC_AUTH_TOKEN` or to a saved login
 profile, whose `base_url` could send the eval to another host and bill another
 account. A Bedrock config takes its region from `region`, then `AWS_REGION`,
-then `AWS_DEFAULT_REGION`. With none of them set, a run that names the config
-is refused with a config error (exit 2) before it starts.
+then `AWS_DEFAULT_REGION`, and an empty value counts as unset. With none of
+them set, a run that would use the config, or a judge on bedrock that a
+selected case calls, is refused with a config error (exit 2) before it
+starts. A config the run only names, with no trial on it, is not checked.
 
 ## Suite and case files
 
@@ -266,8 +268,9 @@ mistakes, such as a wrong relative path. It is not a boundary against the
 suite's own author, who writes the prompt and could put the answers in it
 directly. That is why a hard link, which has a path of its own, is not chased.
 
-A case directory may hold no symlink. A run that selects such a case is
-refused when it hashes the case, and `validate` reports it.
+A case directory may hold no symlink (entries named `.git` or `.DS_Store`
+aside, which the case hash skips). A run that selects such a case is refused
+when it hashes the case, and `validate` reports it.
 
 `truth.yaml`:
 
@@ -334,7 +337,8 @@ for each seeded bug:
 It fails a case in any of these situations:
 
 - the case directory holds a symlink, or anything that is neither a file nor
-  a directory. This is reported first, and nothing else is checked for the case
+  a directory (`.git` and `.DS_Store` aside). This is reported first, and
+  nothing else is checked for the case
 - the post-change tree cannot be built (see Sandbox): the fixture holds a
   `.git` entry, `change.patch` does not apply, or the patch creates a symlink
 - a harness case's plugins, or under `setting_sources: [project]` its
@@ -352,7 +356,7 @@ It fails a case in any of these situations:
   or its `lines` run past the end of it
 - a suite root lies inside a harness case's subject root
 - for a seeded bug, any of:
-  - its `fix` lies outside the case, or does not exist
+  - its `fix` lies outside the case (links followed), or does not exist
   - its proof passes before the fix, or times out before the fix
   - the fix does not apply after `change.patch`
   - its proof still fails with the fix applied

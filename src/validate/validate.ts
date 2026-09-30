@@ -153,6 +153,9 @@ async function proof(c: LoadedCase, bug: { id: string; file: string; proof: stri
     const fix = resolve(c.dir, bug.fix)
     if (!inside(fix, c.dir)) return `fix ${bug.fix} lies outside the case`
     if (!existsSync(fix)) return `fix ${bug.fix} does not exist`
+    // Links followed: the case hash skips .git and .DS_Store, so a link by
+    // either name is not refused there.
+    if (!inside(realpathSync.native(fix), realpathSync.native(c.dir))) return `fix ${bug.fix} resolves outside the case`
 
     const before = await sh(bug.proof, wd, c, redact, timeoutS, signal)
     if (signal?.aborted) return undefined

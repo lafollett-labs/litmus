@@ -305,6 +305,16 @@ test('a fix/ that links out of the case is refused as a link in the case', async
   assert.deepEqual(only(await check(configFile), 's/out'), [`error: ${fixDir} is a symlink; a hashed tree must hold only files and directories; a run that selects this case is refused`])
 })
 
+test('a fix through a link named .DS_Store or .git, which the case hash skips, resolves outside the case', async () => {
+  const configFile = project({ ds: seeded('ds', { fix: '.DS_Store' }), gt: seeded('gt', { fix: '.git/b1.patch' }) }, { 'elsewhere/b1.patch': FIX })
+  const cases = join(configFile, '../suites/s/cases')
+  symlinkSync(join(configFile, '../elsewhere/b1.patch'), join(cases, 'ds/.DS_Store'))
+  symlinkSync(join(configFile, '../elsewhere'), join(cases, 'gt/.git'))
+  const ps = await check(configFile)
+  assert.deepEqual(only(ps, 's/ds'), ['error: bug b1: fix .DS_Store resolves outside the case'])
+  assert.deepEqual(only(ps, 's/gt'), ['error: bug b1: fix .git/b1.patch resolves outside the case'])
+})
+
 test('a model case\'s subject file may sit anywhere, even above the suites: nothing reads its folder', async () => {
   const configFile = project({ m: { 'case.yaml': 'name: m\nsubject: ../../../../SYSTEM.md\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, target: response.txt, pattern: x }]\n' } }, { 'SYSTEM.md': 'be terse\n' })
   assert.deepEqual(await check(configFile), [])
