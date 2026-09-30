@@ -1,6 +1,6 @@
 # Code Review: m9-ui
 
-**Verdict:** 🔄 CHANGES REQUESTED (round 2; round 3 pending on `42ac781`)
+**Verdict:** 🔄 CHANGES REQUESTED (round 3 of 3: the cap. Every finding is fixed at `88845a7`; a round 4 needs the operator)
 
 | | |
 | - | - |
@@ -110,6 +110,39 @@ At `42ac781`:
 - `npm run check` exits 0.
 - `npm test` passes 509 of 513, with 4 (live) skipped.
 - `npm run test:ui` passes 12 of 12.
+
+## Review Round 3
+
+| | |
+| - | - |
+| **Review Round** | 3 (the cap) |
+| **Reviewed SHA** | `8e85302` |
+| **Reviewer** | PE-Vue |
+
+PE-Vue verified the round-2 dispositions. It used a Playwright aria snapshot, model probes, and store probes, and ran every probe in `git archive` copies. Its results:
+
+- RESOLVED: MEDIUM-001, MEDIUM-002, LOW-002, LOW-003, INFO-001 and INFO-002.
+- PARTIAL: LOW-001 and LOW-004. Each reappears in the table below.
+
+`npm run check` exits 0. `npm test` passes 509 of 513, and `npm run test:ui` passes 12 of 12.
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | The focus rescue's `body` branch also fired on page load. The run line took focus, and the first Tab skipped the toolbar | Fixed in `88845a7`. Focus already on the page moves only while the user's own action is in flight (`busy`, now or just before). A disabled focused button still hands focus to the run line. A Playwright test reloads with a stored run: the run line is not focused, and the first Tab reaches Run all. The old condition, as a mutant, fails the test |
+| LOW-001 | A trial row checked under a checked case, past the toolbar's trial count, silently did not run | Fixed in `88845a7`. `selection()` takes the trial count and refuses such a row with the reason. Model tests cover counts 1 and 2; the mutant is killed |
+| LOW-002 | A trial still running in another process showed the server's 404 as an error | Fixed in `88845a7`. When the lookup finds no record, the pane shows a neutral note that the trial is still running elsewhere. Store test with no trial route; the mutant is killed |
+| INFO-001 | A trial finishing just before the stream ends can be fetched twice | Accepted: both are idempotent GETs, and the run-and-key guard holds |
+| INFO-002 | A row that cannot be checked gave no reason to a screen reader | Adopted in `88845a7`: visually hidden text says it is past the case's own trial count |
+
+At `88845a7`:
+
+- `npm run check` exits 0.
+- `npm test` passes 510 of 514, with 4 (live) skipped.
+- `npm run test:ui` passes 13 of 13.
+
+## Merge Eligibility (latest)
+
+**Not eligible.** Round 3, the cap, found one MEDIUM. It and every LOW are fixed at `88845a7`, but no reviewer has seen those fixes. Per the workflow, the round cap halts this branch to the operator: a round 4 on `88845a7` needs Cali's go-ahead.
 
 ---
 
