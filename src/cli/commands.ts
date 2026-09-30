@@ -255,7 +255,7 @@ export async function validateCommand(f: { configFile: string; selectors: string
   for (const c of cases) {
     const mine = problems.filter(p => p.case === c.id)
     const bad = mine.some(p => p.level === 'error')
-    io.out(`${bad ? paint('fail', '✗') : paint('pass', '✓')} ${c.id.padEnd(width)}${mine.length ? '' : '  ok'}`)
+    io.out(`${bad ? paint('fail', '✗') : paint('pass', '✓')} ${mine.length ? c.id : `${c.id.padEnd(width)}  ok`}`)
     for (const p of mine) io.out(`    ${p.level === 'error' ? paint('fail', 'error') : paint('flaky', 'warn ')}  ${p.message.replace(/\n/g, '\n           ')}`)
   }
   const invalid = new Set(problems.filter(p => p.level === 'error').map(p => p.case)).size

@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, realpathSync, rmdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
@@ -26,10 +26,23 @@ export type ValidateOptions = {
 // bug's proof, which must fail on the change and pass once the bug's fix is
 // applied. Nothing is ever run in, or written to, the suite itself.
 export async function validate(config: Config, cases: LoadedCase[], o: ValidateOptions = {}): Promise<Problem[]> {
-  const env = o.env ?? process.env
-  const redact = redactor(secretValues(config.redact, env))
   const run = runId()
   const base = o.workBase ?? tmpdir()
+  try {
+    return await check(config, cases, o, run, base)
+  } finally {
+    // Every copy removes itself, which leaves the run's own directory empty.
+    try {
+      rmdirSync(join(base, 'litmus', run))
+    } catch {
+      // never made (no case got as far as a copy), or not empty: left alone
+    }
+  }
+}
+
+async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, run: string, base: string): Promise<Problem[]> {
+  const env = o.env ?? process.env
+  const redact = redactor(secretValues(config.redact, env))
   const avoid = [config.resultsDir, ...config.roots]
   const out: Problem[] = []
   for (const c of cases) {
