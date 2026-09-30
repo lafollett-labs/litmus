@@ -22,7 +22,8 @@
     "ui:dev": "vite",
     "ui:build": "vite build",
     "test:ui": "playwright test",
-    "check:vue": "tools/vue-tsc/node_modules/.bin/vue-tsc --noEmit -p ui/tsconfig.vue.json"
+    "check:vue": "tools/vue-tsc/node_modules/.bin/vue-tsc --noEmit -p ui/tsconfig.vue.json",
+    "postinstall": "npm ci --prefix tools/vue-tsc --no-audit --no-fund"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

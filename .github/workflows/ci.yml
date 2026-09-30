@@ -36,9 +36,9 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             tools/vue-tsc/package-lock.json
+      # postinstall also installs tools/vue-tsc, which checks the .vue files
+      # with its own TypeScript 5.
       - run: npm ci
-      # vue-tsc checks the .vue files with its own TypeScript 5 (tools/vue-tsc).
-      - run: npm ci --prefix tools/vue-tsc
       - run: npm run check
       - run: npm test
 
