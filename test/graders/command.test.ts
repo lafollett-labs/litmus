@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { redactor } from '../../src/core/redact.ts'
@@ -71,4 +72,12 @@ test('output is redacted before it is cut, so no fragment of a key survives at t
   const r = await command(spec({ kind: 'command', run }), trial(), { ...ctx(), redact: redactor([key]) })
   assert.equal(r.pass, false)
   for (let n = 6; n <= key.length; n++) assert.ok(!(r.rationale ?? '').includes(key.slice(-n)), `tail ${n}`)
+})
+
+test('a process that escaped the group with setsid does not hold the grade to its timeout', { skip: spawnSync('perl', ['-v']).status === 0 ? false : 'perl is not installed' }, async () => {
+  const t0 = Date.now()
+  const r = await command(spec({ kind: 'command', run: `perl -MPOSIX -e 'POSIX::setsid(); sleep 20' & sleep 1; echo started; exit 0`, timeout_s: 15 }), trial(), ctx())
+  assert.equal(r.pass, true)
+  assert.match(r.rationale ?? '', /started/)
+  assert.ok(Date.now() - t0 < 6000, `took ${Date.now() - t0}ms`)
 })

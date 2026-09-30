@@ -7,6 +7,7 @@ const TAIL_BYTES = 4000
 // The last stretch of output is kept whole and redacted before it is cut to
 // TAIL_BYTES: a cut through a key would leave a fragment redaction cannot match.
 const WINDOW_BYTES = 1 << 20
+const GRACE_MS = 2000
 
 // Runs code the subject may have written, so it gets no credentials, and it is
 // uncontained (docs/ARCHITECTURE.md § Sandbox). The shell leads its own process
@@ -51,10 +52,12 @@ export const command: Grader<'command'> = (spec, trial, ctx) =>
       const e = exited!
       return e.code === 0 ? result(true, `exit 0${output()}`) : result(false, `${e.code === null ? `killed by ${e.signal}` : `exit ${e.code}`}${output()}`)
     }
+    let grace: NodeJS.Timeout | undefined
     const finish = (r: GraderResult) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      clearTimeout(grace)
       ctx.signal.removeEventListener('abort', onAbort)
       child.stdout.destroy()
       child.stderr.destroy()
@@ -70,7 +73,14 @@ export const command: Grader<'command'> = (spec, trial, ctx) =>
     ctx.signal.addEventListener('abort', onAbort, { once: true })
 
     child.on('error', e => (killGroup(), finish(result(false, `could not run /bin/sh: ${e.message}`))))
-    // Anything the command left running in the background dies with it.
-    child.on('exit', (code, signal) => ((exited = { code, signal }), killGroup()))
+    // Anything the command left running in the background dies with it. A
+    // process that left the group (setsid) survives that and can hold the
+    // pipes open; the shell's exit code is the answer, so after a short grace
+    // for the last output the grade finishes without it.
+    child.on('exit', (code, signal) => {
+      exited = { code, signal }
+      killGroup()
+      grace = setTimeout(() => finish(fromExit()), GRACE_MS)
+    })
     child.on('close', () => exited && finish(fromExit()))
   })
