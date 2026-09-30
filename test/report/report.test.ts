@@ -82,5 +82,5 @@ test('JUnit escapes what XML cannot hold, so an odd label never breaks the file'
   const xml = render('junit', report({ verdicts: [verdict({})], comparisons: [comparison({ a: 'baseline:<a&"b">', b: `x'\u0001`, verdict: 'REGRESSION', delta: -0.5 })], exit: 1 }))
   assert.ok(xml.includes('name="baseline:&lt;a&amp;&quot;b&quot;&gt; → x&apos;�"'), xml)
   assert.ok(!/[\u0000-\u0008]/.test(xml))
-  assert.match(xml, /<testsuites name="litmus" tests="2" failures="1" errors="0">/)
+  assert.match(xml, /<testsuites name="litmus" tests="2" failures="1" errors="0" skipped="0">/)
 })

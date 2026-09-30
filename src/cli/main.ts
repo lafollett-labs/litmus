@@ -131,29 +131,35 @@ function help(io: Io): number {
 }
 
 if (import.meta.main) {
-  // `litmus list | head` closes the pipe early; that is the reader being done,
-  // not a crash worth a stack trace.
+  // A reader that closes early (`litmus list | head`) is done reading, not a
+  // crash. Writing stops there, and the command still finishes: a run that
+  // was piped through head must end written, with its real exit code.
+  let closed = false
   process.stdout.on('error', e => {
-    if ((e as NodeJS.ErrnoException).code === 'EPIPE') process.exit(0)
-    throw e
+    if ((e as NodeJS.ErrnoException).code === 'EPIPE') closed = true
+    else throw e
   })
-  // The first Ctrl-C cancels: trials in flight end cancelled and the run is
-  // written. A second one leaves at once.
+  const write = (text: string) => void (closed || process.stdout.write(text))
+  // Only a run is worth cancelling: the first Ctrl-C (or SIGTERM) cancels,
+  // trials in flight end cancelled and the run is written; a second one
+  // leaves at once. Every other command finishes in moments.
   const ctl = new AbortController()
   let code = 130
-  const cancel = (signal: 'SIGINT' | 'SIGTERM', exit: number) => () => {
-    if (ctl.signal.aborted) process.exit(exit)
-    code = exit
-    process.stderr.write(`\n${signal}: cancelling; again to quit now\n`)
-    ctl.abort(new Error(`cancelled by ${signal}`))
+  if (process.argv[2] === 'run') {
+    const cancel = (signal: 'SIGINT' | 'SIGTERM', exit: number) => () => {
+      if (ctl.signal.aborted) process.exit(exit)
+      code = exit
+      process.stderr.write(`\n${signal}: cancelling; again to quit now\n`)
+      ctl.abort(new Error(`cancelled by ${signal}`))
+    }
+    process.on('SIGINT', cancel('SIGINT', 130))
+    process.on('SIGTERM', cancel('SIGTERM', 143))
   }
-  process.on('SIGINT', cancel('SIGINT', 130))
-  process.on('SIGTERM', cancel('SIGTERM', 143))
   const tty = process.stdout.isTTY === true
   const exit = await main(process.argv.slice(2), {
-    out: line => process.stdout.write(`${line}\n`),
+    out: line => write(`${line}\n`),
     err: line => process.stderr.write(`${line}\n`),
-    write: text => process.stdout.write(text),
+    write,
     tty,
     colour: tty && !process.env.NO_COLOR,
     signal: ctl.signal,

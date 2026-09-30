@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Ajv } from 'ajv'
 import { tree } from '../helpers/tmp.ts'
@@ -10,11 +10,13 @@ import { tree } from '../helpers/tmp.ts'
 // fake provider, checking output and every exit code (docs/ARCHITECTURE.md § CLI).
 
 const MAIN = join(import.meta.dirname, '../../src/cli/main.ts')
+const PLANTED = 'sk-ant-planted-feedc0ffee0123'
 const SCHEMA = join(import.meta.dirname, '../../src/report/vendor/ctrf.schema.json')
 
 function project(): string {
   const files: Record<string, string> = {
-    'litmus.config.yaml': 'suites: [./suites]\nresults: ./.litmus/runs\nconcurrency: 4\nretries: 1\nconfigs:\n  fake: { provider: fake }\n  fake-b: { provider: fake }\n',
+    // fake-b's model holds a planted key: every reporter must print it redacted.
+    'litmus.config.yaml': `suites: [./suites]\nresults: ./.litmus/runs\nconcurrency: 4\nretries: 1\nconfigs:\n  fake: { provider: fake }\n  fake-b: { provider: fake, model: "m-${PLANTED}" }\n`,
     'suites/e2e/suite.yaml': 'name: e2e\ndefaults: { trials: 3 }\n',
     // Outside every case, so editing it changes the answer without changing a
     // case hash: what a new subject version looks like to a comparison.
@@ -37,7 +39,8 @@ function project(): string {
 }
 
 const ROOT = project()
-const litmus = (...args: string[]) => spawnSync(process.execPath, [MAIN, ...args], { cwd: ROOT, encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } })
+const ENV = { ...process.env, NO_COLOR: '1', ANTHROPIC_API_KEY: PLANTED }
+const litmus = (...args: string[]) => spawnSync(process.execPath, [MAIN, ...args], { cwd: ROOT, encoding: 'utf8', env: ENV })
 const runId = (stdout: string) => /litmus run (\S+)/.exec(stdout)![1]!
 
 test('exit 0 when every verdict passes, with the verdict and the exit on stdout', () => {
@@ -80,12 +83,23 @@ test('exit 2 on every usage or config error, with the reason on stderr', () => {
     ['compare', 'only-one'],
     ['compare', 'config:nope', 'config:nope'],
     ['baseline', 'set', 'Bad:Name', '2026-01-01T00-00-00Z-ffff'],
+    ['run', 'e2e/passes', '--config', 'fake', '--out', '/nonexistent/dir/x.xml'],
+    ['run', 'e2e/passes', '--config', 'fake', '--out', '.'],
+    ['compare', 'config:fake', 'config:fake', '--out', '/nonexistent/c.json'],
     ['baseline', 'frob'],
   ]) {
     const r = litmus(...args)
     assert.equal(r.status, 2, `${args.join(' ')}: ${r.stdout}`)
     assert.ok(r.stderr.trim().length > 0, args.join(' '))
   }
+})
+
+test('a rerun takes neither selectors nor --config, even of a run that exists', () => {
+  const id = runId(litmus('run', 'e2e/fails', '--config', 'fake').stdout)
+  const withSelector = litmus('run', '--rerun', id, '--only', 'fail', 'e2e/fails')
+  assert.deepEqual([withSelector.status, withSelector.stderr.trim()], [2, '--rerun takes no selectors: it reruns the pairs --only picks'])
+  const withConfig = litmus('run', '--rerun', id, '--only', 'fail', '--config', 'fake')
+  assert.deepEqual([withConfig.status, withConfig.stderr.trim()], [2, '--rerun runs the configs of the run it reruns; drop --config'])
 })
 
 test('a REGRESSION against a baseline exits 1 from run and from compare, and the flip is shown', () => {
@@ -140,7 +154,7 @@ test('json, CTRF and JUnit reporters print documents, and CTRF validates against
   assert.deepEqual([report.results.summary.tests, report.results.summary.passed, report.results.summary.failed, report.results.summary.other, report.results.summary.flaky], [4, 2, 1, 1, 1])
 
   const junit = litmus('run', 'e2e/passes', 'e2e/fails', 'e2e/errors', '--config', 'fake', '--reporter', 'junit')
-  assert.match(junit.stdout, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<testsuites name="litmus" tests="3" failures="1" errors="1">/)
+  assert.match(junit.stdout, /^<\?xml version="1\.0" encoding="UTF-8"\?>\n<testsuites name="litmus" tests="3" failures="1" errors="1" skipped="0">/)
   assert.match(junit.stdout, /<testcase classname="e2e" name="e2e\/fails@fake" time="[\d.]+">\n {6}<failure message="FAIL [^"]*" type="FAIL"\/>/)
   assert.match(junit.stdout, /<error message="ERROR [^"]*" type="ERROR"\/>/)
   assert.match(junit.stdout, /<testcase classname="e2e" name="e2e\/passes@fake" time="[\d.]+"\/>/)
@@ -151,7 +165,7 @@ test('--out writes the document to a file while stdout shows the live view', () 
   const r = litmus('run', 'e2e/passes', '--config', 'fake', '--reporter', 'junit', '--out', out)
   assert.equal(r.status, 0, r.stderr)
   assert.match(r.stdout, /^PASS +e2e\/passes@fake/m)
-  assert.match(readFileSync(out, 'utf8'), /<testsuites name="litmus" tests="1" failures="0" errors="0">/)
+  assert.match(readFileSync(out, 'utf8'), /<testsuites name="litmus" tests="1" failures="0" errors="0" skipped="0">/)
   const text = join(ROOT, 'run.txt')
   assert.equal(litmus('run', 'e2e/passes', '--config', 'fake', '--out', text).status, 0)
   assert.match(readFileSync(text, 'utf8'), /^exit 0$/m)
@@ -175,7 +189,7 @@ test('a trial key runs that one trial', () => {
 })
 
 test('SIGINT cancels the run: it is written as cancelled and exits 130', async () => {
-  const child = spawn(process.execPath, [MAIN, 'run', 'e2e/slow', '--config', 'fake'], { cwd: ROOT, env: { ...process.env, NO_COLOR: '1' } })
+  const child = spawn(process.execPath, [MAIN, 'run', 'e2e/slow', '--config', 'fake'], { cwd: ROOT, env: ENV })
   let stdout = ''
   child.stdout.on('data', d => {
     stdout += d
@@ -186,4 +200,77 @@ test('SIGINT cancels the run: it is written as cancelled and exits 130', async (
   const id = runId(stdout)
   assert.equal(JSON.parse(readFileSync(join(ROOT, '.litmus/runs', id, 'run.json'), 'utf8')).status, 'cancelled')
   assert.match(stdout, /^cancelled: 0\/2 trials completed/m)
+})
+
+test('every reporter prints a key held in a config value redacted, as run.json holds it', () => {
+  for (const reporter of ['pretty', 'json', 'ctrf', 'junit']) {
+    const r = litmus('run', 'e2e/passes', '--config', 'fake,fake-b', '--reporter', reporter)
+    assert.ok(!r.stdout.includes(PLANTED) && !r.stderr.includes(PLANTED), reporter)
+    if (reporter === 'json') assert.equal(JSON.parse(r.stdout).run.configs['fake-b'].model, 'm-[REDACTED]')
+  }
+})
+
+test('a side naming a run with two configs must name one; config:<name> never picks an unfinished run', async () => {
+  const two = litmus('run', 'e2e/passes', '--config', 'fake,fake-b', '--reporter', 'json')
+  const id = JSON.parse(two.stdout).run.id
+  const r = litmus('compare', id, `${id}:fake`)
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /holds configs fake, fake-b; name one/)
+
+  const done = runId(litmus('run', 'e2e/passes', '--config', 'fake').stdout)
+  const child = spawn(process.execPath, [MAIN, 'run', 'e2e/slow', '--config', 'fake'], { cwd: ROOT, env: ENV })
+  child.stdout.on('data', d => String(d).includes('litmus run ') && child.kill('SIGINT'))
+  await new Promise(ok => child.on('close', ok))
+  const out = join(ROOT, 'resolved.json')
+  assert.equal(litmus('compare', 'config:fake', done, '--allow-inconclusive', '--out', out).status, 0)
+  assert.equal(JSON.parse(readFileSync(out, 'utf8')).cases, 1) // the cancelled run settled nothing: it was skipped
+})
+
+test('list shows the newest verdict, and never one from a run that did not finish', () => {
+  writeFileSync(join(ROOT, 'answer.txt'), 'LGTM')
+  assert.equal(litmus('run', 'e2e/drift', '--config', 'fake').status, 0)
+  writeFileSync(join(ROOT, 'answer.txt'), 'nope')
+  assert.equal(litmus('run', 'e2e/drift', '--config', 'fake').status, 1)
+  assert.match(litmus('list', 'e2e/drift').stdout, /fake: FAIL$/m)
+  // A newer run still marked running (a crash) does not count, even with a verdict on disk.
+  const id = '2099-01-01T00-00-00Z-abcd'
+  const dir = join(ROOT, '.litmus/runs', id)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'run.json'), JSON.stringify({ id, status: 'running', started_at: '2099-01-01T00:00:00.000Z', litmus_version: '0', selection: [], configs: { fake: {} }, cases: [], judges: {}, plugins: {} }))
+  writeFileSync(join(dir, 'verdicts.json'), JSON.stringify([{ case: 'e2e/drift', config: 'fake', verdict: 'PASS' }]))
+  assert.match(litmus('list', 'e2e/drift').stdout, /fake: FAIL$/m)
+  writeFileSync(join(dir, 'run.json'), '{"torn')
+  assert.equal(litmus('list', 'e2e/drift').status, 0)
+})
+
+test('SIGTERM cancels with 143, and a cancelled run\'s JUnit lists what it stopped as skipped', async () => {
+  const out = join(ROOT, 'cancelled.xml')
+  const child = spawn(process.execPath, [MAIN, 'run', 'e2e/slow', 'e2e/passes', '--config', 'fake', '--reporter', 'junit', '--out', out], { cwd: ROOT, env: ENV })
+  let stdout = ''
+  child.stdout.on('data', d => {
+    stdout += d
+    if (/^PASS/m.test(stdout)) child.kill('SIGTERM')
+  })
+  assert.equal(await new Promise(ok => child.on('close', ok)), 143)
+  const xml = readFileSync(out, 'utf8')
+  assert.match(xml, /<testcase classname="e2e" name="e2e\/slow@fake" time="0.000">\n {6}<skipped message="cancelled before it settled"\/>/)
+  assert.match(xml, /skipped="1"/)
+})
+
+test('a reader that closes early stops the output, not the run: the exit code and the record stay true', async () => {
+  const child = spawn(process.execPath, [MAIN, 'run', 'e2e/fails', 'e2e/passes', 'e2e/flaky', '--config', 'fake'], { cwd: ROOT, env: ENV })
+  let first = ''
+  child.stdout.once('data', d => {
+    first = String(d)
+    child.stdout.destroy()
+  })
+  assert.equal(await new Promise(ok => child.on('close', ok)), 1)
+  const id = runId(first)
+  assert.equal(JSON.parse(readFileSync(join(ROOT, '.litmus/runs', id, 'run.json'), 'utf8')).status, 'finished')
+})
+
+test('a rerun with nothing to do keeps a machine-readable stdout empty', () => {
+  const id = runId(litmus('run', 'e2e/passes', '--config', 'fake').stdout)
+  const r = litmus('run', '--rerun', id, '--only', 'fail', '--reporter', 'json')
+  assert.deepEqual([r.status, r.stdout, r.stderr.trim()], [0, '', `nothing to rerun: run ${id} has no FAIL verdict`])
 })

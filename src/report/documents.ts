@@ -32,6 +32,17 @@ const span = (ts: TrialRecord[]) => ({
 // Why a test that did not pass the gate did not: its verdict line, uncoloured.
 const message = (v: Verdict) => verdictLine(v, plain).replace(/\s+/g, ' ')
 
+// The (case, config) pairs a cancel stopped before they settled: in the run's
+// trials, but with no verdict. A document lists them as skipped, so a cancelled
+// run never reads as a clean one.
+function stopped(r: RunReport): { case: string; config: string }[] {
+  const settled = new Set(r.verdicts.map(id))
+  const seen = new Map<string, { case: string; config: string }>()
+  for (const t of r.trials) if (!settled.has(`${t.case}@${t.config}`)) seen.set(`${t.case}@${t.config}`, { case: t.case, config: t.config })
+  return [...seen.values()].sort((a, b) => (`${a.case}@${a.config}` < `${b.case}@${b.config}` ? -1 : 1))
+}
+const STOPPED = 'cancelled before it settled'
+
 // One CTRF test per (case, config) verdict, with its status decided by the
 // same gate as the exit code: a FLAKY let through by --allow-flaky is passed
 // (and flaky), and infrastructure trouble is `other`, never `failed`.
@@ -67,7 +78,9 @@ function ctrf(r: RunReport) {
       },
     }
   })
-  const count = (s: string) => tests.filter(t => t.status === s).length
+  const skipped = stopped(r).map(p => ({ name: `${p.case}@${p.config}`, testId: `${p.case}@${p.config}`, status: 'skipped' as const, duration: 0, suite: [p.case.slice(0, p.case.indexOf('/'))], message: STOPPED, parameters: { config: p.config } }))
+  const all = [...tests, ...skipped]
+  const count = (s: string) => all.filter(t => t.status === s).length
   const start = ms(r.manifest.started_at)
   const stop = r.manifest.finished_at ? ms(r.manifest.finished_at) : start
   return {
@@ -79,19 +92,19 @@ function ctrf(r: RunReport) {
     results: {
       tool: { name: 'litmus', version: LITMUS_VERSION },
       summary: {
-        tests: tests.length,
+        tests: all.length,
         passed: count('passed'),
         failed: count('failed'),
-        skipped: 0,
+        skipped: count('skipped'),
         pending: 0,
         other: count('other'),
         flaky: tests.filter(t => t.flaky).length,
-        suites: new Set(r.verdicts.map(suiteOf)).size,
+        suites: new Set(all.map(t => t.suite[0])).size,
         start,
         stop,
         duration: stop - start,
       },
-      tests,
+      tests: all,
       extra: { comparisons: r.comparisons, notes: r.notes, exit: r.exit },
     },
   }
@@ -108,15 +121,23 @@ const xml = (s: string) =>
 function junit(r: RunReport): string {
   const suites = new Map<string, Verdict[]>()
   for (const v of r.verdicts) suites.set(suiteOf(v), [...(suites.get(suiteOf(v)) ?? []), v])
+  const skips = new Map<string, { case: string; config: string }[]>()
+  for (const p of stopped(r)) {
+    const s = p.case.slice(0, p.case.indexOf('/'))
+    skips.set(s, [...(skips.get(s) ?? []), p])
+    if (!suites.has(s)) suites.set(s, [])
+  }
   const seconds = (n: number) => (n / 1000).toFixed(3)
   const out = ['<?xml version="1.0" encoding="UTF-8"?>']
   const all = r.verdicts.map(v => standing(v, r.gate))
   const regressions = r.comparisons.filter(c => c.verdict === 'REGRESSION')
-  out.push(`<testsuites name="litmus" tests="${r.verdicts.length + r.comparisons.length}" failures="${all.filter(s => s === 'blocking').length + regressions.length}" errors="${all.filter(s => s === 'infra').length}">`)
+  const skipCount = [...skips.values()].reduce((n, ps) => n + ps.length, 0)
+  out.push(`<testsuites name="litmus" tests="${r.verdicts.length + skipCount + r.comparisons.length}" failures="${all.filter(s => s === 'blocking').length + regressions.length}" errors="${all.filter(s => s === 'infra').length}" skipped="${skipCount}">`)
   for (const [name, vs] of suites) {
     const ss = vs.map(v => standing(v, r.gate))
     const time = vs.reduce((n, v) => n + span(trialsOf(r, v)).duration, 0)
-    out.push(`  <testsuite name="${xml(name)}" tests="${vs.length}" failures="${ss.filter(s => s === 'blocking').length}" errors="${ss.filter(s => s === 'infra').length}" skipped="0" time="${seconds(time)}">`)
+    const sk = skips.get(name) ?? []
+    out.push(`  <testsuite name="${xml(name)}" tests="${vs.length + sk.length}" failures="${ss.filter(s => s === 'blocking').length}" errors="${ss.filter(s => s === 'infra').length}" skipped="${sk.length}" time="${seconds(time)}">`)
     for (const v of vs) {
       const s = standing(v, r.gate)
       const head = `    <testcase classname="${xml(name)}" name="${xml(id(v))}" time="${seconds(span(trialsOf(r, v)).duration)}"`
@@ -127,6 +148,7 @@ function junit(r: RunReport): string {
       const tag = s === 'blocking' ? 'failure' : 'error'
       out.push(`${head}>`, `      <${tag} message="${xml(message(v))}" type="${v.verdict}"/>`, '    </testcase>')
     }
+    for (const p of sk) out.push(`    <testcase classname="${xml(name)}" name="${xml(`${p.case}@${p.config}`)}" time="0.000">`, `      <skipped message="${STOPPED}"/>`, '    </testcase>')
     out.push('  </testsuite>')
   }
   if (r.comparisons.length) {

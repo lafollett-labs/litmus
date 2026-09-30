@@ -1,5 +1,7 @@
-import { writeFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { ConfigError } from '../core/errors.ts'
+import { redactor, secretValues } from '../core/redact.ts'
 import type { VerdictKind } from '../core/types.ts'
 import { colour, comparisonLines, plain, type Paint, type RunReport } from '../report/format.ts'
 import { render, type DocumentFormat } from '../report/documents.ts'
@@ -38,6 +40,7 @@ const ONLY: Record<string, VerdictKind> = { fail: 'FAIL', flaky: 'FLAKY', error:
 export async function runCommand(f: RunFlags, io: Io): Promise<number> {
   if (!(FORMATS as readonly string[]).includes(f.reporter)) throw new ConfigError(`--reporter must be one of ${FORMATS.join(', ')}, got "${f.reporter}"`)
   const format = f.reporter as (typeof FORMATS)[number]
+  if (f.out !== undefined) writable(f.out)
   const trials = f.trials === undefined ? undefined : positive('--trials', f.trials)
   const { config, suites } = loadProject(f.configFile)
 
@@ -55,7 +58,9 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
     const stored = readRun(config.resultsDir, f.rerun)
     only = rerunPairs(stored, kinds)
     if (only.size === 0) {
-      io.out(`nothing to rerun: run ${stored.manifest.id} has no ${kinds.join(', ')} verdict`)
+      // A machine-readable stdout stays parseable: the note goes to stderr.
+      const say = format === 'pretty' ? io.out : io.err
+      say(`nothing to rerun: run ${stored.manifest.id} has no ${kinds.join(', ')} verdict`)
       return 0
     }
     names = Object.keys(stored.manifest.configs)
@@ -92,8 +97,9 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
   } catch (e) {
     if (e instanceof ConfigError) throw e
     // litmus itself broke (the store could not be written): infrastructure
-    // trouble, not a regression.
-    io.err(`litmus: the run failed: ${(e as Error).message}`)
+    // trouble, not a regression. The live view has already said so.
+    io.err(`litmus: the run failed: ${redactor(secretValues(config.redact)).text((e as Error).message)}`)
+    if (live) io.write('exit 3\n')
     return 3
   }
 
@@ -101,14 +107,33 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
   const report: RunReport = { manifest: r.manifest, verdicts: r.verdicts, comparisons: r.comparisons, notes: r.notes, trials: readTrials(config.resultsDir, r.id), gate, exit }
   live?.finish(report)
   toFile?.finish(report)
-  if (format !== 'pretty') {
-    const doc = render(format as DocumentFormat, report)
-    if (f.out === undefined) io.write(doc)
-    else writeFileSync(f.out, doc)
-  } else if (f.out !== undefined) {
-    writeFileSync(f.out, saved.join(''))
+  const doc = format === 'pretty' ? saved.join('') : render(format as DocumentFormat, report)
+  if (f.out === undefined) {
+    if (format !== 'pretty') io.write(doc)
+  } else {
+    // Checked before the run, but the disk can still fill: the run is written
+    // either way, so this is infrastructure trouble, never a verdict.
+    try {
+      writeFileSync(f.out, doc)
+    } catch (e) {
+      io.err(`litmus: could not write ${f.out}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`)
+      return exit === 0 ? 3 : exit
+    }
   }
   return exit
+}
+
+// --out is checked before anything is spent: a typo in a path must be a usage
+// error (exit 2), not a finished run whose result could not be kept.
+function writable(out: string): void {
+  const path = resolve(out)
+  const st = statSync(path, { throwIfNoEntry: false })
+  if (st?.isDirectory()) throw new ConfigError(`--out ${out} is a directory; name a file`)
+  try {
+    accessSync(st ? path : dirname(path), constants.W_OK)
+  } catch {
+    throw new ConfigError(`--out ${out}: ${st ? 'the file' : `the directory ${dirname(path)}`} ${st || existsSync(dirname(path)) ? 'is not writable' : 'does not exist'}`)
+  }
 }
 
 function configNames(flag: string | undefined, defined: string[]): string[] {
@@ -135,11 +160,18 @@ export function compareCommand(f: { configFile: string; sides: string[]; allowIn
   const config = loadConfig(f.configFile)
   const a = resolveSide(config.resultsDir, f.sides[0]!)
   const b = resolveSide(config.resultsDir, f.sides[1]!)
+  if (f.out !== undefined) writable(f.out)
   const c = pair(a.side, a.config, b.side, b.config, { tolerance: config.compare.tolerance, warnRatio: config.compare.warn_ratio })
   const exit = compareExit(c, f.allowInconclusive)
   io.out(comparisonLines(c, paintFor(io)).join('\n'))
   io.out(`exit ${exit}`)
-  if (f.out !== undefined) writeFileSync(f.out, `${JSON.stringify(c, null, 2)}\n`)
+  if (f.out !== undefined) {
+    try {
+      writeFileSync(f.out, `${JSON.stringify(c, null, 2)}\n`)
+    } catch (e) {
+      throw new ConfigError(`could not write ${f.out}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`)
+    }
+  }
   return exit
 }
 
