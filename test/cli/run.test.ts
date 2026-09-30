@@ -296,6 +296,22 @@ test('a rerun with nothing to do keeps a machine-readable stdout empty', () => {
   const id = runId(litmus('run', 'e2e/passes', '--config', 'fake').stdout)
   const r = litmus('run', '--rerun', id, '--only', 'fail', '--reporter', 'json')
   assert.deepEqual([r.status, r.stdout, r.stderr.trim()], [0, '', `nothing to rerun: run ${id} has no FAIL verdict`])
+test('serve answers on 127.0.0.1 until SIGINT, then exits 0; a port in use exits 2', async () => {
+  const child = spawn(process.execPath, [MAIN, 'serve', '--port', '0'], { cwd: ROOT, env: ENV })
+  let stdout = ''
+  const url = await new Promise<string>(ok => child.stdout.on('data', d => {
+    stdout += d
+    const m = /litmus serving (http:\/\/127\.0\.0\.1:\d+)/.exec(stdout)
+    if (m) ok(m[1]!)
+  }))
+  const r = await fetch(`${url}/api/configs`)
+  assert.equal(r.status, 200)
+  const port = new URL(url).port
+  // With a timeout: were the port check to break, this second server would never return.
+  const busy = spawnSync(process.execPath, [MAIN, 'serve', '--port', port], { cwd: ROOT, encoding: 'utf8', timeout: 10_000 })
+  assert.deepEqual([busy.status, busy.stderr.trim()], [2, `port ${port} is in use; pick another with --port`])
+  child.kill('SIGINT')
+  assert.equal(await new Promise<number | null>(ok => child.on('close', ok)), 0)
 })
 
 test('an --out that goes away during the run: the run is kept, and a passing run exits 3, as its live view says', async () => {
