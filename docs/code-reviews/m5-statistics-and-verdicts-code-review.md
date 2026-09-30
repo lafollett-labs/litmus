@@ -1,6 +1,6 @@
 # Code Review: m5-statistics-and-verdicts
 
-**Verdict:** 🔁 CHANGES REQUESTED (round 1, locked to `5d79740`)
+**Verdict:** ✅ APPROVED (round 2, locked to `6f64868`)
 
 | | |
 | - | - |
@@ -58,6 +58,32 @@ At the reviewed SHA, `npm run check` is clean, and 401 tests pass with 4 (live) 
 | INFO-003 | When both sides were unscored, the reason named only A; `TrialOutcome` had a redundant union | Fixed in `7ff3e8a` and `eb9a015` |
 
 At `68927b4`, `npm run check` is clean, and 416 tests pass with 4 (live) skipped.
+
+
+## Review Round 2
+
+| | |
+| - | - |
+| **Review Round** | 2 |
+| **Reviewed SHA** | `6f64868` (round-1 fixes: `5d79740..6f64868`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue ran 30 mutants and 25 were killed, including all seven round-1 bootstrap mutants. It confirmed MEDIUM-001's rationale: identical cases leave only the per-case term, which averages down as sd/√n. It marked 11 round-1 findings RESOLVED. Two were still present: LOW-005, with two boundary mutants surviving, and LOW-006, where `minTrialsToPass` could still hang within about 1e-10 of 1, and forever at 1 − 2⁻⁵³ or with z = 1e10.
+
+**✅ APPROVED:** no finding at MEDIUM or above. The re-raised LOWs, and the new ones, were fixed after approval:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-005 (re-raised) | The WARN test missed the lower band edge, because (100/1.5)/100 is one ulp off 1/1.5; and rate's `ci.hi < threshold` had no exact-boundary test | Fixed in `3f49bc1`. WARN is tested at 150 → 100, where the ratio is exactly 1/1.5, and rate at a threshold equal to `wilson(0, 16).hi`. Both mutants are now killed |
+| LOW-006, new LOW-002 | minTrialsToPass could start above the answer in floating point, walk millions of steps, or loop forever | Fixed in `3f49bc1`. It brackets from the closed form and bisects on `wilson` itself, so there are at most about 60 wilson calls. It refuses a z that is not finite and positive, and any threshold needing more than 10,000,000 unbroken trials. It matches the old walk on 2,009 thresholds, and the tests cover 1 − 1e-14, 1 − 2⁻⁵³, z = 1e10 and an explicit z. The one surviving mutant (ignoring z in the bracket's start) is equivalent: the start only affects speed |
+| LOW-001 (new) | "112 × 3" is the first NO CHANGE, but the verdict falls back at 114, 115, 117 and 121 | Fixed in `fd9c2b7`: "about 120 × 3 (between 112 and 121 cases the seed decides)". No 3-trial pin, since it would be fragile |
+| INFO-001 (new) | Golden intervals compared bit for bit, so a last-bit refactor failed them | Adopted in `3f49bc1`: they compare within 1e-12, which every real mutant exceeds by 6e-5 or more |
+
+At `fd9c2b7`, `npm run check` is clean, and 417 tests pass with 4 (live) skipped.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `6f64868`. The PR opens with the post-approval commits `3f49bc1` and `fd9c2b7` (LOW and INFO fixes only), and Gate 2 reviews them.
 
 ---
 
