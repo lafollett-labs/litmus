@@ -1,4 +1,4 @@
-import { readArtifact, readTranscript, renderTranscript } from './common.ts'
+import { readArtifact, readTranscript, renderTranscript, unread } from './common.ts'
 import { askJudge } from './judges.ts'
 import { judgeRequest } from './prompts.ts'
 import type { Grader } from './types.ts'
@@ -14,7 +14,7 @@ export const judge: Grader<'judge'> = async (spec, trial, ctx) => {
     material = renderTranscript(entries)
   } else {
     const art = readArtifact(trial, spec.target)
-    if (!art) return { grader: 'judge', pass: false, rationale: `${spec.target} was not produced` }
+    if (!art) return { grader: 'judge', pass: false, rationale: unread(trial, spec.target) }
     material = art.text
   }
   const v = await askJudge(j, judgeRequest(spec.question, spec.target, material), ctx.signal)

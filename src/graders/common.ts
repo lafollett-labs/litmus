@@ -26,10 +26,20 @@ export function readArtifact(trial: TrialResult, name: string): { name: string; 
   const key = Object.keys(trial.artifacts).find(k => k === name || normPath(k) === want)
   const path = key === undefined ? undefined : trial.artifacts[key]
   if (key === undefined || path === undefined) return undefined
-  const size = lstatSync(path, { throwIfNoEntry: false })?.size
-  if (size === undefined || size > ARTIFACT_MAX_BYTES) return undefined
-  const data = readRegular(path)
+  const data = readRegular(path, ARTIFACT_MAX_BYTES)
   return data === undefined ? undefined : { name: key, path, text: data.toString('utf8') }
+}
+
+// Why readArtifact gave nothing, for a rationale that names the right cause:
+// "was not produced" sends an operator after the subject when it wrote 70 MiB.
+export function unread(trial: TrialResult, name: string): string {
+  const want = normPath(name)
+  const key = Object.keys(trial.artifacts).find(k => k === name || normPath(k) === want)
+  const st = key === undefined ? undefined : lstatSync(trial.artifacts[key]!, { throwIfNoEntry: false })
+  if (!st) return `${name} was not produced`
+  if (!st.isFile()) return `${name} is not a regular file`
+  if (st.size > ARTIFACT_MAX_BYTES) return `${name} is ${st.size} bytes, over the ${ARTIFACT_MAX_BYTES}-byte limit`
+  return `${name} could not be read`
 }
 
 // A torn last line (a process killed mid-write) is skipped rather than failing

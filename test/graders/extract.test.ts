@@ -101,6 +101,6 @@ test('canary: a directory the subject planted at `to` fails the extraction with 
 
 test('every extraction that yields nothing says why', async () => {
   assert.match((await run(stub(['no json here']), { 'final_message.txt': review }).out).error ?? '', /not litmus:findings: "no json here"/)
-  assert.match((await run(stub([]), {}).out).error ?? '', /nothing to extract from: final_message was not produced/)
+  assert.match((await run(stub([]), {}).out).error ?? '', /nothing to extract from: final_message\.txt was not produced/)
   assert.equal((await run(stub([fenced(findings)]), { 'final_message.txt': review }).out).error, undefined)
 })

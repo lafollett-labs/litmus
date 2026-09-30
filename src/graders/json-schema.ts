@@ -4,7 +4,7 @@ import { Ajv, type ValidateFunction } from 'ajv'
 import { Ajv2020 } from 'ajv/dist/2020.js'
 import { ConfigError } from '../core/errors.ts'
 import { Findings } from '../suite/schema.ts'
-import { readArtifact } from './common.ts'
+import { readArtifact, unread } from './common.ts'
 import type { Grader } from './types.ts'
 
 type Validate = (value: unknown) => string[] // the problems; empty when valid
@@ -22,7 +22,7 @@ export const jsonSchema: Grader<'json-schema'> = async (spec, trial, ctx) => {
   const validate = spec.schema.startsWith('litmus:') ? builtin(spec.schema) : schemaFile(resolve(ctx.case.dir, spec.schema))
   const fail = (rationale: string) => ({ grader: 'json-schema', pass: false, rationale })
   const art = readArtifact(trial, spec.artifact)
-  if (!art) return fail(`${spec.artifact} was not produced`)
+  if (!art) return fail(unread(trial, spec.artifact))
   let value: unknown
   try {
     value = JSON.parse(art.text)

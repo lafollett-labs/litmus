@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { hashJson } from '../core/hash.ts'
 import { extractJson } from '../executors/render.ts'
 import { Findings } from '../suite/schema.ts'
-import { normPath, readArtifact, relativeInside } from './common.ts'
+import { normPath, readArtifact, relativeInside, unread } from './common.ts'
 import { ask } from './judges.ts'
 import { EXTRACT_PROMPT_VERSION, EXTRACT_SYSTEM, extractRequest } from './prompts.ts'
 import type { RunExtract, TrialResult } from './types.ts'
@@ -30,7 +30,7 @@ export const runExtract: RunExtract = async (trial, ctx) => {
   // Every way it can fail says why, so the graders' "findings.json was not
   // produced" can be traced back to the extractor rather than the subject.
   const source = spec.from === 'final_message' ? (readArtifact(trial, 'final_message.txt') ?? readArtifact(trial, 'response.txt')) : readArtifact(trial, spec.from)
-  if (!source) return { trial: without, extractor_hash, error: `nothing to extract from: ${spec.from} was not produced` }
+  if (!source) return { trial: without, extractor_hash, error: `nothing to extract from: ${unread(trial, spec.from === 'final_message' ? 'final_message.txt' : spec.from)}` }
 
   const reply = await ask(judge, EXTRACT_SYSTEM, extractRequest(source.text), EXTRACT_MAX_TOKENS, ctx.signal)
   const usage = reply.usage

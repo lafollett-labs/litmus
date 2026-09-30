@@ -8,21 +8,27 @@ import { Finding } from '../../src/suite/schema.ts'
 // matching version is bumped (and the pin updated), so that every stored
 // result graded by the old prompt stops comparing with the new ones.
 const PINNED = {
-  judge: { version: '2', sha: '104a5bec775298f6cc6551e64057305d95e80b3f45a79f5446fd71dd76f46fd7' },
-  extract: { version: '2', sha: 'eb797cc49aecad481133812f74a614fa269755e96cee4edbd8a334c35bf8d276' },
+  judge: { version: '2', sha: '44fc0235c949f2d928f2b67e56d3416ef0b7e6af8a3741b17c9dc4d2e2acfece' },
+  extract: { version: '2', sha: '28392ef6414219affb6dd1859b8360d4a8729863d61838e35e268b8e1641059d' },
 }
+
+// The cap and its marker are part of each version: a clip of a known input at the cut.
+const clipped = (() => {
+  const c = p.clip(`${'h'.repeat(p.MATERIAL_CHARS)}tail`)
+  return `${p.MATERIAL_CHARS}|${c.slice(p.MATERIAL_CHARS / 2 - 1, p.MATERIAL_CHARS / 2 + 60)}`
+})()
 
 const bug = { id: 'b', file: 'a.go', lines: [1, 2] as [number, number], severity: 'high' as const, category: 'c', summary: 'S', proof: 'p', fix: 'f' }
 const finding = { file: 'a.go', line: 1, severity: 'high' as const, title: 'T', explanation: 'E' }
 
 test('the judge prompts are pinned to JUDGE_PROMPT_VERSION', () => {
-  const sha = sha256([p.JUDGE_SYSTEM, p.judgeRequest('Q', 'S', 'M'), p.confirmRequest(bug, finding)].join('\0'))
+  const sha = sha256([p.JUDGE_SYSTEM, p.judgeRequest('Q', 'S', 'M'), p.confirmRequest(bug, finding), clipped].join('\0'))
   assert.equal(p.JUDGE_PROMPT_VERSION, PINNED.judge.version, 'bumped the version? re-pin the sha below it')
   assert.equal(sha, PINNED.judge.sha, 'a judge prompt changed: bump JUDGE_PROMPT_VERSION, then re-pin')
 })
 
 test('the extraction prompt is pinned to EXTRACT_PROMPT_VERSION, and names every litmus:findings field', () => {
-  const sha = sha256([p.EXTRACT_SYSTEM, p.extractRequest('R')].join('\0'))
+  const sha = sha256([p.EXTRACT_SYSTEM, p.extractRequest('R'), clipped].join('\0'))
   assert.equal(p.EXTRACT_PROMPT_VERSION, PINNED.extract.version, 'bumped the version? re-pin the sha below it')
   assert.equal(sha, PINNED.extract.sha, 'the extraction prompt changed: bump EXTRACT_PROMPT_VERSION, then re-pin')
   for (const field of Object.keys(Finding.shape)) assert.match(p.EXTRACT_SYSTEM, new RegExp(`\\b${field}\\??:`), field)

@@ -19,8 +19,9 @@ export const digest = (data: Buffer): string => createHash('sha256').update(data
 
 // A subject with a shell can swap a listed file for a link or a FIFO before it
 // is read. Opened without following a final link or blocking on a FIFO, then
-// judged by the open file itself: anything but a regular file is undefined.
-export function readRegular(path: string): Buffer | undefined {
+// judged by the open file itself: anything but a regular file, or one over
+// maxBytes, is undefined.
+export function readRegular(path: string, maxBytes = Infinity): Buffer | undefined {
   let fd: number
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -28,7 +29,8 @@ export function readRegular(path: string): Buffer | undefined {
     return undefined
   }
   try {
-    return fstatSync(fd).isFile() ? readFileSync(fd) : undefined
+    const st = fstatSync(fd) // the open file itself, so a swap or growth after the open cannot slip past
+    return st.isFile() && st.size <= maxBytes ? readFileSync(fd) : undefined
   } finally {
     closeSync(fd)
   }

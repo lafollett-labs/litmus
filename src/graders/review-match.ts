@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs'
 import { ConfigError } from '../core/errors.ts'
 import type { Usage } from '../core/types.ts'
 import { Findings, type Finding, type Grader as GraderSpec, type TruthFile } from '../suite/schema.ts'
-import { normPath, readArtifact } from './common.ts'
+import { normPath, readArtifact, unread } from './common.ts'
 import { askJudge, sumUsage } from './judges.ts'
 import { optimalMatching, type Candidate } from './matching.ts'
 import { confirmRequest } from './prompts.ts'
@@ -193,7 +193,7 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
 
 function readFindings(trial: TrialResult, name: string): { findings: Finding[] } | { error: string } {
   const art = readArtifact(trial, name)
-  if (!art) return { error: `${name} was not produced` }
+  if (!art) return { error: unread(trial, name) }
   let raw: unknown
   try {
     raw = JSON.parse(art.text)

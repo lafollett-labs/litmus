@@ -1,5 +1,5 @@
 import { ConfigError } from '../core/errors.ts'
-import { countCheck, readArtifact, readTranscript, subjectText } from './common.ts'
+import { countCheck, readArtifact, readTranscript, subjectText, unread } from './common.ts'
 import type { Grader } from './types.ts'
 
 // `transcript` means what the subject produced (see subjectText), not the
@@ -19,7 +19,7 @@ export const regex: Grader<'regex'> = async (spec, trial) => {
     text = subjectText(entries)
   } else {
     const art = readArtifact(trial, spec.target)
-    if (!art) return { grader: 'regex', pass: false, rationale: `${spec.target} was not produced` }
+    if (!art) return { grader: 'regex', pass: false, rationale: unread(trial, spec.target) }
     text = art.text
   }
   // An empty match is no match: `TODO|` or `x*` would otherwise count every position.
