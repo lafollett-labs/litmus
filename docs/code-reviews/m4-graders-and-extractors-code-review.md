@@ -88,6 +88,15 @@ At `4edcb25`, `npm run check` is clean, and 330 tests pass with 4 (live) skipped
 
 **Locked to SHA:** `e5c5df3`. The PR opens with the post-approval commits `4a51ed1` and `4edcb25` (LOW and INFO fixes only), and Gate 2 reviews them.
 
+
+## Gate 2: PR #6 (local substitute: Copilot's quota is exhausted)
+
+A fresh PE-Vue review with no Gate 1 context stands in for Copilot.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `f80319b` | 2 MEDIUM, 5 LOW, 2 INFO | All fixed in `4bd3f31`, each with a test that fails when its fix is removed. MEDIUM-001: an empty final message was extracted into zero findings, so a clean case passed on silence; a blank source is now never extracted. MEDIUM-002: `gradeAll` graded on past a cancel and returned a set that read as a failed trial; a cancel now rejects it. LOW-001: regex counts without collecting and stops past `max` (a 60 MiB artifact OOM'd the process). LOW-002: closing tags are defused in any case or spacing (prompt versions 3), and SECURITY.md states the judge-injection stance. LOW-003: a seeded review-match must set `min_recall` or `min_claims_correct` at load. LOW-004: an extraction cut off at the token cap says so. LOW-005: redaction tests that fail when gradeAll's or extract's redaction is removed. INFO-001: the matching cost is documented. INFO-002: the command tail is cut on a character boundary |
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
