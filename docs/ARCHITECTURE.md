@@ -101,8 +101,6 @@ pricing:                             # USD per million tokens, used when a provi
 
 compare:
   tolerance: 0.05                    # δ, the band a difference must clear to count
-  resamples: 2000
-  seed: 1
   warn_ratio: 1.5
 
 redact: []                           # extra environment variable names whose values are scrubbed from output
@@ -130,8 +128,6 @@ too, so token budgets go through `effort` and the executor's `max_tokens`.
 | Key | Valid range |
 | - | - |
 | `tolerance` | 0 ≤ δ < 1 |
-| `resamples` | an integer ≥ 100 |
-| `seed` | an integer |
 | `warn_ratio` | > 1 |
 
 Keys never appear in this file. Each provider reads its key from the standard
@@ -869,15 +865,22 @@ the cases both of them scored.
   real use. It is listed in the comparison's `notes` instead.
 - **Flips.** Every case whose verdict changed is listed with its old and new
   verdicts. This is the headline of the comparison, not a footnote.
-- **Suite verdict.** d is the mean over paired cases of B's observed success
-  rate minus A's. Its 95% interval comes from a two-level bootstrap:
-  1. Each resample draws cases with replacement.
-  2. For each case drawn, it draws a difference from a normal distribution
-     centred on that case's observed difference.
-  3. The spread comes from Jeffreys-smoothed rates, p̃ = (s + ½)/(n + 1), with
-     variance p̃(1 − p̃)/n per side. Each draw is clamped to [−1, 1].
+- **Suite verdict.** D is the mean over paired cases of B's observed success
+  rate minus A's. Both sides run the same cases, so the cases are fixed and
+  only trial noise is uncertain. D's 95% interval is MOVER (Zou & Donner),
+  recovered from each side's own interval for each case:
 
-  The randomness is a seeded mulberry32, so a comparison is reproducible.
+  ```
+  lo = D − √Σ[(p̂B − lB)² + (uA − p̂A)²] / cases
+  hi = D + √Σ[(uB − p̂B)² + (p̂A − lA)²] / cases       # clamped to [−1, 1]
+  ```
+
+  A side's interval is Wilson from 6 scored trials, and exact
+  (Clopper–Pearson) below 6. Wilson's coverage at 1 to 5 trials dips far
+  enough that 30/30 against a single failure would read as a REGRESSION about
+  one time in twelve with nothing changed. The interval is deterministic:
+  pairs are summed in case-id order, so the same records always give the same
+  interval to the last bit.
 
   With δ = `compare.tolerance`:
 
@@ -889,35 +892,33 @@ the cases both of them scored.
   else:                                  INCONCLUSIVE    # run more trials or cases
   ```
 
-  Resampling cases alone treats each pass rate as exact, so one case at 1/1
-  against 0/1 would come out as a certain regression. The per-case draw keeps
-  each case's trial uncertainty in the interval.
+  Calibration. With both sides drawn from the same true rate, a single case
+  claims a change at most 2.5% of the time in each direction, at any trial
+  counts. A test counts this exactly over trial counts 1 to 30 and rates 0.1
+  to 0.95. Across many cases the interval keeps close to 95% coverage and
+  pays for trial noise once. So a real drop of 0.9 to 0.75 across 30 cases at 5
+  trials is called a REGRESSION about 41% of the time, and 0.9 to 0.7 across
+  10 cases at 10 trials about 71% of the time.
 
-  Centring on the observed difference, rather than on a posterior mean, keeps
-  unequal trial counts unbiased. A posterior mean pulls 1/1 to 0.75 and 5/5 to
-  0.92, so two sides that never failed would read as a confident regression.
+  Centred on the observed rates rather than on posterior means, it stays
+  unbiased at unequal trial counts. A posterior mean pulls 1/1 to 0.75 and 5/5
+  to 0.92, so two sides that never failed would read as a confident
+  regression. One case at 1/1 against 0/1 is INCONCLUSIVE.
 
-  NO CHANGE takes evidence from trials. Both sides run the same cases, so when
-  every case agrees, the case level adds no spread and only trial noise is
-  left. At δ = 0.05 and seed 1, two identical all-pass sides reach NO CHANGE
-  from 2 cases × 30 trials, 14 × 10 or 50 × 5, and about 120 × 3 (between 112
-  and 121 cases the seed decides, since the interval edge sits on δ). Smaller
-  suites come out
-  INCONCLUSIVE, which is why `run` treats a comparison's INCONCLUSIVE as
-  information rather than a failure (see CLI). Each draw is clamped to
-  [-1, 1], so at the extremes the interval sits just inside `delta` rather than
-  around it.
+  NO CHANGE takes evidence from trials. At δ = 0.05, two identical all-pass
+  sides reach NO CHANGE from 6 cases × 30 trials, 31 × 10, 109 × 5 or
+  201 × 3. Smaller suites come out INCONCLUSIVE, which is why `run` treats a
+  comparison's INCONCLUSIVE as information rather than a failure (see CLI).
 
-  Pairs are ordered by case id before resampling, so the interval depends on
-  the seed alone. A case is excluded, and never flips, when its hash differs
-  between the sides or is missing on one of them, or when only one side ran
-  it. A case one side could not score is excluded from the interval but still
-  flips, since a case that stopped scoring is news.
-
+  A case is excluded, and never flips, when its hash differs between the sides
+  or is missing on one of them, or when only one side ran it. A case one side
+  could not score is excluded from the interval but still flips, since a case
+  that stopped scoring is news. When neither side carries case hashes, the
+  comparison's `notes` say that changed cases were not detected.
 - **WARN.** Raised for a metric when the ratio of B's per-trial median to A's
   falls outside [1/`warn_ratio`, `warn_ratio`]. The metrics are total tokens,
   cost, wall-clock time, tool calls, and findings. A metric is skipped when
-  A's median is 0 or missing, or B's is missing. A WARN never changes an exit code.
+  A's median is 0 or missing, or B's is missing, or either is not finite. A WARN never changes an exit code.
 
 ### Addressing runs and comparisons
 
