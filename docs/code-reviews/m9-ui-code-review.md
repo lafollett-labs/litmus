@@ -1,6 +1,6 @@
 # Code Review: m9-ui
 
-**Verdict:** 🔄 CHANGES REQUESTED (round 1; round 2 pending on `edb3a3b`)
+**Verdict:** 🔄 CHANGES REQUESTED (round 2; round 3 pending on `42ac781`)
 
 | | |
 | - | - |
@@ -75,6 +75,41 @@ At `edb3a3b`:
 - `npm test` passes 508 of 512, with 4 (live) skipped and 0 failed.
 - `npm run test:ui` passes 11 of 11.
 - actionlint exits 0.
+
+## Review Round 2
+
+| | |
+| - | - |
+| **Review Round** | 2 |
+| **Reviewed SHA** | `9608ef0` |
+| **Reviewer** | PE-Vue |
+
+PE-Vue marked all 17 round-1 findings RESOLVED. Its evidence:
+
+- The CDP accessibility tree shows level, checked, expanded and selected on each treeitem, and exactly one row is a tab stop.
+- vue-tsc failed on two template errors it injected.
+- All 64 token pairs hold 4.5:1.
+- No temp directory was left after 3 Playwright runs.
+- The security greps are clean.
+
+It found 2 MEDIUM, 4 LOW and 2 INFO in the fixes.
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | A treeitem's name read "counts for smoke": the badge's `aria-label`, prohibited on a span, replaced the counts | Fixed in `42ac781`. The counts are visually hidden text in the row's name (`1 pass, 1 fail, …`), and the glyphs are `aria-hidden`. Playwright asserts the accessible name. Hiding the text fails the test |
+| MEDIUM-002 | A config row checked under a checked case or suite, on a config the toolbar has not chosen, silently did not run | Fixed in `42ac781`. The walk goes on under a checked case or suite, and such a row is refused with the reason. On a chosen config, the case row already covers it. Model tests; the mutant is killed |
+| LOW-001 | A trial opened while running said "Running…" forever once the run was lost or elsewhere | Fixed in `42ac781`. When the run is elsewhere, its record is looked up once. When the server is lost, the pane says so. Store tests for both; both mutants are killed |
+| LOW-002 | `aria-disabled` on a trial row that still opens, and `aria-checked` without `aria-multiselectable` | Fixed in `42ac781`. `aria-disabled` is gone and the tree is `aria-multiselectable`. The open trial is `aria-current`, since `aria-selected` would mean checked in a multi-select tree. The keyboard test asserts it |
+| LOW-003 | `role="tabpanel"` on `<main>` removed the main landmark | Fixed in `42ac781`: `<main>` wraps the tab panel. Playwright asserts one main that holds the Runner panel |
+| LOW-004 | Focus fell to the page when a toolbar button disabled itself | Fixed in `42ac781`. When the run starts or ends and focus sits on the page or on a disabled button, it moves to the run line (`tabindex="-1"`, a status). Playwright asserts it after Cancel; the mutant is killed |
+| INFO-001 | Review trials graded before this change have no Findings tab | Accepted. The tab refuses to parse prose; the PR body says so |
+| INFO-002 | `role="toolbar"` without its arrow keys | Fixed in `42ac781`: it is a `group` |
+
+At `42ac781`:
+
+- `npm run check` exits 0.
+- `npm test` passes 509 of 513, with 4 (live) skipped.
+- `npm run test:ui` passes 12 of 12.
 
 ---
 
