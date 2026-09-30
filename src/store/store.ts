@@ -142,7 +142,12 @@ export function readRun(resultsDir: string, id: string): StoredRun {
   if (!RUN_ID.test(id)) throw new ConfigError(`"${id}" is not a run id`)
   const dir = join(resultsDir, id)
   if (!existsSync(join(dir, 'run.json'))) throw new ConfigError(`no run ${id} under ${resultsDir}`)
-  const read = <T>(name: string, fallback: T): T => (existsSync(join(dir, name)) ? (JSON.parse(readFileSync(join(dir, name), 'utf8')) as T) : fallback)
+  const read = <T>(name: string, fallback: T): T => {
+    if (!existsSync(join(dir, name))) return fallback
+    const value = parse<T>(join(dir, name))
+    if (value === undefined) throw new ConfigError(`${join(dir, name)} does not parse; the run's record is damaged`)
+    return value
+  }
   return { manifest: read<RunManifest>('run.json', undefined as never), verdicts: read<Verdict[]>('verdicts.json', []), comparisons: read<Comparison[]>('comparison.json', []) }
 }
 
@@ -153,11 +158,15 @@ export function readRun(resultsDir: string, id: string): StoredRun {
 // so one bad run cannot hide the others.
 export function listRuns(resultsDir: string): RunManifest[] {
   if (!existsSync(resultsDir)) return []
-  const key = (m: RunManifest) => `${m.started_at} ${m.id}`
+  // A start time that does not parse (a hand-edited file) sorts oldest.
+  const at = (m: RunManifest) => {
+    const t = Date.parse(m.started_at)
+    return Number.isFinite(t) ? t : -Infinity
+  }
   return readdirSync(resultsDir)
     .filter(d => RUN_ID.test(d))
     .flatMap(d => parse<RunManifest>(join(resultsDir, d, 'run.json')) ?? [])
-    .sort((a, b) => (key(a) < key(b) ? 1 : key(a) > key(b) ? -1 : 0))
+    .sort((a, b) => at(b) - at(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
 }
 
 // A torn last line (the process killed mid-append) is skipped, as the

@@ -32,14 +32,15 @@ const span = (ts: TrialRecord[]) => ({
 // Why a test that did not pass the gate did not: its verdict line, uncoloured.
 const message = (v: Verdict) => verdictLine(v, plain).replace(/\s+/g, ' ')
 
-// The (case, config) pairs a cancel stopped before they settled: in the run's
-// trials, but with no verdict. A document lists them as skipped, so a cancelled
-// run never reads as a clean one.
+// The (case, config) pairs a cancel stopped before they settled: queued by the
+// run, whether or not a trial of theirs started, but with no verdict. A
+// document lists them as skipped, so a cancelled run never reads as a clean one.
 function stopped(r: RunReport): { case: string; config: string }[] {
   const settled = new Set(r.verdicts.map(id))
-  const seen = new Map<string, { case: string; config: string }>()
-  for (const t of r.trials) if (!settled.has(`${t.case}@${t.config}`)) seen.set(`${t.case}@${t.config}`, { case: t.case, config: t.config })
-  return [...seen.values()].sort((a, b) => (`${a.case}@${a.config}` < `${b.case}@${b.config}` ? -1 : 1))
+  return [...new Set(r.scheduled)]
+    .filter(pair => !settled.has(pair))
+    .sort()
+    .map(pair => ({ case: pair.slice(0, pair.lastIndexOf('@')), config: pair.slice(pair.lastIndexOf('@') + 1) }))
 }
 const STOPPED = 'cancelled before it settled'
 

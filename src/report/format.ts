@@ -10,6 +10,7 @@ export type RunReport = {
   comparisons: Comparison[]
   notes: string[]
   trials: TrialRecord[]
+  scheduled: string[] // every "<case>@<config>" the run queued, settled or not
   gate: Gate
   exit: number
 }

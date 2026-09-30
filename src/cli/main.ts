@@ -140,11 +140,15 @@ if (import.meta.main) {
     else throw e
   })
   const write = (text: string) => void (closed || process.stdout.write(text))
+  // A log reader that has gone (`2>&1 | head`) is not the run's failure either.
+  process.stderr.on('error', () => undefined)
   // Only a run is worth cancelling: the first Ctrl-C (or SIGTERM) cancels,
   // trials in flight end cancelled and the run is written; a second one
   // leaves at once. Every other command finishes in moments.
   const ctl = new AbortController()
   let code = 130
+  // main() takes the first argument as the command; were options ever allowed
+  // before it, this gate would have to follow.
   if (process.argv[2] === 'run') {
     const cancel = (signal: 'SIGINT' | 'SIGTERM', exit: number) => () => {
       if (ctl.signal.aborted) process.exit(exit)

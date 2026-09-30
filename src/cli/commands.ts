@@ -1,5 +1,5 @@
-import { accessSync, constants, existsSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { accessSync, constants, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, resolve, sep } from 'node:path'
 import { ConfigError } from '../core/errors.ts'
 import { redactor, secretValues } from '../core/redact.ts'
 import type { VerdictKind } from '../core/types.ts'
@@ -77,6 +77,7 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
   const saved: string[] = []
   const toFile = format === 'pretty' && f.out !== undefined ? pretty({ write: t => saved.push(t), tty: false }, plain) : undefined
 
+  const scheduled = new Set<string>()
   let r
   try {
     r = await run({
@@ -90,6 +91,7 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
       ...(baseline ? { baseline } : {}),
       ...(io.signal ? { signal: io.signal } : {}),
       listener: e => {
+        if (e.type === 'trial.queued') scheduled.add(e.key.slice(0, e.key.lastIndexOf('#')))
         live?.event(e)
         toFile?.event(e)
       },
@@ -104,10 +106,12 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
   }
 
   const exit = r.manifest.status === 'cancelled' ? (io.cancelCode?.() ?? 130) : runExit(r.verdicts, r.comparisons, gate)
-  const report: RunReport = { manifest: r.manifest, verdicts: r.verdicts, comparisons: r.comparisons, notes: r.notes, trials: readTrials(config.resultsDir, r.id), gate, exit }
-  live?.finish(report)
+  const report: RunReport = { manifest: r.manifest, verdicts: r.verdicts, comparisons: r.comparisons, notes: r.notes, trials: readTrials(config.resultsDir, r.id), scheduled: [...scheduled], gate, exit }
+  // The document is written before the live view ends, so the view's last
+  // line is the exit the process really returns.
   toFile?.finish(report)
   const doc = format === 'pretty' ? saved.join('') : render(format as DocumentFormat, report)
+  let final = exit
   if (f.out === undefined) {
     if (format !== 'pretty') io.write(doc)
   } else {
@@ -117,22 +121,27 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
       writeFileSync(f.out, doc)
     } catch (e) {
       io.err(`litmus: could not write ${f.out}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`)
-      return exit === 0 ? 3 : exit
+      final = exit === 0 ? 3 : exit
     }
   }
-  return exit
+  live?.finish({ ...report, exit: final })
+  return final
 }
 
 // --out is checked before anything is spent: a typo in a path must be a usage
-// error (exit 2), not a finished run whose result could not be kept.
+// error (exit 2), not a finished run whose result could not be kept. Links are
+// followed, as the write will follow them.
 function writable(out: string): void {
+  if (out === '' || out.endsWith('/') || out.endsWith(sep)) throw new ConfigError(`--out ${JSON.stringify(out)} names a directory; name a file`)
   const path = resolve(out)
   const st = statSync(path, { throwIfNoEntry: false })
   if (st?.isDirectory()) throw new ConfigError(`--out ${out} is a directory; name a file`)
+  const dir = dirname(st ? realpathSync(path) : path)
+  if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new ConfigError(`--out ${out}: ${dir} is not a directory that exists`)
   try {
-    accessSync(st ? path : dirname(path), constants.W_OK)
+    accessSync(st ? path : dir, constants.W_OK)
   } catch {
-    throw new ConfigError(`--out ${out}: ${st ? 'the file' : `the directory ${dirname(path)}`} ${st || existsSync(dirname(path)) ? 'is not writable' : 'does not exist'}`)
+    throw new ConfigError(`--out ${out}: ${st ? 'the file' : `the directory ${dir}`} is not writable`)
   }
 }
 
@@ -166,10 +175,12 @@ export function compareCommand(f: { configFile: string; sides: string[]; allowIn
   io.out(comparisonLines(c, paintFor(io)).join('\n'))
   io.out(`exit ${exit}`)
   if (f.out !== undefined) {
+    // As for run: the verdict stands; a failed write only turns a pass into 3.
     try {
       writeFileSync(f.out, `${JSON.stringify(c, null, 2)}\n`)
     } catch (e) {
-      throw new ConfigError(`could not write ${f.out}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`)
+      io.err(`litmus: could not write ${f.out}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`)
+      return exit === 0 ? 3 : exit
     }
   }
   return exit
