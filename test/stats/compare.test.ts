@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Verdict } from '../../src/core/types.ts'
 import { compare, suiteVerdict, type CompareOptions, type CompareSide } from '../../src/stats/compare.ts'
+import { choose } from '../../src/stats/intervals.ts'
 import { settle, type TrialOutcome } from '../../src/stats/verdict.ts'
 
 const OUTCOME: Record<string, TrialOutcome> = {
@@ -11,7 +12,7 @@ const OUTCOME: Record<string, TrialOutcome> = {
 }
 
 // A case's trials as a string, one letter each, settled under the all policy.
-function verdict(id: string, trials: string): Verdict {
+function verdict(id: string, trials: string, expect: 'pass' | 'fail' = 'pass'): Verdict {
   const outcomes = [...trials].map(ch => OUTCOME[ch]!)
   return settle({
     case: id,
@@ -19,15 +20,15 @@ function verdict(id: string, trials: string): Verdict {
     policy: 'all',
     threshold: 0.8,
     min_trials: 1,
-    expect: 'pass',
+    expect,
     trials: outcomes.length,
     outcomes,
   })
 }
 
-const side = (label: string, rows: [string, string][], metrics?: CompareSide['metrics']): CompareSide => ({
+const side = (label: string, rows: [string, string][], metrics?: CompareSide['metrics'], expect: 'pass' | 'fail' = 'pass'): CompareSide => ({
   label,
-  verdicts: rows.map(([id, trials]) => verdict(id, trials)),
+  verdicts: rows.map(([id, trials]) => verdict(id, trials, expect)),
   ...(metrics ? { metrics } : {}),
 })
 
@@ -58,9 +59,10 @@ test('identical sides with too few trials to resolve the tolerance are INCONCLUS
 })
 
 test('a wider tolerance accepts the same thin evidence as NO CHANGE', () => {
-  const c = compare(side('a', cases(5, p(5))), side('b', cases(5, p(5))), { tolerance: 0.2 })
-  assert.equal(c.tolerance, 0.2)
-  assert.equal(c.verdict, 'NO CHANGE')
+  const thin = (tolerance?: number) => compare(side('a', cases(5, p(10))), side('b', cases(5, p(10))), tolerance === undefined ? {} : { tolerance })
+  assert.equal(thin().verdict, 'INCONCLUSIVE')
+  assert.equal(thin(0.2).tolerance, 0.2)
+  assert.equal(thin(0.2).verdict, 'NO CHANGE')
 })
 
 test('B losing every one of ten cases is a REGRESSION', () => {
@@ -158,15 +160,9 @@ const mixed: [string, string][] = ['ppppp', 'ppppf', 'pppff', 'ppfff', 'pffff', 
   (trials, i) => [`smoke/c${i}`, trials],
 )
 
-test('the same seed gives the same bootstrap interval every time, and the seed defaults to one', () => {
-  const interval = (opts: CompareOptions = {}) => compare(side('a', cases(8, p(5))), side('b', mixed), opts).interval
-  assert.deepEqual(interval({ seed: 42 }), interval({ seed: 42 }))
-  assert.deepEqual(interval(), interval({ seed: 1 }))
-})
-
-test('a different seed drives a different resampling', () => {
-  const at = (seed: number) => compare(side('a', cases(8, p(5))), side('b', mixed), { seed }).interval
-  assert.notDeepEqual(at(1), at(2))
+test('the interval is deterministic: the same records always give the same interval', () => {
+  const interval = () => compare(side('a', cases(8, p(5))), side('b', mixed)).interval
+  assert.deepEqual(interval(), interval())
 })
 
 test('a side listing one case twice is refused rather than paired arbitrarily', () => {
@@ -174,15 +170,15 @@ test('a side listing one case twice is refused rather than paired arbitrarily', 
   assert.throws(() => compare(a, side('b', [['smoke/x', 'ppp']])), /appears twice/)
 })
 
-test('a resample count that is not a positive integer is rejected', () => {
-  for (const resamples of [0, -1, 1.5]) {
-    assert.throws(() => compare(side('a', cases(1, 'p')), side('b', cases(1, 'p')), { resamples }), RangeError)
-  }
+test('options outside what the config schema allows are refused, not turned into a verdict', () => {
+  const run = (opts: CompareOptions) => () => compare(side('a', cases(1, 'p')), side('b', cases(1, 'p')), opts)
+  for (const tolerance of [-0.5, 1, NaN]) assert.throws(run({ tolerance }), /tolerance must be in \[0, 1\)/)
+  for (const warnRatio of [0.5, 1, Infinity, NaN]) assert.throws(run({ warnRatio }), /warnRatio must be a finite number above 1/)
 })
 
 test('every trial passing on both sides is never a regression, whatever the trial counts', () => {
-  // A prior centred on ½ reads 5/5 as 0.92 and 1/1 as 0.75, and over 30 cases
-  // that gap looks certain. Centred on each case's pooled rate, it does not.
+  // Centred on a posterior mean, 5/5 reads 0.92 and 1/1 reads 0.75, and over 30
+  // cases that gap looks certain. MOVER centres on the observed rates.
   const down = compare(side('a', cases(30, p(5))), side('b', cases(30, p(1))))
   assert.notEqual(down.verdict, 'REGRESSION')
   const up = compare(side('a', cases(30, p(1))), side('b', cases(30, p(5))))
@@ -206,38 +202,39 @@ test('a case whose content changed between the sides is excluded with its reason
   assert.deepEqual(c.notes, ['subject changed'])
 })
 
-// Golden: any change to the draw order, the smoothing, the clamp or the
-// percentile rounding moves these by 6e-5 or more; a refactor that only moves
-// the last bit (sum * (1 / n) for sum / n) stays within 1e-12.
+// Golden: a change to the per-side intervals, the MOVER combination or the
+// clamp moves these digits; a refactor that only moves the last bit stays
+// within 1e-12.
 const near = (got: { lo: number; hi: number }, want: { lo: number; hi: number }) =>
   assert.ok(Math.abs(got.lo - want.lo) < 1e-12 && Math.abs(got.hi - want.hi) < 1e-12, `${JSON.stringify(got)} vs ${JSON.stringify(want)}`)
 test('a seeded mixed comparison reproduces its interval to the last digit', () => {
   const mixed = (label: string, pat: string) => side(label, Array.from({ length: 6 }, (_, i): [string, string] => [`s/m${i}`, pat.slice(0, 3 + i)]))
   const c = compare(mixed('a', 'pppppfp'), mixed('b', 'ppfpfpp'))
-  near(c.interval!, { lo: -0.46184214701818194, hi: -0.012881663017730832 })
+  near(c.interval!, { lo: -0.4274988756864533, hi: -0.004064142027615551 })
 })
 
-test('case resampling widens a suite whose cases disagree: three collapses among ten are INCONCLUSIVE, not REGRESSION', () => {
+test('the suite is the cases it holds: three of ten collapsing from 30/30 to 0/30 is a REGRESSION', () => {
   const b: [string, string][] = cases(10, p(30)).map(([id], i) => [id, i < 3 ? f(30) : p(30)])
   const c = compare(side('a', cases(10, p(30))), side('b', b))
-  near(c.interval!, { lo: -0.5946581617154699, hi: -0.010283376438439098 })
-  assert.equal(c.verdict, 'INCONCLUSIVE')
+  near(c.interval!, { lo: -0.33003282088134184, hi: -0.25907216404593514 })
+  assert.equal(c.verdict, 'REGRESSION')
 })
 
-test('each draw is clamped to [-1, 1], so an all-to-nothing collapse sits just inside delta', () => {
+test('the interval is clamped to [-1, 1] and holds delta, even at an all-to-nothing collapse', () => {
   const c = compare(side('a', cases(30, p(5))), side('b', cases(30, f(5))))
   assert.equal(c.delta, -1)
-  near(c.interval!, { lo: -0.9638754809971749, hi: -0.8912289887252397 })
+  near(c.interval!, { lo: -1, hi: -0.8652656870791937 })
   assert.equal(c.verdict, 'REGRESSION')
 })
 
 test('the NO CHANGE boundary for identical all-pass suites is where the spec says', () => {
   const at = (n: number, t: number) => compare(side('a', cases(n, p(t))), side('b', cases(n, p(t)))).verdict
-  assert.deepEqual([at(1, 30), at(2, 30)], ['INCONCLUSIVE', 'NO CHANGE'])
-  assert.deepEqual([at(13, 10), at(14, 10)], ['INCONCLUSIVE', 'NO CHANGE'])
+  assert.deepEqual([at(5, 30), at(6, 30)], ['INCONCLUSIVE', 'NO CHANGE'])
+  assert.deepEqual([at(30, 10), at(31, 10)], ['INCONCLUSIVE', 'NO CHANGE'])
+  assert.deepEqual([at(108, 5), at(109, 5)], ['INCONCLUSIVE', 'NO CHANGE'])
 })
 
-test('the interval depends on the seed, not on the order verdicts arrive in', () => {
+test('the interval does not depend on the order verdicts arrive in', () => {
   const rows: [string, string][] = cases(12, 'ppppf').map(([id], i) => [id, i % 3 ? p(5) : 'ppfff'])
   const a = side('a', rows)
   const b = side('b', cases(12, 'ppppf'))
@@ -272,4 +269,45 @@ test('a WARN needs the ratio strictly outside the band', () => {
   const low = compare(side('a', cases(1, p(5)), { tokens: 150 }), side('b', cases(1, p(5)), { tokens: 100 }))
   assert.equal(100 / 150, 1 / 1.5)
   assert.deepEqual(low.warns, [])
+})
+
+test('canaries compare on successes, not passes: a canary that starts passing is a REGRESSION', () => {
+  const c = compare(side('a', cases(10, f(5)), undefined, 'fail'), side('b', cases(10, p(5)), undefined, 'fail'))
+  assert.equal(c.delta, -1)
+  assert.equal(c.verdict, 'REGRESSION')
+  assert.deepEqual(c.flips[0], { case: 'smoke/c0', from: 'PASS', to: 'FAIL' })
+})
+
+test('without case hashes on either side the comparison says the changed-case check was skipped', () => {
+  assert.deepEqual(compare(side('a', cases(1, 'p')), side('b', cases(1, 'p'))).notes, ['case hashes unavailable on both sides: a case that changed between them was not detected'])
+  const hashed = { 'smoke/c0': 'h' }
+  assert.deepEqual(compare({ ...side('a', cases(1, 'p')), hashes: hashed }, { ...side('b', cases(1, 'p')), hashes: hashed }).notes, [])
+})
+
+test('a non-finite metric median is skipped, never warned on', () => {
+  const c = compare(side('a', cases(1, 'p'), { tokens: NaN, cost_usd: 1 }), side('b', cases(1, 'p'), { tokens: 5, cost_usd: Infinity }))
+  assert.deepEqual(c.warns, [])
+})
+
+// Calibration, counted exactly: one case, both sides drawn from the same true
+// rate, every possible record weighed by its probability. A 95% interval may
+// claim a change at most 2.5% of the time in each direction.
+test('a single case claims a change no more often than a 95% interval allows, at any trial counts', () => {
+  const binom = (n: number, k: number, q: number) => choose(n, k) * q ** k * (1 - q) ** (n - k)
+  const trials = (n: number, s: number) => p(s) + f(n - s)
+  for (const [na, nb] of [[1, 1], [1, 30], [30, 1], [3, 3], [5, 5], [5, 6], [6, 6], [10, 1], [30, 3], [30, 6], [10, 10], [30, 30]] as const) {
+    for (const q of [0.1, 0.5, 0.8, 0.9, 0.95]) {
+      let down = 0
+      let up = 0
+      for (let sa = 0; sa <= na; sa++) {
+        for (let sb = 0; sb <= nb; sb++) {
+          const v = compare(side('a', [['s/x', trials(na, sa)]]), side('b', [['s/x', trials(nb, sb)]])).verdict
+          const w = binom(na, sa, q) * binom(nb, sb, q)
+          if (v === 'REGRESSION') down += w
+          if (v === 'IMPROVEMENT') up += w
+        }
+      }
+      assert.ok(down <= 0.025 && up <= 0.025, `${na}v${nb} at ${q}: REGRESSION ${down}, IMPROVEMENT ${up}`)
+    }
+  }
 })

@@ -1,6 +1,5 @@
-export { choose, median, passAtK, passPowK, wilson } from './intervals.ts'
-export { mulberry32 } from './prng.ts'
+export { choose, clopperPearson, median, passAtK, passPowK, wilson } from './intervals.ts'
 export { minTrialsToPass, settle } from './verdict.ts'
 export type { SettleInput, TrialOutcome } from './verdict.ts'
-export { compare } from './compare.ts'
+export { compare, WILSON_MIN_TRIALS } from './compare.ts'
 export type { CompareOptions, CompareSide } from './compare.ts'

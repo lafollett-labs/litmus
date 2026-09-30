@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { choose, median, passAtK, passPowK, wilson } from '../../src/stats/intervals.ts'
+import { choose, clopperPearson, median, passAtK, passPowK, wilson } from '../../src/stats/intervals.ts'
 
 const near = (actual: number, expected: number, eps = 1e-4) =>
   assert.ok(Math.abs(actual - expected) < eps, `${actual} is not within ${eps} of ${expected}`)
@@ -69,4 +69,15 @@ test('Wilson 3/5 agrees with R prop.test(correct = FALSE) to 1e-12', () => {
   const ci = wilson(3, 5)!
   assert.ok(Math.abs(ci.lo - 0.2307242812760128) < 1e-12, String(ci.lo))
   assert.ok(Math.abs(ci.hi - 0.882379225767352) < 1e-12, String(ci.hi))
+})
+
+test('Clopper–Pearson matches its exact reference values, and is exact at the ends', () => {
+  // R: binom.test(x, n)$conf.int
+  const ci = clopperPearson(3, 5)!
+  assert.ok(Math.abs(ci.lo - 0.1466328) < 1e-6 && Math.abs(ci.hi - 0.9472550) < 1e-6, JSON.stringify(ci))
+  assert.deepEqual(clopperPearson(0, 1), { lo: 0, hi: clopperPearson(0, 1)!.hi })
+  assert.ok(Math.abs(clopperPearson(0, 1)!.hi - 0.975) < 1e-9)
+  assert.equal(clopperPearson(5, 5)!.hi, 1)
+  assert.equal(clopperPearson(0, 0), null)
+  assert.throws(() => clopperPearson(6, 5), RangeError)
 })

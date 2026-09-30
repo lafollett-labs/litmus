@@ -1,6 +1,5 @@
 import type { Comparison, Flip, Interval, SuiteVerdictKind, Verdict, Warn } from '../core/types.ts'
-import { normal } from './distributions.ts'
-import { mulberry32 } from './prng.ts'
+import { clopperPearson, wilson } from './intervals.ts'
 
 type Metrics = Partial<Record<Warn['metric'], number>>
 
@@ -17,8 +16,6 @@ export type CompareSide = {
 
 export type CompareOptions = {
   tolerance?: number
-  resamples?: number
-  seed?: number
   warnRatio?: number
 }
 
@@ -27,10 +24,10 @@ const METRICS: Warn['metric'][] = ['tokens', 'cost_usd', 'wall_clock_ms', 'tool_
 
 // Rules in docs/ARCHITECTURE.md § Comparison.
 export function compare(a: CompareSide, b: CompareSide, opts: CompareOptions = {}): Comparison {
-  const { tolerance = 0.05, resamples = 2000, seed = 1, warnRatio = 1.5 } = opts
-  if (!Number.isInteger(resamples) || resamples < 1) {
-    throw new RangeError(`resamples must be a positive integer, got ${resamples}`)
-  }
+  const { tolerance = 0.05, warnRatio = 1.5 } = opts
+  // The config schema guards these too; compare() is also called directly.
+  if (!(tolerance >= 0 && tolerance < 1)) throw new RangeError(`tolerance must be in [0, 1), got ${tolerance}`)
+  if (!(Number.isFinite(warnRatio) && warnRatio > 1)) throw new RangeError(`warnRatio must be a finite number above 1, got ${warnRatio}`)
   const byA = byCase(a)
   const byB = byCase(b)
 
@@ -64,21 +61,21 @@ export function compare(a: CompareSide, b: CompareSide, opts: CompareOptions = {
   for (const id of byB.keys()) if (!byA.has(id)) excluded.push({ case: id, reason: `only ${b.label} ran it` })
   excluded.sort((x, y) => (x.case < y.case ? -1 : x.case > y.case ? 1 : 0))
 
-  // By case id, so the interval depends on the seed alone and not on the order
-  // a store happened to write verdicts in. Flips keep A's order.
+  // By case id, so floating-point sums (and so the interval, to the last bit)
+  // do not depend on the order a store wrote verdicts in. Flips keep A's order.
   pairs.sort(([x], [y]) => (x.case < y.case ? -1 : x.case > y.case ? 1 : 0))
   const n = pairs.length
-  // The observed difference, which is also where the bootstrap centres each
-  // case. Each draw is clamped to [-1, 1], so at the extremes (every case at
-  // -1) the interval sits just inside delta rather than around it.
   const delta = n === 0 ? null : pairs.reduce((s, [va, vb]) => s + rate(vb) - rate(va), 0) / n
-  const interval = n === 0 ? null : bootstrap(pairs, resamples, seed)
+  const interval = n === 0 ? null : mover(pairs)
+  // Without hashes on either side, a case whose ground truth changed cannot be
+  // told from one whose model did; the comparison says so rather than guessing.
+  const unhashed = a.hashes === undefined && b.hashes === undefined ? ['case hashes unavailable on both sides: a case that changed between them was not detected'] : []
   return {
     a: a.label,
     b: b.label,
     cases: n,
     excluded,
-    notes: [...new Set([...(a.notes ?? []), ...(b.notes ?? [])])],
+    notes: [...new Set([...(a.notes ?? []), ...(b.notes ?? []), ...unhashed])],
     flips,
     delta,
     interval,
@@ -102,48 +99,39 @@ function byCase(side: CompareSide): Map<string, Verdict> {
 
 const rate = (v: Verdict) => v.successes / v.scored
 
-// Two levels, because either alone reads too tight. Resampling cases captures
-// how much the difference varies across cases; a per-case draw captures how
-// little a handful of trials pins each rate down. With cases alone, a single
-// case resamples to the same difference every time, so 1/1 against 0/1 would
-// read as a certain REGRESSION.
+// The suite difference is D = mean over paired cases of (B's rate − A's). Both
+// sides run the same cases, so the cases are fixed and only trial noise is
+// uncertain. Its 95% interval is MOVER (Zou & Donner): the interval for a sum
+// of independent proportions recovered from each proportion's own interval,
 //
-// Each case's draw is centred on its observed difference, so two sides with
-// the same record contribute zero whatever their trial counts. Its spread
-// comes from Jeffreys-smoothed rates, p̃ = (s + ½)/(n + 1), with variance
-// p̃(1 − p̃)/n per side. Smoothing keeps an all-pass record from claiming zero
-// variance. Centring on a posterior mean instead would pull 1/1 to 0.75 and
-// 5/5 to 0.92, and 30 cases of that gap read as a confident regression
-// between two sides that never failed.
-function bootstrap(pairs: [Verdict, Verdict][], resamples: number, seed: number): Interval {
-  const rng = mulberry32(seed)
+//   lo = D − √Σ[(p̂B − lB)² + (uA − p̂A)²] / n
+//   hi = D + √Σ[(uB − p̂B)² + (p̂A − lA)²] / n
+//
+// It is deterministic, holds its coverage at unequal trial counts, and pays
+// for trial noise once. A per-side interval is Wilson from WILSON_MIN_TRIALS
+// trials, and exact (Clopper–Pearson) below: Wilson's coverage at 1 to 5
+// trials dips far enough that 30/30 against a single failure read as a
+// REGRESSION about one time in twelve with nothing changed.
+export const WILSON_MIN_TRIALS = 6
+
+function mover(pairs: [Verdict, Verdict][]): Interval {
   const n = pairs.length
-  const diffs = pairs.map(([va, vb]) => rate(vb) - rate(va))
-  const sds = pairs.map(([va, vb]) => Math.sqrt(smoothedVariance(va) + smoothedVariance(vb)))
-  const means = new Float64Array(resamples)
-  for (let r = 0; r < resamples; r++) {
-    let sum = 0
-    for (let i = 0; i < n; i++) {
-      const j = Math.floor(rng() * n)
-      sum += Math.max(-1, Math.min(1, diffs[j]! + sds[j]! * normal(rng)))
-    }
-    means[r] = sum / n
+  let d = 0
+  let below = 0
+  let above = 0
+  for (const [va, vb] of pairs) {
+    const pa = rate(va)
+    const pb = rate(vb)
+    const ia = sideInterval(va)
+    const ib = sideInterval(vb)
+    d += pb - pa
+    below += (pb - ib.lo) ** 2 + (ia.hi - pa) ** 2
+    above += (ib.hi - pb) ** 2 + (pa - ia.lo) ** 2
   }
-  means.sort()
-  // Nearest rank, rounded outward: floor for the 2.5th percentile, ceil for the
-  // 97.5th. The interval is never narrower than the percentiles it names, so
-  // rounding can push a borderline suite toward INCONCLUSIVE but never
-  // manufacture a REGRESSION.
-  return {
-    lo: means[Math.floor(0.025 * (resamples - 1))]!,
-    hi: means[Math.ceil(0.975 * (resamples - 1))]!,
-  }
+  return { lo: Math.max(-1, (d - Math.sqrt(below)) / n), hi: Math.min(1, (d + Math.sqrt(above)) / n) }
 }
 
-function smoothedVariance(v: Verdict): number {
-  const p = (v.successes + 0.5) / (v.scored + 1)
-  return (p * (1 - p)) / v.scored
-}
+const sideInterval = (v: Verdict): Interval => (v.scored >= WILSON_MIN_TRIALS ? wilson(v.successes, v.scored)! : clopperPearson(v.successes, v.scored)!)
 
 export function suiteVerdict(ci: Interval | null, tolerance: number): SuiteVerdictKind {
   if (ci === null) return 'INCONCLUSIVE'
@@ -161,7 +149,8 @@ function warns(a: Metrics | undefined, b: Metrics | undefined, limit: number): W
   for (const metric of METRICS) {
     const va = a?.[metric]
     const vb = b?.[metric]
-    if (va === undefined || vb === undefined || va <= 0) continue
+    // A non-finite median (NaN, Infinity) is a bad record, not a ratio.
+    if (va === undefined || vb === undefined || !Number.isFinite(va) || !Number.isFinite(vb) || va <= 0) continue
     const ratio = vb / va
     if (ratio > limit || ratio < 1 / limit) out.push({ metric, a: va, b: vb, ratio })
   }
