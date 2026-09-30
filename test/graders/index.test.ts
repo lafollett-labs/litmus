@@ -62,3 +62,23 @@ test('every rationale is redacted where it is produced', async () => {
   assert.match(rs[0]!.rationale ?? '', /\[REDACTED\]/)
   assert.ok(!JSON.stringify(rs).includes('sk-ant-live'))
 })
+
+test('a rationale a judge wrote is redacted by gradeAll itself', async () => {
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders:\n  - { kind: judge, judge: default, question: q, target: response.txt }\n')
+  const judges = { default: judgeOf(stub([verdict(true, 'the key sk-ant-judged is in it')])) }
+  const rs = await gradeAll(trial({ artifacts: { 'response.txt': 'x' } }), { ...ctx(c, judges), redact: redactor(['sk-ant-judged']) })
+  assert.equal(rs[0]!.rationale, 'the key [REDACTED] is in it')
+})
+
+test('a cancel rejects gradeAll, never a result set that reads like a failed trial', async () => {
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders:\n  - { kind: command, run: "sleep 5" }\n  - { kind: command, run: "touch graded-after" }\n')
+  const t = trial()
+  const ctl = new AbortController()
+  const pending = gradeAll(t, { ...ctx(c), signal: ctl.signal })
+  setTimeout(() => ctl.abort(new Error('cancelled')), 50)
+  await assert.rejects(pending, /cancelled/)
+  assert.equal(existsSync(join(t.workdir, 'graded-after')), false)
+  const pre = new AbortController()
+  pre.abort(new Error('cancelled'))
+  await assert.rejects(gradeAll(t, { ...ctx(c), signal: pre.signal }), /cancelled/)
+})

@@ -35,7 +35,10 @@ export const command: Grader<'command'> = (spec, trial, ctx) =>
     child.stderr.on('data', keep)
     const output = () => {
       const safe = ctx.redact.bytes(tail)
-      const text = safe.subarray(Math.max(0, safe.length - TAIL_BYTES)).toString('utf8').trimEnd()
+      // Cut on a character boundary: never start inside a UTF-8 sequence.
+      let from = Math.max(0, safe.length - TAIL_BYTES)
+      while (from < safe.length && (safe[from]! & 0xc0) === 0x80) from++
+      const text = safe.subarray(from).toString('utf8').trimEnd()
       return text ? `\n${text}` : ''
     }
 

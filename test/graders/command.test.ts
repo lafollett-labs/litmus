@@ -90,3 +90,8 @@ test('a cancelled grade leaves no grace timer holding the process', async () => 
   await new Promise(ok => setTimeout(ok, 100)) // the SIGKILLed shell's exit arrives
   assert.equal(process.getActiveResourcesInfo().filter(r => r === 'Timeout').length, 0)
 })
+
+test('the output tail is cut on a character boundary', async () => {
+  const r = await command(spec({ kind: 'command', run: `printf 'é%.0s' $(seq 1 5000); printf x; exit 1` }), trial(), ctx())
+  assert.ok(!(r.rationale ?? '').includes('�'))
+})

@@ -20,8 +20,13 @@ export { EXTRACT_PROMPT_VERSION, JUDGE_PROMPT_VERSION, judgeHash, makeJudges } f
 // reach a verdict.
 export const gradeAll: GradeAll = async (trial, ctx) => {
   const results: GraderResult[] = []
+  // A cancel is the operator's and is never graded (executors/deadline.ts):
+  // a grader that settles "cancelled" must not leave a result set that reads
+  // like a failed trial.
   for (const spec of ctx.case.spec.graders) {
+    if (ctx.signal.aborted) throw ctx.signal.reason
     const r = await grade(spec, trial, ctx)
+    if (ctx.signal.aborted) throw ctx.signal.reason
     // A rationale quotes what the subject wrote, a command printed or a judge said.
     results.push(r.rationale === undefined ? r : { ...r, rationale: ctx.redact.text(r.rationale) })
   }

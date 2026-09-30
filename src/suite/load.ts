@@ -199,11 +199,13 @@ function loadCase(suite: SuiteFile, dir: string): LoadedCase {
   }
   for (const g of spec.graders) {
     if (g.kind === 'review-match' && !loaded.truth) throw new ConfigError(`${file}: a review-match grader needs a truth.yaml beside it`)
-    // A review-match with no bound that can apply to its truth checks nothing,
-    // so it would pass any review. min_recall and min_claims_correct never apply
-    // on a clean case (no bugs, nothing to match).
+    // A review-match must measure the one thing its truth is about. On a clean
+    // case that is noise, so min_recall and min_claims_correct (never
+    // applicable there) do not count. On a seeded case it is finding the bugs:
+    // with max_* bounds alone, an empty review would pass at recall 0.
     if (g.kind === 'review-match' && loaded.truth) {
-      const usable = Object.keys(g.pass).filter(b => loaded.truth!.kind === 'seeded' || (b !== 'min_recall' && b !== 'min_claims_correct'))
+      const finds = ['min_recall', 'min_claims_correct']
+      const usable = Object.keys(g.pass).filter(b => (loaded.truth!.kind === 'seeded' ? finds.includes(b) : !finds.includes(b)))
       if (usable.length === 0) {
         throw new ConfigError(`${file}: review-match sets no pass bound that applies to a ${loaded.truth.kind} case (${loaded.truth.kind === 'clean' ? 'set max_false_positives, say' : 'set min_recall, say'})`)
       }

@@ -25,7 +25,7 @@ const T = 'internal/auth/token.go'
 function graded(truth: TruthFile, findings: Finding[] | string | null, pass: Record<string, number> = {}, extra: Record<string, unknown> = {}, judge?: Provider) {
   const files: Record<string, string> = { 'truth.yaml': JSON.stringify(truth) }
   for (const b of truth.bugs) files[b.fix] = ''
-  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { max_findings: 100000 } }]\n', files)
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 0, max_findings: 100000 } }]\n', files)
   const artifacts = findings === null ? {} : { 'findings.json': typeof findings === 'string' ? findings : JSON.stringify({ findings }) }
   const s = spec({ kind: 'review-match', pass, ...extra })
   return reviewMatch(s, trial({ artifacts }), ctx(c, judge ? { strict: judgeOf(judge, 'strict') } : {}))
@@ -102,7 +102,7 @@ test('an absolute path inside the workdir, or its realpath, is stripped to the t
 test('an absolute path is stripped when graded end to end', async () => {
   const truth = seeded([bug('b', T, [10, 10])])
   const files: Record<string, string> = { 'truth.yaml': JSON.stringify(truth), 'fix/b.patch': '' }
-  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { max_findings: 100000 } }]\n', files)
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 0, max_findings: 100000 } }]\n', files)
   const t = trial()
   const findings = JSON.stringify({ findings: [f(join(realpathSync(t.workdir), T), 10)] })
   const withFindings = trial({ artifacts: { 'findings.json': findings } })

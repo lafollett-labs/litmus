@@ -691,9 +691,10 @@ hash of the judge definition plus the prompt version. That hash is recorded in
 extractor hashes differ, and the same goes for judges. This lets a real
 `/review` skill be scored without changing the format it writes.
 
-An extraction that yields nothing says why: there was no source, the reply was
-not `litmus:findings`, or `to` could not be written (a subject can plant a
-directory there). The graders then fail on the missing artifact, and the
+An extraction that yields nothing says why:
+- there was no source, or it was empty, which is never extracted into zero findings
+- the reply was not `litmus:findings`, or it stopped at the extractor's token cap
+- `to` could not be written, because a subject can plant a directory there The graders then fail on the missing artifact, and the
 reason is recorded with the trial. The extracted findings are redacted before
 they are written.
 
@@ -726,7 +727,8 @@ marker saying how much of the middle was cut. The cap is part of the prompt
 version.
 
 A trial passes when its executor finished (`exit == ok`) and every one of its
-graders passes. A cancelled, failed or errored trial never passes, whatever
+graders passes. A cancel during grading rejects the whole grading step: it
+never leaves a partial set of grades that would read as a failed trial. A cancelled, failed or errored trial never passes, whatever
 its graders say.
 
 | Grader | Passes when |
@@ -786,7 +788,12 @@ that is not set does not apply. Nor does a bound whose metric is null, such as
 applied has checked nothing, so it fails. At load, a review-match must set a
 bound that can apply to its truth: on a clean case, one other than
 `min_recall` and `min_claims_correct`. More than 1,000 findings fail the grade
-rather than being matched.
+rather than being matched. On a seeded case, the load-time rule is stricter:
+a review-match must set `min_recall` or `min_claims_correct`, because with
+`max_*` bounds alone an empty review would pass at recall 0. Matching grows
+roughly with the cube of the bug count, so a case with dozens of bugs grades
+in seconds rather than milliseconds; the few seeded bugs a case usually has
+cost nothing.
 
 With `confirm: <judge>`, each matched pair goes to a binary judge. It asks
 whether the finding states the seeded bug's mechanism, and whether that

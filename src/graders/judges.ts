@@ -44,7 +44,7 @@ export function makeJudges(defs: Record<string, JudgeDef>, providerFor: (def: Ju
 export const JUDGE_TIMEOUT_S = 300
 export const judgeTimeoutS = (maxTokens: number): number => Math.max(JUDGE_TIMEOUT_S, Math.ceil(maxTokens / 20))
 
-export async function ask(judge: Judge, system: string, user: string, maxTokens: number, signal: AbortSignal): Promise<{ text: string; usage: Usage }> {
+export async function ask(judge: Judge, system: string, user: string, maxTokens: number, signal: AbortSignal): Promise<{ text: string; usage: Usage; stop_reason: string | null }> {
   const limit = judgeTimeoutS(maxTokens)
   const clock = deadline(signal, limit * 1000)
   try {
@@ -61,7 +61,7 @@ export async function ask(judge: Judge, system: string, user: string, maxTokens:
       clock.signal,
     )
     if (clock.stopped()) throw new Error('answered after the clock stopped') // classified below, never accepted
-    return { text: r.text, usage: r.usage }
+    return { text: r.text, usage: r.usage, stop_reason: r.stop_reason }
   } catch (e) {
     if (clock.stopped() === 'timeout') throw new InfraError(`judge "${judge.name}" gave no answer within ${limit}s`, { retryable: true })
     throw e // a cancel, or the provider's own InfraError

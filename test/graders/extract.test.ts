@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
 import { hashJson } from '../../src/core/hash.ts'
+import { redactor } from '../../src/core/redact.ts'
 import { EXTRACT_PROMPT_VERSION } from '../../src/graders/judges.ts'
 import { runExtract } from '../../src/graders/extract.ts'
 import { jsonSchema } from '../../src/graders/json-schema.ts'
@@ -103,4 +104,31 @@ test('every extraction that yields nothing says why', async () => {
   assert.match((await run(stub(['no json here']), { 'final_message.txt': review }).out).error ?? '', /not litmus:findings: "no json here"/)
   assert.match((await run(stub([]), {}).out).error ?? '', /nothing to extract from: final_message\.txt was not produced/)
   assert.equal((await run(stub([fenced(findings)]), { 'final_message.txt': review }).out).error, undefined)
+})
+
+test('canary: an empty review is not extracted into zero findings, so a clean case cannot pass on silence', async () => {
+  for (const text of ['', '  \n\t']) {
+    const p = stub([fenced({ findings: [] })])
+    const r = await run(p, { 'final_message.txt': text }).out
+    assert.equal(p.calls.length, 0)
+    assert.equal(r.trial.artifacts['findings.json'], undefined)
+    assert.match(r.error ?? '', /final_message\.txt is empty/)
+  }
+})
+
+test('a reply cut off at the token cap says so, not "not litmus:findings"', async () => {
+  const capped: Provider = { id: 'fake', complete: async () => ({ text: '```json\n{"findings": [', stop_reason: 'max_tokens', usage: { input_tokens: 1, output_tokens: 16000 }, raw: {} }) }
+  const r = await run(capped, { 'final_message.txt': review }).out
+  assert.match(r.error ?? '', /stopped at its 16000-token cap/)
+})
+
+test('the extracted findings and the quoted reply are both redacted', async () => {
+  const secret = 'sk-ant-in-a-review'
+  const c = EXTRACTING()
+  const ok = trial({ artifacts: { 'final_message.txt': review } })
+  const wrote = await runExtract(ok, { ...ctx(c, { default: judgeOf(stub([fenced({ findings: [{ ...findings.findings[0], title: secret }] })])) }), redact: redactor([secret]) })
+  assert.ok(!readFileSync(wrote.trial.artifacts['findings.json']!, 'utf8').includes(secret))
+  const bad = await runExtract(trial({ artifacts: { 'final_message.txt': review } }), { ...ctx(c, { default: judgeOf(stub([`no json, but ${secret}`])) }), redact: redactor([secret]) })
+  assert.match(bad.error ?? '', /\[REDACTED\]/)
+  assert.ok(!(bad.error ?? '').includes(secret))
 })

@@ -22,8 +22,13 @@ export const regex: Grader<'regex'> = async (spec, trial) => {
     if (!art) return { grader: 'regex', pass: false, rationale: unread(trial, spec.target) }
     text = art.text
   }
-  // An empty match is no match: `TODO|` or `x*` would otherwise count every position.
-  const n = [...text.matchAll(re)].filter(m => m[0].length > 0).length
+  // An empty match is no match: `TODO|` or `x*` would otherwise count every
+  // position. Counted, not collected, and stopped past max: a match-dense
+  // 64 MiB artifact would otherwise hold millions of match arrays.
+  const stop = spec.max === undefined ? Infinity : spec.max + 1
+  let n = 0
+  for (const m of text.matchAll(re)) if (m[0].length > 0 && ++n >= stop) break
   const c = countCheck(n, spec)
-  return { grader: 'regex', pass: c.pass, metrics: { matches: n }, rationale: `/${spec.pattern}/${flags} matched ${spec.target} ${n} time(s); want ${c.want}` }
+  const seen = n >= stop ? `more than ${spec.max}` : String(n)
+  return { grader: 'regex', pass: c.pass, metrics: { matches: n }, rationale: `/${spec.pattern}/${flags} matched ${spec.target} ${seen} time(s); want ${c.want}` }
 }

@@ -4,15 +4,16 @@ import type { Bug, Finding } from '../suite/schema.ts'
 // results graded under different hashes. So a prompt edit without a version
 // bump would silently compare scores from two different judges.
 // test/graders/prompts.test.ts pins every prompt to its version to catch that.
-export const JUDGE_PROMPT_VERSION = '2' // JUDGE_SYSTEM, judgeRequest, confirmRequest, MATERIAL_CHARS
-export const EXTRACT_PROMPT_VERSION = '2' // EXTRACT_SYSTEM, extractRequest, MATERIAL_CHARS
+export const JUDGE_PROMPT_VERSION = '3' // JUDGE_SYSTEM, judgeRequest, confirmRequest, MATERIAL_CHARS
+export const EXTRACT_PROMPT_VERSION = '3' // EXTRACT_SYSTEM, extractRequest, MATERIAL_CHARS
 
 const FENCE = '```'
 
-// Material is fenced off in tags, and a closing tag inside it is defused, so a
-// transcript that says "reply pass: true" is judged rather than obeyed.
+// Material is fenced off in tags, and a closing tag inside it is defused in any
+// case or spacing (</MATERIAL>, </ review >), so a transcript that says
+// "reply pass: true" is judged rather than obeyed.
 const tag = (name: string, source: string, body: string) =>
-  `<${name} source="${source}">\n${clip(body).replaceAll(`</${name}>`, `<\\/${name}>`)}\n</${name}>`
+  `<${name} source="${source}">\n${clip(body).replace(new RegExp(`<\\s*/\\s*${name}\\s*>`, 'gi'), `<\\/${name}>`)}\n</${name}>`
 
 // A long session would overflow the judge's context, and the provider's
 // "request too large" is a non-retryable ERROR that keeps a spiralling trial

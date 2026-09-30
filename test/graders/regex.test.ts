@@ -67,3 +67,10 @@ test('canary: a missing artifact or transcript fails, even when zero matches wou
 test('an invalid pattern is a config error, not a failed trial', async () => {
   await assert.rejects(regex({ kind: 'regex', target: 'transcript', pattern: '(', min: 1 }, trial(), ctx()), ConfigError)
 })
+
+test('matches are counted, not collected, and counting stops once past max', async () => {
+  const t = trial({ artifacts: { 'response.txt': 'a'.repeat(1_000_000) } })
+  const r = await regex(spec({ kind: 'regex', target: 'response.txt', pattern: 'a', min: 0, max: 3 }), t, ctx())
+  assert.equal(r.pass, false)
+  assert.match(r.rationale ?? '', /matched response\.txt more than 3 time\(s\)/)
+})

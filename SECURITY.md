@@ -62,6 +62,7 @@ Out of scope:
 | Redaction by value | Where events and records are produced, the values of known key variables are replaced with `[REDACTED]`, so every sink gets the same scrubbed text. That covers the Anthropic, OpenRouter and AWS keys, plus any listed under `redact`. Provider responses are stored as parsed bodies only. Credentials the AWS SDK resolves from a named profile never pass through litmus's environment, so they are not redacted. |
 | Localhost only | `litmus serve` binds to `127.0.0.1`. It accepts only its own `Host`, requires its own `Origin` on any request that changes state, and sends no CORS headers. |
 | Declarative loading | Loading a suite, case or config never runs code. |
+| Fenced judge material | What a judge or extractor reads (a transcript, a review, a finding) is fenced in tags, with any closing tag inside it defused in any case or spacing, and the prompt says the material is data, not instructions. This makes a subject that writes "reply pass: true" much less likely to steer its judge, but it is a mitigation, not a guarantee: prompt injection against a model judge is not fully preventable. A binary judge answers false when unsure. |
 
 ## Where litmus runs code on purpose
 

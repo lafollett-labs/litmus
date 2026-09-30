@@ -32,10 +32,16 @@ export const runExtract: RunExtract = async (trial, ctx) => {
   const source = spec.from === 'final_message' ? (readArtifact(trial, 'final_message.txt') ?? readArtifact(trial, 'response.txt')) : readArtifact(trial, spec.from)
   if (!source) return { trial: without, extractor_hash, error: `nothing to extract from: ${unread(trial, spec.from === 'final_message' ? 'final_message.txt' : spec.from)}` }
 
+  // A subject that said nothing reviewed nothing. Extracted, it would read as
+  // zero findings, a perfect score on a clean case.
+  if (!source.text.trim()) return { trial: without, extractor_hash, error: `nothing to extract from: ${source.name} is empty` }
+
   const reply = await ask(judge, EXTRACT_SYSTEM, extractRequest(source.text), EXTRACT_MAX_TOKENS, ctx.signal)
   const usage = reply.usage
   const parsed = Findings.safeParse(extractJson(reply.text))
   if (!parsed.success) {
+    // Cut off at litmus's own token cap is litmus's limit, not the subject's.
+    if (reply.stop_reason === 'max_tokens') return { trial: without, extractor_hash, usage, error: `the extractor stopped at its ${EXTRACT_MAX_TOKENS}-token cap before finishing litmus:findings` }
     const said = ctx.redact.text(reply.text)
     return { trial: without, extractor_hash, usage, error: `the extractor's reply is not litmus:findings: ${JSON.stringify(said.length > 200 ? `${said.slice(0, 197)}...` : said)}` }
   }

@@ -28,7 +28,8 @@ export type Grader<K extends GraderSpec['kind'] = GraderSpec['kind']> = (
 
 // Graders run in case order; every grader runs even after one fails, so the UI
 // can show the whole picture. An InfraError from any grader aborts grading
-// (the runner retries grading only) and propagates.
+// (the runner retries grading only) and propagates. A cancel rejects with the
+// signal's reason, and no partial result set is returned.
 export type GradeAll = (trial: TrialResult, ctx: GradeContext) => Promise<GraderResult[]>
 
 // Runs a case's `extract` step, if any: writes the target artifact and

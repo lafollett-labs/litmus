@@ -365,4 +365,6 @@ test('a review-match with no pass bound that can apply to its truth is refused a
   mkdirSync(join(seeded, 'suites/s/cases/c/fix'), { recursive: true })
   writeFileSync(join(seeded, 'suites/s/cases/c/fix/b.patch'), 'x')
   assert.throws(() => load(seeded), /no pass bound that applies to a seeded case \(set min_recall, say\)/)
+  writeFileSync(join(seeded, 'suites/s/cases/c/case.yaml'), 'name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { max_false_positives: 0 } }]\n')
+  assert.throws(() => load(seeded), /seeded case/, 'max_* alone would pass an empty review at recall 0')
 })
