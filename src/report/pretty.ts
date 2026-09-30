@@ -61,6 +61,9 @@ export function pretty(sink: Sink, paint: Paint): { event: (e: RunEvent) => void
         case 'run.cancelled':
           line(paint('unsure', `cancelled: ${completed}/${total} trials completed; cases it stopped were not settled`))
           break
+        case 'run.failed':
+          line(paint('error', `litmus failed: ${e.error}`))
+          break
         case 'run.finished':
         case 'trial.step':
         case 'trial.usage':
