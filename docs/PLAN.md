@@ -109,7 +109,7 @@ stay on the branch, and their messages go into the squash commit's body.
     The harness tests use a scripted `query()` stream. One live harness smoke
     test runs under `LITMUS_LIVE=1`.
 
-- [ ] **M4: Graders and extractors**
+- [x] **M4: Graders and extractors**
   - The graders `regex`, `json-schema`, `file-exists`, `tool-used` and
     `command` (with a scrubbed environment).
   - `review-match`:
