@@ -87,18 +87,32 @@ function decide(
 
 // The fewest trials at which even an unbroken run can PASS under the rate
 // policy. Below it a case is INCONCLUSIVE however it performs (5/5 at 0.8 is),
-// so config loading can refuse a trial count that could never pass. Walks on
-// wilson itself so rounding can never disagree with settle().
+// so config loading can refuse a trial count that could never pass.
+//
+// n/n's Wilson lower bound is n/(n + z²), so the answer is near z²t/(1−t); it
+// is found by bisection on wilson itself, so rounding can never disagree with
+// settle(), in about 60 steps however close t is to 1. A threshold that would
+// need more than MAX_TRIALS unbroken passes is refused: no run is that long.
+export const MAX_TRIALS = 10_000_000
+
 export function minTrialsToPass(threshold: number, z?: number): number {
   if (!(threshold >= 0 && threshold < 1)) {
     throw new RangeError(`threshold ${threshold} is outside [0, 1); no finite run can reach it`)
   }
-  // n/n's Wilson lower bound is n/(n + z²), so the answer is near z²t/(1−t).
-  // The walk starts just below it: a threshold near 1 would otherwise loop for
-  // trillions of steps, and walking the last few keeps exact agreement.
+  if (z !== undefined && !(Number.isFinite(z) && z > 0)) throw new RangeError(`z ${z} must be a finite positive number`)
   const zz = (z ?? 1.959963984540054) ** 2
-  let n = Math.max(1, Math.ceil((zz * threshold) / (1 - threshold)) - 2)
-  while (n > 1 && wilson(n - 1, n - 1, z)!.lo >= threshold) n--
-  while (wilson(n, n, z)!.lo < threshold) n++
-  return n
+  const passes = (n: number) => wilson(n, n, z)!.lo >= threshold
+  let hi = Math.max(1, Math.ceil((zz * threshold) / (1 - threshold)))
+  if (!(hi <= MAX_TRIALS)) throw new RangeError(`threshold ${threshold} needs more than ${MAX_TRIALS} unbroken trials to pass`)
+  while (!passes(hi)) {
+    hi *= 2
+    if (hi > 2 * MAX_TRIALS) throw new RangeError(`threshold ${threshold} needs more than ${MAX_TRIALS} unbroken trials to pass`)
+  }
+  let lo = 0 // never passes: wilson is undefined at 0, and a pass needs a trial
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2)
+    if (mid > 0 && passes(mid)) hi = mid
+    else lo = mid
+  }
+  return hi
 }

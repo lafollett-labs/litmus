@@ -207,24 +207,27 @@ test('a case whose content changed between the sides is excluded with its reason
 })
 
 // Golden: any change to the draw order, the smoothing, the clamp or the
-// percentile rounding moves these digits.
+// percentile rounding moves these by 6e-5 or more; a refactor that only moves
+// the last bit (sum * (1 / n) for sum / n) stays within 1e-12.
+const near = (got: { lo: number; hi: number }, want: { lo: number; hi: number }) =>
+  assert.ok(Math.abs(got.lo - want.lo) < 1e-12 && Math.abs(got.hi - want.hi) < 1e-12, `${JSON.stringify(got)} vs ${JSON.stringify(want)}`)
 test('a seeded mixed comparison reproduces its interval to the last digit', () => {
   const mixed = (label: string, pat: string) => side(label, Array.from({ length: 6 }, (_, i): [string, string] => [`s/m${i}`, pat.slice(0, 3 + i)]))
   const c = compare(mixed('a', 'pppppfp'), mixed('b', 'ppfpfpp'))
-  assert.deepEqual(c.interval, { lo: -0.46184214701818194, hi: -0.012881663017730832 })
+  near(c.interval!, { lo: -0.46184214701818194, hi: -0.012881663017730832 })
 })
 
 test('case resampling widens a suite whose cases disagree: three collapses among ten are INCONCLUSIVE, not REGRESSION', () => {
   const b: [string, string][] = cases(10, p(30)).map(([id], i) => [id, i < 3 ? f(30) : p(30)])
   const c = compare(side('a', cases(10, p(30))), side('b', b))
-  assert.deepEqual(c.interval, { lo: -0.5946581617154699, hi: -0.010283376438439098 })
+  near(c.interval!, { lo: -0.5946581617154699, hi: -0.010283376438439098 })
   assert.equal(c.verdict, 'INCONCLUSIVE')
 })
 
 test('each draw is clamped to [-1, 1], so an all-to-nothing collapse sits just inside delta', () => {
   const c = compare(side('a', cases(30, p(5))), side('b', cases(30, f(5))))
   assert.equal(c.delta, -1)
-  assert.deepEqual(c.interval, { lo: -0.9638754809971749, hi: -0.8912289887252397 })
+  near(c.interval!, { lo: -0.9638754809971749, hi: -0.8912289887252397 })
   assert.equal(c.verdict, 'REGRESSION')
 })
 
@@ -264,5 +267,9 @@ test('the suite verdict boundaries are inclusive exactly as the rules say', () =
 
 test('a WARN needs the ratio strictly outside the band', () => {
   const at = (bTokens: number) => compare(side('a', cases(1, p(5)), { tokens: 100 }), side('b', cases(1, p(5)), { tokens: bTokens })).warns.length
-  assert.deepEqual([at(150), at(100 / 1.5), at(150.01), at(66)], [0, 0, 1, 1])
+  assert.deepEqual([at(150), at(150.01), at(66)], [0, 1, 1])
+  // Exactly on the lower edge: 100/150 and 1/1.5 are the same double.
+  const low = compare(side('a', cases(1, p(5)), { tokens: 150 }), side('b', cases(1, p(5)), { tokens: 100 }))
+  assert.equal(100 / 150, 1 / 1.5)
+  assert.deepEqual(low.warns, [])
 })

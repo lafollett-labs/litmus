@@ -201,11 +201,24 @@ test('min_trials is capped by the trials scheduled, so one requested trial can s
   assert.equal(v.verdict, 'PASS')
 })
 
-test('minTrialsToPass is exact and instant even for a threshold a hair below 1', () => {
-  assert.deepEqual([0.5, 0.8, 0.9, 0.95, 0.99].map(t => minTrialsToPass(t)), [4, 16, 35, 73, 381])
+test('minTrialsToPass is exact, bounded, and refuses what no run could meet', () => {
+  assert.deepEqual([0, 0.5, 0.8, 0.9, 0.95, 0.99, 0.99999].map(t => minTrialsToPass(t)), [1, 4, 16, 35, 73, 381, 384143])
+  // Exactly on a bound, and an ulp either side of it.
+  const on = wilson(16, 16)!.lo
+  assert.deepEqual([minTrialsToPass(on), minTrialsToPass(on + Number.EPSILON / 4), minTrialsToPass(on - 1e-17)], [16, 17, 16])
+  // An explicit z moves the answer, and a bad one is refused.
+  assert.equal(minTrialsToPass(0.8, 1), 4)
+  for (const z of [-1, 0, NaN, Infinity]) assert.throws(() => minTrialsToPass(0.8, z), /must be a finite positive number/)
   const t0 = Date.now()
-  assert.equal(minTrialsToPass(0.999999999999), 3841543802248)
-  assert.ok(Date.now() - t0 < 50)
+  for (const t of [0.9999999, 1 - 1e-14, 1 - 2 ** -53]) assert.throws(() => minTrialsToPass(t), /needs more than 10000000 unbroken trials/)
+  assert.throws(() => minTrialsToPass(0.5, 1e10), /needs more than/)
+  assert.ok(Date.now() - t0 < 100)
+})
+
+test('an upper bound exactly on the threshold does not sink it under the rate policy', () => {
+  const threshold = wilson(0, 16)!.hi
+  const v = settle({ case: 's/c', config: 'f', policy: 'rate', threshold, min_trials: 1, expect: 'pass', trials: 16, outcomes: Array.from({ length: 16 }, () => ({ status: 'fail' as const, exit: 'ok' as const })) })
+  assert.equal(v.verdict, 'INCONCLUSIVE')
 })
 
 test('a lower bound exactly on the threshold clears it under the rate policy', () => {
