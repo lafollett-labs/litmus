@@ -4,15 +4,27 @@ import type { Bug, Finding } from '../suite/schema.ts'
 // results graded under different hashes. So a prompt edit without a version
 // bump would silently compare scores from two different judges.
 // test/graders/prompts.test.ts pins every prompt to its version to catch that.
-export const JUDGE_PROMPT_VERSION = '1' // JUDGE_SYSTEM, judgeRequest, confirmRequest
-export const EXTRACT_PROMPT_VERSION = '1' // EXTRACT_SYSTEM, extractRequest
+export const JUDGE_PROMPT_VERSION = '2' // JUDGE_SYSTEM, judgeRequest, confirmRequest, MATERIAL_CHARS
+export const EXTRACT_PROMPT_VERSION = '2' // EXTRACT_SYSTEM, extractRequest, MATERIAL_CHARS
 
 const FENCE = '```'
 
 // Material is fenced off in tags, and a closing tag inside it is defused, so a
 // transcript that says "reply pass: true" is judged rather than obeyed.
 const tag = (name: string, source: string, body: string) =>
-  `<${name} source="${source}">\n${body.replaceAll(`</${name}>`, `<\\/${name}>`)}\n</${name}>`
+  `<${name} source="${source}">\n${clip(body).replaceAll(`</${name}>`, `<\\/${name}>`)}\n</${name}>`
+
+// A long session would overflow the judge's context, and the provider's
+// "request too large" is a non-retryable ERROR that keeps a spiralling trial
+// out of scoring. Past the limit the head and tail are kept, and what was cut
+// is said, so the judge knows the middle is missing.
+export const MATERIAL_CHARS = 400_000
+
+export function clip(body: string): string {
+  if (body.length <= MATERIAL_CHARS) return body
+  const half = MATERIAL_CHARS / 2
+  return `${body.slice(0, half)}\n[... ${body.length - MATERIAL_CHARS} characters elided ...]\n${body.slice(-half)}`
+}
 
 export const JUDGE_SYSTEM = `You are a grader in an evaluation harness. You answer exactly one yes-or-no question about the material you are given.
 
