@@ -6,8 +6,8 @@ import type { SuiteView } from './model.ts'
 // never reads a file or talks to a provider. Same origin, so the browser sends
 // the Origin the server checks on every request that changes state.
 
-export type Artifact = { name: string; size?: number; text?: string; binary?: true; missing?: true }
-export type TrialDetail = { record: TrialRecord; transcript: TranscriptEntry[]; artifacts: Artifact[] }
+export type Artifact = { name: string; size?: number; text?: string; binary?: true; truncated?: true; missing?: true }
+export type TrialDetail = { record: TrialRecord; transcript: TranscriptEntry[]; transcript_truncated?: true; artifacts: Artifact[] }
 export type StoredRun = { manifest: RunManifest; verdicts: Verdict[]; comparisons: Comparison[] }
 export type StartRun = { select?: string[]; configs?: string[]; trials?: number; rerun?: { run: string; only: VerdictKind[] } }
 

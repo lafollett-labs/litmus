@@ -56,7 +56,8 @@ const tabs = computed<Tab[]>(() => (findings.value ? ['transcript', 'graders', '
               </template>
             </div>
           </li>
-          <li v-if="!data.transcript.length" class="muted">No transcript.</li>
+          <li v-if="data.transcript_truncated" class="muted">The transcript is too large to show here; it is in the run's directory.</li>
+          <li v-else-if="!data.transcript.length" class="muted">No transcript.</li>
         </ol>
 
         <ul v-else-if="tab === 'graders'" class="graders" aria-label="Graders">
@@ -93,7 +94,7 @@ const tabs = computed<Tab[]>(() => (findings.value ? ['transcript', 'graders', '
         <ul v-else-if="tab === 'artifacts'" class="artifacts" aria-label="Artifacts">
           <li v-for="a in data.artifacts" :key="a.name">
             <details>
-              <summary><code>{{ a.name }}</code> <span class="muted">{{ a.missing ? 'missing' : a.binary ? `${a.size} bytes, binary` : `${a.size} bytes` }}</span></summary>
+              <summary><code>{{ a.name }}</code> <span class="muted">{{ a.missing ? 'missing' : a.truncated ? `${a.size} bytes, too large to show` : a.binary ? `${a.size} bytes, binary` : `${a.size} bytes` }}</span></summary>
               <pre v-if="a.text !== undefined">{{ a.text }}</pre>
             </details>
           </li>
