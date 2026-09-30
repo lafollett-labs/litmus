@@ -128,7 +128,7 @@ stay on the branch, and their messages go into the squash commit's body.
     `review-match` metrics match hand-computed examples, including the case
     that greedy pairing gets wrong.
 
-- [ ] **M5: Statistics and verdicts**
+- [x] **M5: Statistics and verdicts**
   - The Wilson interval, `minTrialsToPass`, and unbiased pass@k and pass^k
     with k = min(3, scored).
   - The `all` and `rate` policies, where `rate` has no FLAKY. Under
