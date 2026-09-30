@@ -900,7 +900,9 @@ the cases both of them scored.
   NO CHANGE takes evidence from trials. Both sides run the same cases, so when
   every case agrees, the case level adds no spread and only trial noise is
   left. At δ = 0.05 and seed 1, two identical all-pass sides reach NO CHANGE
-  from 2 cases × 30 trials, 14 × 10, 50 × 5 or 112 × 3. Smaller suites come out
+  from 2 cases × 30 trials, 14 × 10 or 50 × 5, and about 120 × 3 (between 112
+  and 121 cases the seed decides, since the interval edge sits on δ). Smaller
+  suites come out
   INCONCLUSIVE, which is why `run` treats a comparison's INCONCLUSIVE as
   information rather than a failure (see CLI). Each draw is clamped to
   [-1, 1], so at the extremes the interval sits just inside `delta` rather than
