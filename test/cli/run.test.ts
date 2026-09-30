@@ -296,6 +296,8 @@ test('a rerun with nothing to do keeps a machine-readable stdout empty', () => {
   const id = runId(litmus('run', 'e2e/passes', '--config', 'fake').stdout)
   const r = litmus('run', '--rerun', id, '--only', 'fail', '--reporter', 'json')
   assert.deepEqual([r.status, r.stdout, r.stderr.trim()], [0, '', `nothing to rerun: run ${id} has no FAIL verdict`])
+})
+
 test('serve answers on 127.0.0.1 until SIGINT, then exits 0; a port in use exits 2', async () => {
   const child = spawn(process.execPath, [MAIN, 'serve', '--port', '0'], { cwd: ROOT, env: ENV })
   let stdout = ''
