@@ -87,6 +87,20 @@ test('a trial waiting on a run that turns out to be live elsewhere is looked up 
   assert.equal(state.detail?.data?.record.status, 'fail')
 })
 
+test('a trial still running in another process says so, not the server\'s 404', async () => {
+  routes = { 'GET /api/runs/r6': stored('running'), 'GET /api/suites': () => suites }
+  watchRun('r6')
+  last().send({ type: 'trial.started', key: 's/a@fake#1' })
+  openTrial('s/a@fake#1')
+  last().fail()
+  await tick()
+  await tick()
+  assert.equal(state.run?.done, 'elsewhere')
+  assert.equal(state.detail?.waiting, false)
+  assert.equal(state.detail?.error, null)
+  assert.match(state.detail?.note ?? '', /still running in another process/)
+})
+
 test('a trial opened while it runs waits, is fetched when it finishes, and closes when another run is shown', async () => {
   let fetched = 0
   routes = { 'GET /api/runs/r2/trial?key=s%2Fa%40fake%231': () => (fetched++, { record: { status: 'pass' }, transcript: [], artifacts: [] }) }

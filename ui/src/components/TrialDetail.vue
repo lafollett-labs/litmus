@@ -30,6 +30,7 @@ const shown = computed<Tab>(() => (tabs.value.includes(tab.value) ? tab.value : 
       </header>
       <p v-if="state.detail.error" class="error">{{ state.detail.error }}</p>
       <p v-else-if="state.detail.waiting" class="muted hint" role="status">Running… its record appears here when it finishes.</p>
+      <p v-else-if="state.detail.note" class="muted hint" role="status">{{ state.detail.note }}</p>
       <p v-else-if="!data" class="muted hint">Loading…</p>
       <template v-else>
         <div role="tablist" aria-label="Trial views" class="tabs">

@@ -1152,7 +1152,8 @@ API and nothing else.
     trial count does not apply to them. When both kinds are checked, every
     key's config must also be chosen in the toolbar, or the run is refused
     with the reason. The same holds for a config or trial row checked under a
-    checked case or suite, which would otherwise not run. A trial numbered
+    checked case or suite, whose config or trial number the toolbar's configs
+    and trial count would leave out. A trial numbered
     past its case's own count cannot be checked: no selector names it.
   - The tree is a WAI-ARIA tree: arrows move, Right and Left open and close,
     Home and End jump, Space checks a row and Enter opens it.

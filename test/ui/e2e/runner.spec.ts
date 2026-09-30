@@ -135,6 +135,14 @@ test('compare: two configs in one run, with the grid, the comparison and its fli
   await shot(page, 'compare')
 })
 
+test('a page load leaves focus alone: the first Tab reaches Run all', async ({ page }) => {
+  await open(page)
+  await done(page, 'finished')
+  await expect(page.locator('.runline')).not.toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: 'Run all' })).toBeFocused()
+})
+
 test('the page keeps one main landmark, holding the view\'s tab panel', async ({ page }) => {
   await open(page)
   await expect(page.getByRole('main')).toHaveCount(1)

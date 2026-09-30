@@ -102,6 +102,7 @@ function key(e: KeyboardEvent, r: Row) {
         <input type="checkbox" tabindex="-1" aria-hidden="true" :checked="state.checked.has(r.node.id)" :disabled="!r.node.selectable" :title="r.node.selectable ? undefined : 'beyond the case\'s own trial count: rerun it from its config row'" @click.stop @change="check(r.node)" />
         <StatusIcon :status="r.node.status" />
         <span class="label" :class="{ mono: r.node.kind !== 'suite' }">{{ r.node.label }}</span>
+        <span v-if="!r.node.selectable" class="sr-only">, past the case's own trial count, so it cannot be checked</span>
         <span v-if="r.node.kind !== 'trial'" class="badge" :data-counts="r.node.id">
           <span class="sr-only">{{ BADGE.map(([k]) => `${r.node.counts[k]} ${k}`).join(', ') }}</span>
           <span v-for="[k, glyph] in BADGE" :key="k" aria-hidden="true" :class="[k, { zero: !r.node.counts[k] }]">{{ glyph }} {{ r.node.counts[k] }}</span>

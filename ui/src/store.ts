@@ -7,7 +7,8 @@ export type View = 'tree' | 'compare'
 
 // A trial's detail belongs to the run it was opened in. `waiting` is a trial
 // that has not finished, whose record does not exist yet.
-type Detail = { run: string; key: string; data: TrialDetail | null; error: string | null; waiting: boolean }
+// `note` is a neutral word in place of a record there is not yet.
+type Detail = { run: string; key: string; data: TrialDetail | null; error: string | null; note: string | null; waiting: boolean }
 
 export const state = reactive({
   suites: [] as SuiteView[],
@@ -67,7 +68,7 @@ async function settled(id: string): Promise<void> {
     state.suites = suites
     // A trial still waiting will get no trial.finished now: look for its record once.
     const d = state.detail
-    if (d?.waiting && d.run === id) void fetchTrial(id, d.key)
+    if (d?.waiting && d.run === id) void fetchTrial(id, d.key, 'still running in another process; reload to see it when it finishes')
   } catch (e) {
     if (state.run?.id !== id) return
     if (state.run.done === 'running') state.run.done = 'lost'
@@ -109,13 +110,13 @@ export function runAll(): Promise<void> {
 
 export function runSelected(): Promise<void> {
   state.message = null
-  const s = selection(tree.value, state.checked, state.chosen)
+  const t = trialCount()
+  if (!t) return Promise.resolve()
+  const s = selection(tree.value, state.checked, state.chosen, t.trials)
   if ('problem' in s) {
     state.message = s.problem
     return Promise.resolve()
   }
-  const t = trialCount()
-  if (!t) return Promise.resolve()
   const keyed = s.select.some(x => x.includes('#'))
   return start({ ...s, ...t }).then(() => {
     // The server runs a trial key's own trial, whatever the count says.
@@ -145,18 +146,20 @@ export function openTrial(key: string): void {
   if (!state.run) return
   const run = state.run.id
   const finished = !['queued', 'running'].includes(state.run.trials[key] ?? '')
-  state.detail = { run, key, data: null, error: null, waiting: !finished }
+  state.detail = { run, key, data: null, error: null, note: null, waiting: !finished }
   if (finished) void fetchTrial(run, key)
 }
 
-async function fetchTrial(run: string, key: string): Promise<void> {
+// `absent`: what to say, instead of the server's error, when the record may
+// simply not exist yet.
+async function fetchTrial(run: string, key: string, absent?: string): Promise<void> {
   const mine = () => state.detail?.run === run && state.detail.key === key
   try {
     // Raw: a transcript can be large, and nothing in it changes once written.
     const data = markRaw(await api.trial(run, key))
     if (mine()) Object.assign(state.detail!, { data, waiting: false })
   } catch (e) {
-    if (mine()) Object.assign(state.detail!, { error: (e as Error).message, waiting: false })
+    if (mine()) Object.assign(state.detail!, absent === undefined ? { error: (e as Error).message, waiting: false } : { note: absent, waiting: false })
   }
 }
 

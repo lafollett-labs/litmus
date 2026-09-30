@@ -95,6 +95,10 @@ test('a selection that would run something unasked is refused with the reason', 
   assert.match(problem(['s', 's/b@other#1'], ['fake']) ?? '', /^s\/b@other#1 is checked under/)
   // ...and on a chosen config it is already covered: the case row runs it
   assert.deepEqual(selection(tree, new Set(['s/b', 's/b@other']), ['fake', 'other']), { select: ['s/b'], configs: ['fake', 'other'] })
+  // (a'') ...unless the toolbar's trial count stops short of it
+  const s = selection(tree, new Set(['s/b', 's/b@other#2']), ['fake', 'other'], 1)
+  assert.match('problem' in s ? s.problem : '', /^s\/b@other#2 names a trial past the trial count 1/)
+  assert.deepEqual(selection(tree, new Set(['s/b', 's/b@other#2']), ['fake', 'other'], 2), { select: ['s/b'], configs: ['fake', 'other'] })
   // (c) nothing that can run: a trial beyond the case's own count cannot be named
   assert.equal(find(tree, 's/b@other#3')!.selectable, false)
   assert.match(problem(['s/b@other#3'], ['fake']) ?? '', /check the rows/)

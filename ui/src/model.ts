@@ -134,17 +134,18 @@ export function filterTree(nodes: Node[], text: string, chips: ReadonlySet<Statu
 // has not chosen would spread that config to the case rows too: that is
 // refused with a reason rather than guessed at. So is a config or trial row
 // checked under a checked case or suite, which runs on the toolbar's configs
-// only: one whose config is not chosen would never run.
+// and trial count only: one whose config is not chosen, or whose trial number
+// is past that count, would never run.
 export type Selection = { select: string[]; configs: string[] } | { problem: string }
 
-export function selection(tree: Node[], checked: ReadonlySet<string>, chosen: string[]): Selection {
+export function selection(tree: Node[], checked: ReadonlySet<string>, chosen: string[], trials?: number): Selection {
   const named = new Set<string>() // case and suite selectors
   const keys = new Map<string, string>() // trial key -> its config
-  const covered = new Map<string, string>() // a config or trial row under a checked case or suite -> its config
+  const covered = new Map<string, Node>() // a config or trial row under a checked case or suite
   const visit = (n: Node, under: boolean) => {
     if (checked.has(n.id) && n.selectable) {
       if (n.kind === 'config' || n.kind === 'trial') {
-        if (under) covered.set(n.id, n.configs[0]!)
+        if (under) covered.set(n.id, n)
         else for (const k of n.selector) keys.set(k, n.configs[0]!)
         return
       }
@@ -157,10 +158,14 @@ export function selection(tree: Node[], checked: ReadonlySet<string>, chosen: st
   const keyConfigs = [...new Set(keys.values())]
   if (named.size === 0) return keys.size ? { select: [...keys.keys()], configs: keyConfigs } : { problem: 'check the rows to run first' }
   if (chosen.length === 0) return { problem: 'choose the configs to run in the toolbar' }
-  const lost = [...covered].filter(([, c]) => !chosen.includes(c))
+  const lost = [...covered.values()].filter(n => !chosen.includes(n.configs[0]!))
   if (lost.length) {
-    const cfgs = [...new Set(lost.map(([, c]) => c))].join(', ')
-    return { problem: `${lost.map(([id]) => id).join(', ')} ${lost.length === 1 ? 'is' : 'are'} checked under a checked case or suite, which runs only on the toolbar's configs; choose ${cfgs} in the toolbar, or uncheck the row above` }
+    const cfgs = [...new Set(lost.map(n => n.configs[0]!))].join(', ')
+    return { problem: `${lost.map(n => n.id).join(', ')} ${lost.length === 1 ? 'is' : 'are'} checked under a checked case or suite, which runs only on the toolbar's configs; choose ${cfgs} in the toolbar, or uncheck the row above` }
+  }
+  const past = trials === undefined ? [] : [...covered.values()].filter(n => Math.max(...n.selector.map(trialNumber)) > trials)
+  if (past.length) {
+    return { problem: `${past.map(n => n.id).join(', ')} ${past.length === 1 ? 'names a trial' : 'name trials'} past the trial count ${trials}, which the checked case or suite above runs; clear the count, or uncheck the row above` }
   }
   const stray = keyConfigs.filter(c => !chosen.includes(c))
   if (stray.length) return { problem: `the checked case and suite rows would run on ${stray.join(', ')} too; choose ${stray.join(', ')} in the toolbar, or run those rows on their own` }

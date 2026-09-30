@@ -44,11 +44,14 @@ const failed = ref<string | null>(null)
 // A toolbar button disables itself as a run starts or ends, and the focus it
 // held would fall to the page (focus fixup runs later, so the button may still
 // be the active element here); it goes to the run line, which says what happened.
+// Focus already on the page moves only after the user's own action: a page
+// load or a run ending on its own never takes it.
 const runline = ref<HTMLElement | null>(null)
-watch([() => state.busy, () => state.run?.id, () => state.run?.done], () =>
+watch([() => state.busy, () => state.run?.id, () => state.run?.done], (_now, [wasBusy]) =>
   nextTick(() => {
     const a = document.activeElement
-    if (a === document.body || (a instanceof HTMLButtonElement && a.disabled)) runline.value?.focus()
+    const acted = state.busy || wasBusy === true
+    if ((a instanceof HTMLButtonElement && a.disabled) || (acted && a === document.body)) runline.value?.focus()
   }),
 )
 onMounted(() => load().catch(e => (failed.value = (e as Error).message)))
