@@ -29,7 +29,8 @@ options:
 exit codes (run): 0 ok, 1 a blocking verdict or a REGRESSION, 2 a usage or
 config error, 3 infrastructure trouble only, 130 cancelled by SIGINT, 143 by SIGTERM
 exit codes (compare): 0 ok, 1 a REGRESSION (or INCONCLUSIVE), 2 a usage or
-config error, 3 infrastructure trouble`
+config error, 3 infrastructure trouble
+exit codes (validate): 0 valid, 1 invalid, 2, 130 and 143 as for run`
 
 // Every command takes these (docs/ARCHITECTURE.md § CLI). --config is not one
 // of them: under run it names the configurations to compare.
