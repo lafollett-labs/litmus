@@ -63,9 +63,11 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
 
   const server = createServer((req, res) => {
     handle(req, res).catch(e => {
-      // The client left mid-request: there is no one to answer. (The request
-      // itself reads as destroyed after any body is read; the socket tells.)
-      if (!res.socket || res.socket.destroyed) return
+      // The client left mid-request: there is no one to answer, and nothing
+      // went wrong here. The request's socket tells: the request itself reads
+      // as destroyed once its body is read, and a pipelined response has no
+      // socket of its own until the one ahead of it ends.
+      if (!req.socket || req.socket.destroyed) return
       const status = e instanceof HttpError ? e.status : e instanceof ConfigError || e instanceof z.ZodError ? 400 : 500
       if (status === 500) process.stderr.write(`litmus serve: ${(e as Error).stack ?? String(e)}\n`)
       if (res.headersSent) return void res.end()
@@ -97,6 +99,8 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
       case 'GET /runs':
         return json(res, 200, listRuns(loadConfig(o.configFile, env).resultsDir))
       case 'POST /runs':
+        // Defensive: close() drops every connection at once, so no request
+        // should ever arrive while closing. Should one, it starts nothing.
         if (closing) throw new HttpError(503, 'the server is shutting down')
         return json(res, 202, await start(StartRun.parse(await body(req))))
       case 'GET /runs/:id':
@@ -278,30 +282,43 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
     if (rel.includes('\0') || rel.split('/').includes('..')) throw new HttpError(400, 'bad path')
     const got = readInside(uiDir, `.${rel}`, ARTIFACT_MAX)
     const asked = 'data' in got ? got.data : undefined
-    const index = readInside(uiDir, 'index.html', ARTIFACT_MAX)
-    const content = asked ?? ('data' in index ? index.data : Buffer.from(NOT_BUILT))
+    const index = asked ? undefined : readInside(uiDir, 'index.html', ARTIFACT_MAX)
+    const content = asked ?? (index && 'data' in index ? index.data : Buffer.from(NOT_BUILT))
     const type = asked ? (TYPES[extname(rel)] ?? 'application/octet-stream') : 'text/html; charset=utf-8'
     res.writeHead(200, { ...SECURITY, 'content-type': type, 'content-length': content.length })
     res.end(req.method === 'HEAD' ? undefined : content)
   }
 
-  async function body(req: IncomingMessage): Promise<unknown> {
-    if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) throw new HttpError(415, 'send application/json')
-    const chunks: Buffer[] = []
-    let size = 0
-    for await (const chunk of req) {
-      size += (chunk as Buffer).length
-      if (size > MAX_BODY) {
-        // The rest of the body is never read, so this connection cannot serve another request.
-        throw Object.assign(new HttpError(413, 'body too large'), { close: true })
-      }
-      chunks.push(chunk as Buffer)
-    }
-    try {
-      return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    } catch {
-      throw new HttpError(400, 'body is not JSON')
-    }
+  // Read with listeners, not for-await: leaving a for-await early destroys the
+  // request and its socket, and the 413 could never be sent. Past the limit the
+  // rest is left unread, and the 413 closes the connection behind it.
+  function body(req: IncomingMessage): Promise<unknown> {
+    if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) return Promise.reject(new HttpError(415, 'send application/json'))
+    return new Promise((ok, fail) => {
+      const chunks: Buffer[] = []
+      let size = 0
+      let over = false
+      req.on('data', (chunk: Buffer) => {
+        if (over) return
+        size += chunk.length
+        if (size > MAX_BODY) {
+          over = true
+          req.pause()
+          fail(Object.assign(new HttpError(413, 'body too large'), { close: true }))
+          return
+        }
+        chunks.push(chunk)
+      })
+      req.on('end', () => {
+        if (over) return
+        try {
+          ok(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        } catch {
+          fail(new HttpError(400, 'body is not JSON'))
+        }
+      })
+      req.on('error', fail)
+    })
   }
 
   await new Promise<void>((ok, fail) => {
