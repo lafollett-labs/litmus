@@ -4,12 +4,16 @@ import { scrubbedEnv } from '../sandbox/env.ts'
 import type { Grader } from './types.ts'
 
 const TAIL_BYTES = 4000
+// The last stretch of output is kept whole and redacted before it is cut to
+// TAIL_BYTES: a cut through a key would leave a fragment redaction cannot match.
+const WINDOW_BYTES = 1 << 20
 
 // Runs code the subject may have written, so it gets no credentials, and it is
 // uncontained (docs/ARCHITECTURE.md § Sandbox). The shell leads its own process
 // group: on a timeout the whole group is killed, because `sh -c "go test"`
 // leaves grandchildren holding stdout open, and waiting on them would hang
-// grading forever. Output is not redacted here; the store redacts everything.
+// grading forever. Its code can print any file the operator can read, so its
+// output is redacted here, before it is cut.
 export const command: Grader<'command'> = (spec, trial, ctx) =>
   new Promise<GraderResult>(resolve => {
     const result = (pass: boolean, rationale: string): GraderResult => ({ grader: 'command', pass, rationale })
@@ -24,12 +28,13 @@ export const command: Grader<'command'> = (spec, trial, ctx) =>
     let tail = Buffer.alloc(0)
     const keep = (chunk: Buffer) => {
       tail = Buffer.concat([tail, chunk])
-      if (tail.length > TAIL_BYTES) tail = tail.subarray(tail.length - TAIL_BYTES)
+      if (tail.length > WINDOW_BYTES) tail = tail.subarray(tail.length - WINDOW_BYTES)
     }
     child.stdout.on('data', keep)
     child.stderr.on('data', keep)
     const output = () => {
-      const text = tail.toString('utf8').trimEnd()
+      const safe = ctx.redact.bytes(tail)
+      const text = safe.subarray(Math.max(0, safe.length - TAIL_BYTES)).toString('utf8').trimEnd()
       return text ? `\n${text}` : ''
     }
 

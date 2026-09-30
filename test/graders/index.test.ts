@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { InfraError } from '../../src/core/errors.ts'
+import { redactor } from '../../src/core/redact.ts'
 import { gradeAll, makeJudges, runExtract } from '../../src/graders/index.ts'
 import { oneCase } from '../helpers/cases.ts'
 import { ctx, judgeOf, stub, trial, verdict } from '../helpers/grading.ts'
@@ -50,7 +51,14 @@ graders:
 test('the index wires the extractor and judges the runner uses', async () => {
   const judges = makeJudges({ default: { provider: 'fake', model: 'm' } }, () => stub(['```json\n{"findings": []}\n```']))
   const { c } = oneCase(`name: c\nexecutor: { kind: model, prompt: hi }\nextract: { with: default }\ngraders: [{ kind: review-match }]\n`, { 'truth.yaml': JSON.stringify({ kind: 'clean' }) })
-  const r = await runExtract(trial({ artifacts: { 'final_message.txt': 'LGTM' } }), { case: c, judge: judges, signal: new AbortController().signal })
+  const r = await runExtract(trial({ artifacts: { 'final_message.txt': 'LGTM' } }), { case: c, judge: judges, signal: new AbortController().signal, redact: redactor([]) })
   assert.ok(r.trial.artifacts['findings.json'])
   assert.match(r.extractor_hash ?? '', /^[0-9a-f]{64}$/)
+})
+
+test('every rationale is redacted where it is produced', async () => {
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders:\n  - { kind: command, run: "echo sk-ant-live; exit 1" }\n  - { kind: regex, target: response.txt, pattern: nope }\n')
+  const rs = await gradeAll(trial({ artifacts: { 'response.txt': 'x' } }), { ...ctx(c), redact: redactor(['sk-ant-live']) })
+  assert.match(rs[0]!.rationale ?? '', /\[REDACTED\]/)
+  assert.ok(!JSON.stringify(rs).includes('sk-ant-live'))
 })

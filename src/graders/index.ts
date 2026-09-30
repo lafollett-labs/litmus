@@ -20,7 +20,11 @@ export { EXTRACT_PROMPT_VERSION, JUDGE_PROMPT_VERSION, judgeHash, makeJudges } f
 // reach a verdict.
 export const gradeAll: GradeAll = async (trial, ctx) => {
   const results: GraderResult[] = []
-  for (const spec of ctx.case.spec.graders) results.push(await grade(spec, trial, ctx))
+  for (const spec of ctx.case.spec.graders) {
+    const r = await grade(spec, trial, ctx)
+    // A rationale quotes what the subject wrote, a command printed or a judge said.
+    results.push(r.rationale === undefined ? r : { ...r, rationale: ctx.redact.text(r.rationale) })
+  }
   return results
 }
 

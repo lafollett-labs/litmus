@@ -1,5 +1,6 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { redactor } from '../../src/core/redact.ts'
 import { command } from '../../src/graders/command.ts'
 import { ctx, spec, trial } from '../helpers/grading.ts'
 
@@ -61,4 +62,13 @@ test('a workdir that is gone fails the grade instead of throwing', async () => {
   const r = await command(spec({ kind: 'command', run: 'true' }), t, ctx())
   assert.equal(r.pass, false)
   assert.match(r.rationale ?? '', /could not run/)
+})
+
+test('output is redacted before it is cut, so no fragment of a key survives at the boundary', async () => {
+  const key = 'sk-ant-SPLIT-ACROSS-THE-CUT-0123456789'
+  // The key ends 3990 bytes from the end, so a raw 4000-byte cut lands inside it.
+  const run = `printf '%s' '${key}'; head -c 3990 /dev/zero | tr '\\0' x; exit 1`
+  const r = await command(spec({ kind: 'command', run }), trial(), { ...ctx(), redact: redactor([key]) })
+  assert.equal(r.pass, false)
+  for (let n = 6; n <= key.length; n++) assert.ok(!(r.rationale ?? '').includes(key.slice(-n)), `tail ${n}`)
 })

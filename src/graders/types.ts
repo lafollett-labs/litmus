@@ -1,4 +1,5 @@
 import type { ExecutorResult, GraderResult, Usage } from '../core/types.ts'
+import type { Redactor } from '../core/redact.ts'
 import type { Provider } from '../providers/index.ts'
 import type { LoadedCase } from '../suite/load.ts'
 import type { Grader as GraderSpec, JudgeDef } from '../suite/schema.ts'
@@ -16,6 +17,7 @@ export type GradeContext = {
   case: LoadedCase
   judge: (name: string) => Judge // throws ConfigError for an unknown judge name
   signal: AbortSignal
+  redact: Redactor // the run's; a grader's rationale and anything it writes are produced here, so redacted here
 }
 
 export type Grader<K extends GraderSpec['kind'] = GraderSpec['kind']> = (

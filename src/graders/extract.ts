@@ -37,7 +37,7 @@ export const runExtract: RunExtract = async (trial, ctx) => {
 
   const path = join(artifactsDir(trial), to)
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(parsed.data, null, 2)}\n`)
+  writeFileSync(path, `${JSON.stringify(ctx.redact.json(parsed.data), null, 2)}\n`)
   return { trial: { ...trial, artifacts: { ...artifacts, [to]: path } }, extractor_hash, usage }
 }
 

@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ConfigError } from '../../src/core/errors.ts'
+import { redactor } from '../../src/core/redact.ts'
 import type { TranscriptEntry } from '../../src/core/types.ts'
 import type { GradeContext, Judge, TrialResult } from '../../src/graders/index.ts'
 import type { CompleteRequest, Provider } from '../../src/providers/index.ts'
@@ -42,6 +43,7 @@ export function ctx(c: LoadedCase = oneCase(CASE).c, judges: Record<string, Judg
       return j
     },
     signal,
+    redact: redactor([]),
   }
 }
 
