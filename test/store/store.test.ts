@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, readFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { redactor } from '../../src/core/redact.ts'
 import { baselineRun, baselines, listRuns, readEvents, readRun, RunStore, setBaseline, type RunManifest } from '../../src/store/store.ts'
@@ -46,5 +46,19 @@ test('baselines name runs beside the runs directory, and an unknown name says wh
   assert.equal(baselineRun(results, 'main'), ID)
   assert.throws(() => baselineRun(results, 'nope'), /no baseline named "nope" \(have: main\)/)
   assert.throws(() => setBaseline(results, 'x', '2026-01-01T00-00-00Z-ffff'), /no run/)
+  // A ':' would be read as the config in baseline:<name>[:<config>].
+  assert.throws(() => setBaseline(results, 'main:fake', ID), /must match/)
   assert.ok(readFileSync(join(root, '.litmus/baselines.json'), 'utf8').includes(ID))
+})
+
+test('records are replaced whole, never left half-written, and one torn run.json hides no other run', () => {
+  const results = join(tree({ '.keep': '' }), 'runs')
+  const s = RunStore.create(results, manifest(ID), redactor([]))
+  s.verdicts([])
+  s.finish('finished')
+  assert.deepEqual(readdirSync(s.dir).sort(), ['run.json', 'trials', 'verdicts.json'])
+  const torn = '2026-09-30T01-02-04Z-c3d4'
+  mkdirSync(join(results, torn))
+  writeFileSync(join(results, torn, 'run.json'), '{"id": "2026-09-')
+  assert.deepEqual(listRuns(results).map(m => [m.id, m.status]), [[ID, 'finished']])
 })

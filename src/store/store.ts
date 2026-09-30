@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ConfigError } from '../core/errors.ts'
-import { parseTrialKey, RUN_ID, type TrialRef } from '../core/ids.ts'
+import { NAME, parseTrialKey, RUN_ID, type TrialRef } from '../core/ids.ts'
 import type { Redactor } from '../core/redact.ts'
 import type { Comparison, RunEvent, TrialRecord, Verdict } from '../core/types.ts'
 import type { ConfigDef } from '../suite/schema.ts'
@@ -9,7 +9,7 @@ import type { ConfigDef } from '../suite/schema.ts'
 export type RunManifest = {
   id: string
   parent?: string
-  status: 'running' | 'finished' | 'cancelled'
+  status: 'running' | 'finished' | 'cancelled' | 'failed' // failed: litmus itself broke (the store could not be written)
   started_at: string
   finished_at?: string
   litmus_version: string
@@ -41,8 +41,16 @@ export class RunStore {
   static create(resultsDir: string, manifest: RunManifest, redact: Redactor): RunStore {
     if (!RUN_ID.test(manifest.id)) throw new Error(`not a run id: ${manifest.id}`)
     const dir = join(resultsDir, manifest.id)
-    if (existsSync(dir)) throw new ConfigError(`run ${manifest.id} already exists`)
-    mkdirSync(join(dir, 'trials'), { recursive: true })
+    mkdirSync(resultsDir, { recursive: true })
+    // Not recursive, so the claim on the id is atomic: two runs given one id
+    // cannot both write into it.
+    try {
+      mkdirSync(dir)
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new ConfigError(`run ${manifest.id} already exists`)
+      throw e
+    }
+    mkdirSync(join(dir, 'trials'))
     const store = new RunStore(dir, manifest, redact)
     store.#writeJson('run.json', manifest)
     return store
@@ -90,7 +98,7 @@ export class RunStore {
     if (!ref) throw new Error(`not a trial key: ${record.key}`)
     const dir = this.trialDir(ref)
     mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, 'trial.json'), `${JSON.stringify(this.#redact.json(record), null, 2)}\n`)
+    writeAtomic(join(dir, 'trial.json'), `${JSON.stringify(this.#redact.json(record), null, 2)}\n`)
   }
 
   verdicts(v: Verdict[]): void {
@@ -101,14 +109,29 @@ export class RunStore {
     if (c.length) this.#writeJson('comparison.json', c)
   }
 
-  finish(status: 'finished' | 'cancelled', at: Date = new Date()): RunManifest {
+  finish(status: 'finished' | 'cancelled' | 'failed', at: Date = new Date()): RunManifest {
     this.#manifest = { ...this.#manifest, status, finished_at: at.toISOString() }
     this.#writeJson('run.json', this.#manifest)
     return this.#manifest
   }
 
   #writeJson(name: string, value: unknown): void {
-    writeFileSync(join(this.dir, name), `${JSON.stringify(this.#redact.json(value), null, 2)}\n`)
+    writeAtomic(join(this.dir, name), `${JSON.stringify(this.#redact.json(value), null, 2)}\n`)
+  }
+}
+
+// A reader (litmus serve, while a CLI run finishes) or a kill mid-write sees
+// the old file or the new one, never a truncated one.
+function writeAtomic(path: string, text: string): void {
+  writeFileSync(`${path}.tmp`, text)
+  renameSync(`${path}.tmp`, path)
+}
+
+const parse = <T>(path: string): T | undefined => {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as T
+  } catch {
+    return undefined
   }
 }
 
@@ -122,14 +145,16 @@ export function readRun(resultsDir: string, id: string): StoredRun {
   return { manifest: read<RunManifest>('run.json', undefined as never), verdicts: read<Verdict[]>('verdicts.json', []), comparisons: read<Comparison[]>('comparison.json', []) }
 }
 
-// Newest first: run ids sort chronologically as strings by construction.
+// Newest first: run ids sort chronologically as strings by construction. A
+// run whose run.json does not parse (written by hand, or by an older litmus
+// without atomic writes) is skipped, so one bad run cannot hide the others.
 export function listRuns(resultsDir: string): RunManifest[] {
   if (!existsSync(resultsDir)) return []
   return readdirSync(resultsDir)
-    .filter(d => RUN_ID.test(d) && existsSync(join(resultsDir, d, 'run.json')))
+    .filter(d => RUN_ID.test(d))
     .sort()
     .reverse()
-    .map(d => JSON.parse(readFileSync(join(resultsDir, d, 'run.json'), 'utf8')) as RunManifest)
+    .flatMap(d => parse<RunManifest>(join(resultsDir, d, 'run.json')) ?? [])
 }
 
 // A torn last line (the process killed mid-append) is skipped, as the
@@ -176,11 +201,14 @@ export function baselines(resultsDir: string): Record<string, string> {
   return existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')) as Record<string, string>) : {}
 }
 
+// NAME, so `baseline:<name>[:<config>]` parses: a ':' in a name would be read
+// as the config.
 export function setBaseline(resultsDir: string, name: string, runId: string): void {
+  if (!NAME.test(name)) throw new ConfigError(`baseline name "${name}" must match ${NAME} (lowercase, digits, . _ -)`)
   readRun(resultsDir, runId)
   const all = { ...baselines(resultsDir), [name]: runId }
   mkdirSync(dirname(baselinesFile(resultsDir)), { recursive: true })
-  writeFileSync(baselinesFile(resultsDir), `${JSON.stringify(all, null, 2)}\n`)
+  writeAtomic(baselinesFile(resultsDir), `${JSON.stringify(all, null, 2)}\n`)
 }
 
 export function baselineRun(resultsDir: string, name: string): string {
