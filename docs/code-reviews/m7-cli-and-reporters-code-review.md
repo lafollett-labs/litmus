@@ -1,6 +1,6 @@
 # Code Review: m7-cli-and-reporters
 
-**Verdict:** 🔄 CHANGES REQUESTED (round 2)
+**Verdict:** ✅ APPROVED (round 3, locked to `b6bf84e`)
 
 | | |
 | - | - |
@@ -97,6 +97,34 @@ It found two MEDIUM:
 | INFO-004 | The signal gate depends on the command being `argv[0]` | Adopted: commented at the gate |
 
 At `f1f8bb0`, `npm run check` is clean, and 477 tests pass with 4 (live) skipped.
+
+## Review Round 3
+
+| | |
+| - | - |
+| **Review Round** | 3 |
+| **Reviewed SHA** | `b6bf84e` (round-2 fixes: `813dd2b..b6bf84e`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue marked all 9 round-2 findings RESOLVED:
+
+- All five round-2 mutants, (a) to (e), now fail `npm test`.
+- The signal tests passed 16 of 16 filtered runs and 8 of 8 full-file runs under 8-way load.
+- No read-only directory was left behind after about 40 runs of the chmod test, failing ones included.
+
+**✅ APPROVED:** no finding at MEDIUM or above. The findings were fixed after approval, in the commit after `b6bf84e`:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | Some `--out` paths still slipped through: a stat error (EACCES, ENAMETOOLONG, ELOOP) crashed with exit 1, `nothere/../x` passed a lexical check and failed after the run, and so did a link to nothing | Fixed. Any errno from the check is a usage error (exit 2). The parent is resolved by the OS (`realpathSync.native`), so every segment must exist, and it must be a directory. A link to nothing is refused. The path written is the path checked. Five new exit-2 rows cover a locked directory, a 300-character name, `nothere/../x`, a dangling link, and a file as the parent |
+| LOW-002 | compare printed `exit 0`, then returned 3 when its write failed | Fixed: the write comes first, then the exit really returned is printed. The dangling-link case that reached it is now caught by the pre-check (tested for compare too) |
+| INFO-001 | listRuns' parsed-time sort had no killing test, and the chmod test found its run by mtime | Adopted: a store test orders two runs whose `started_at` offsets sort one way as text and the other as time, and `runUntil` hands `act` the output so far, so the test takes the run id from it |
+
+At the fix commit, `npm run check` is clean, and 477 tests pass with 4 (live) skipped.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `b6bf84e`. The PR opens once M5 and M6 merge and this branch is rebased onto main. It carries the post-approval commit (LOW and INFO fixes only), and Gate 2 reviews it.
 
 ---
 
