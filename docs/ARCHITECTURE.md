@@ -981,7 +981,7 @@ the cases both of them scored.
 | `<run id>` | That run. It must hold exactly one config |
 | `<run id>:<config>` | That config within that run |
 | `baseline:<name>[:<config>]` | The run stored under that baseline name. Baseline names use the NAME grammar |
-| `config:<name>` | The latest run that includes that config |
+| `config:<name>` | The latest finished run that includes that config (a cancelled or failed run holds only part of its cases; name it by id instead) |
 
 - `litmus run --config a,b` compares every later config against the first.
 - `litmus run --baseline <name>` compares each config against the config of
@@ -1130,12 +1130,32 @@ litmus run [select...] --config a,b [--trials N] [--baseline name]
            [--allow-flaky] [--allow-inconclusive] [--reporter pretty|json|ctrf|junit] [--out path]
 litmus run --rerun <run> --only fail,flaky,error,inconclusive
 litmus compare <side> <side> [--allow-inconclusive] [--out path]
-litmus baseline set <name> <run>
+litmus baseline set <name> <run> | litmus baseline list
 litmus validate [select...]
 litmus serve [--port 4317]
 ```
 
 Every command takes `--config-file <path>` (default `./litmus.config.yaml`).
+
+`--config` may be left out only when the config file defines exactly one
+config. `--rerun` runs the configs of the run it reruns, so it takes neither
+`--config` nor selectors, and `--only` needs `--rerun`. A rerun whose `--only`
+set matches no verdict prints so and exits 0.
+
+**Reporters.** `--reporter` picks the document and `--out` picks where it goes
+(stdout by default). stdout shows the live `pretty` view unless a JSON, CTRF
+or JUnit document is going there instead, so `--reporter junit --out
+junit.xml` gives both. `pretty` on a TTY redraws one status line in place and
+is coloured (unless `NO_COLOR` is set); anywhere else it writes the same lines
+plainly, top to bottom. It ends with the comparisons, the run's notes (such
+as a `--baseline` config the baseline lacks), a count of verdicts, every
+verdict or comparison that decided the exit code, and `exit <n>`.
+
+| Document | One test per | Status |
+| - | - | - |
+| `json` | (none: the manifest, verdicts, comparisons, notes and exit) | |
+| `ctrf` (spec 0.0.0, validated against `src/report/vendor/ctrf.schema.json`) | (case, config) verdict | the gate below decides it: blocking is `failed`, infra is `other`, and anything let through is `passed`, with `flaky: true` for an allowed FLAKY |
+| `junit` | (case, config) verdict, plus one per comparison | blocking is a `<failure>`, infra an `<error>`, and a comparison's REGRESSION a `<failure>` |
 
 A selector is one of:
 
@@ -1161,6 +1181,10 @@ else exit 1 if any verdict is blocking
 else exit 3 if any verdict is infra      # CI can tell infrastructure trouble from a regression
 else exit 0
 ```
+
+A run cancelled by SIGINT exits 130, and by SIGTERM 143; a second signal
+leaves at once. If litmus itself fails mid-run (the store cannot be written),
+the run is marked `failed` and `run` exits 3.
 
 Inside `run`, only a comparison's REGRESSION blocks. Its INCONCLUSIVE and NO
 CHANGE are reported, and neither changes the exit code, since small suites
