@@ -881,8 +881,9 @@ the cases both of them scored.
   A side's interval is Wilson from 9 scored trials, and exact
   (Clopper–Pearson) below 9. Wilson's coverage dips at small n: 30/30 against
   a single failure would read as a REGRESSION about one time in twelve with
-  nothing changed, and 7 v 7 trials at 0.5 claims a change 2.87% of the time.
-  9 is the smallest cutover at which no single-case cell claims more than 2.5%. The interval is deterministic:
+  nothing changed, and 7 v 7 trials at 0.5 claims a change 2.87% of the time
+  in each direction. 9 is the smallest cutover at which no single-case cell
+  claims more than 2.5% in either direction. The interval is deterministic:
   pairs are summed in case-id order, so the same records always give the same
   interval to the last bit.
 
@@ -899,11 +900,12 @@ the cases both of them scored.
   Calibration. With both sides drawn from the same true rate, a single case
   claims a change at most 2.5% of the time in each direction. The worst cell
   over 1 to 60 trials a side is 2.32%, and a test counts every pair of trial
-  counts from 1 to 30 exactly.
+  counts from 1 to 30 exactly, at rates from 0.01 to 0.99.
 
   Across many cases the interval pays for trial noise once. Its coverage is
   conservative near rates of 0 and 1 (98–99.7%), and a little narrow at
-  mid-range rates (about 88–91%), because Wilson's half-width shrinks there.
+  mid-range rates (about 88–91% at 9 to 12 trials a side, about 93–94% at
+  30), because Wilson's half-width shrinks there.
   A tolerance above zero absorbs that: at δ = 0.05 no many-case null suite
   tried read as REGRESSION more than 2.3% of the time. At δ = 0 about twice the
   nominal share do, and the comparison's `notes` say so. (Clopper–Pearson for
