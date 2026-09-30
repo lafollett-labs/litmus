@@ -397,14 +397,11 @@ verdicts of the cases that settled before it stopped.
 A grading retry emits `trial.retry` too, with its reason prefixed `grading:`.
 A listener that throws is ignored, so a closed SSE socket never stops a run.
 If litmus cannot record even an error trial (the store cannot be written),
-every worker stops, `run.json` is marked `failed`, and the run rejects with
-the error.
+every worker stops, `run.failed` is emitted, `run.json` is marked `failed`,
+and the run rejects with the error.
 
-A case's hash covers its whole directory (`case.yaml`, `truth.yaml`,
-`fixture/`, `change.patch`, `proof/`, `fix/`, `fake.yaml`), the prompt it
-resolved, its settings (tags aside), and the hashes of the judges and
-extractor it calls. WARN compares per-trial medians over a side's scored
-trials only, since an errored or cancelled trial did no work.
+What a case's hash covers, and which trials WARN's medians use, is in
+§ Comparison.
 
 **Effective `min_trials`.** A run can ask for fewer trials than the case
 defines, through `--trials`, a trial-key selector, the UI, or a rerun. The
@@ -888,7 +885,9 @@ the cases both of them scored.
   what it reads. A difference in a subject or plugin hash does not exclude a
   case, because comparing subject versions is a real use. It is listed in the
   comparison's `notes` instead: `<case>: subject changed (<old> → <new>)`,
-  `plugin <root>: changed`, or `plugin <root>: loaded only by <side>`.
+  `plugin <root>: changed`, or `plugin <root>: loaded only by <side>`. A
+  plugin is known by its absolute root, so a baseline recorded from another
+  checkout reads as two `loaded only by` notes rather than one `changed`.
 - **Flips.** Every case whose verdict changed is listed with its old and new
   verdicts. This is the headline of the comparison, not a footnote.
 - **Suite verdict.** D is the mean over paired cases of B's observed success
@@ -956,10 +955,12 @@ the cases both of them scored.
   could not score is excluded from the interval but still flips, since a case
   that stopped scoring is news. When neither side carries case hashes, the
   comparison's `notes` say that changed cases were not detected.
-- **WARN.** Raised for a metric when the ratio of B's per-trial median to A's
-  falls outside [1/`warn_ratio`, `warn_ratio`]. Both medians are taken over
-  the scored trials of the paired cases only, so a baseline that ran more
-  cases than this run cannot raise a WARN on its own. The metrics are total tokens,
+- **WARN.** Raised for a metric when the ratio of B's median to A's falls
+  outside [1/`warn_ratio`, `warn_ratio`]. A side's median is the median over
+  the paired cases of each case's median over its scored trials (an errored
+  or cancelled trial did no work). Every case counts once, so neither a
+  baseline that ran more cases nor a case that scored more trials on one side
+  can raise a WARN on its own. The metrics are total tokens,
   cost, wall-clock time, tool calls, and findings. A metric is skipped when
   A's median is 0 or missing, or B's is missing, or either is not finite. A WARN never changes an exit code.
 
@@ -1051,6 +1052,7 @@ type RunEvent =
   | { type: 'trial.finished'; key: string; status: 'pass' | 'fail' | 'error' | 'cancelled'; graders: { grader: string; pass: boolean }[] }
   | { type: 'case.settled'; case: string; config: string; verdict: Verdict }
   | { type: 'run.finished' | 'run.cancelled'; run: string; summary: Record<VerdictKind, number> }
+  | { type: 'run.failed'; run: string; error: string }   // litmus itself broke; best effort
 ```
 
 ## Server
