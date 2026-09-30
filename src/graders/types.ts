@@ -32,6 +32,6 @@ export type Grader<K extends GraderSpec['kind'] = GraderSpec['kind']> = (
 export type GradeAll = (trial: TrialResult, ctx: GradeContext) => Promise<GraderResult[]>
 
 // Runs a case's `extract` step, if any: writes the target artifact and
-// returns the trial with it added, the extractor's hash for trial.json, and
-// what the extractor call spent.
-export type RunExtract = (trial: TrialResult, ctx: GradeContext) => Promise<{ trial: TrialResult; extractor_hash?: string; usage?: Usage }>
+// returns the trial with it added, the extractor's hash for trial.json, what
+// the extractor call spent, and why nothing was extracted when nothing was.
+export type RunExtract = (trial: TrialResult, ctx: GradeContext) => Promise<{ trial: TrialResult; extractor_hash?: string; usage?: Usage; error?: string }>

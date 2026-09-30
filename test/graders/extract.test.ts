@@ -91,3 +91,16 @@ test('a provider failure propagates, and a `to` outside the artifacts dir is a c
   const escaping = EXTRACTING('{ from: final_message, to: ../findings.json, with: default }')
   await assert.rejects(run(stub([fenced(findings)]), { 'final_message.txt': review }, escaping).out, ConfigError)
 })
+
+test('canary: a directory the subject planted at `to` fails the extraction with a reason, never the run', async () => {
+  const { out } = run(stub([fenced(findings)]), { 'final_message.txt': review, 'findings.json/evil.txt': 'x' })
+  const r = await out
+  assert.equal(r.trial.artifacts['findings.json'], undefined)
+  assert.match(r.error ?? '', /could not write findings\.json: EISDIR/)
+})
+
+test('every extraction that yields nothing says why', async () => {
+  assert.match((await run(stub(['no json here']), { 'final_message.txt': review }).out).error ?? '', /not litmus:findings: "no json here"/)
+  assert.match((await run(stub([]), {}).out).error ?? '', /nothing to extract from: final_message was not produced/)
+  assert.equal((await run(stub([fenced(findings)]), { 'final_message.txt': review }).out).error, undefined)
+})
