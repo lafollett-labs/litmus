@@ -33,7 +33,12 @@ jobs:
           # TypeScript by type stripping.
           node-version-file: .nvmrc
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tools/vue-tsc/package-lock.json
       - run: npm ci
+      # vue-tsc checks the .vue files with its own TypeScript 5 (tools/vue-tsc).
+      - run: npm ci --prefix tools/vue-tsc
       - run: npm run check
       - run: npm test
 

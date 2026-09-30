@@ -16,12 +16,13 @@
     "litmus": "src/cli/main.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit && tsc --noEmit -p ui",
+    "check": "tsc --noEmit && tsc --noEmit -p ui && npm run check:vue",
     "typecheck": "npm run check",
     "test": "node scripts/test.ts",
     "ui:dev": "vite",
     "ui:build": "vite build",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "check:vue": "tools/vue-tsc/node_modules/.bin/vue-tsc --noEmit -p ui/tsconfig.vue.json"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

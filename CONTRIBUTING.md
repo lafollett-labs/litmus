@@ -19,7 +19,8 @@ have the right to submit it.
 ```bash
 nvm use            # Node 26 (.nvmrc)
 npm ci
-npm run check      # type-check everything
+npm ci --prefix tools/vue-tsc   # vue-tsc, on its own TypeScript 5: TypeScript 7 has no JS API for it
+npm run check      # type-check everything, the .vue files included
 npm test           # unit and integration tests; they use the fake provider and cost nothing
 npm run test:ui    # Playwright, against the runner UI
 ```

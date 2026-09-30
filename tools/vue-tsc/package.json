@@ -1,0 +1,9 @@
+{
+  "name": "litmus-vue-tsc",
+  "private": true,
+  "description": "vue-tsc needs TypeScript's JS API, which TypeScript 7 does not ship: the .vue files are checked with TypeScript 5 from here.",
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vue-tsc": "3.3.11"
+  }
+}
