@@ -78,6 +78,8 @@ test('an end-to-end run on fake produces all five verdicts, and every rule of th
   )
   const trials = readTrials(join(root, '.litmus/runs'), r.id)
   const of = (name: string) => trials.filter(t => t.case === `e2e/${name}`)
+  // Every workdir is gone, and so is the run's own directory above them.
+  assert.deepEqual(readdirSync(join(root, 'wd', 'litmus')), [])
   // Only a retryable infra error is retried; a non-retryable one is attempted once.
   assert.deepEqual(of('retries').map(t => t.attempts), [2, 2, 2])
   assert.deepEqual(of('errors').map(t => [t.status, t.attempts]), [['error', 1], ['error', 1], ['error', 1]])

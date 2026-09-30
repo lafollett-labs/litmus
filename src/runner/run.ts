@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync, rmdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
@@ -129,6 +129,13 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
       // the error below says why
     }
     throw e
+  } finally {
+    // Every workdir removes itself, which leaves the run's own directory empty.
+    try {
+      rmdirSync(join(o.workBase ?? tmpdir(), 'litmus', id))
+    } catch {
+      // never made (no trial got a workdir), or not empty: left alone
+    }
   }
 
   async function execute(): Promise<RunOutcome> {
