@@ -19,6 +19,7 @@ export type ValidateOptions = {
   env?: NodeJS.ProcessEnv
   workBase?: string // where validation copies are built (default: the OS temp dir)
   proofTimeoutS?: number // default: the case's timeout_s
+  signal?: AbortSignal // stops at the next case or proof; a running proof's process group is killed
 }
 
 // docs/ARCHITECTURE.md § litmus validate: the checks a run makes when it loads
@@ -46,6 +47,7 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
   const avoid = [config.resultsDir, ...config.roots]
   const out: Problem[] = []
   for (const c of cases) {
+    if (o.signal?.aborted) break
     const say = (level: Problem['level'], message: string) => out.push({ case: c.id, level, message: redact.text(message) })
     let attempt = 0
     // A fresh copy of the post-change tree: the fixture, then change.patch.
@@ -59,12 +61,13 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
       say('error', e.message)
       continue
     }
+    const proofDir = join(c.dir, 'proof')
+    let proofBad = false
     try {
-      const proofDir = join(c.dir, 'proof')
       if (existsSync(proofDir)) {
-        // An overlay that replaced a file of the change would test something
-        // other than what the subject is shown.
-        for (const rel of files(proofDir)) if (existsSync(join(wd.dir, rel))) say('error', `proof/${rel} also exists in the fixture (after change.patch); a proof may only add files`)
+        const bad = proofTree(c, proofDir, wd.dir)
+        for (const m of bad) say('error', m)
+        proofBad = bad.length > 0
       }
       const refused = harnessPreflight(c, wd.dir, config.roots)
       if (refused) say('error', refused)
@@ -72,9 +75,12 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
       wd.cleanup()
     }
 
-    // A suite root inside a plugin or subject root would put every case's
-    // ground truth where the harness is allowed to read.
-    for (const holder of [...c.plugins, subjectRootOf(c)].filter((p): p is string => p !== undefined && existsSync(p))) {
+    // A suite root inside a harness case's subject root would put every
+    // case's ground truth where the harness may read. (A plugin holding one is
+    // refused by harnessPreflight; a model case's subject is a file it reads
+    // as its system prompt, and nothing reads the folder around it.)
+    const holder = c.spec.executor.kind === 'harness' ? subjectRootOf(c) : undefined
+    if (holder !== undefined && existsSync(holder)) {
       const trapped = config.roots.filter(existsSync).find(r => inside(realpathSync.native(r), realpathSync.native(holder)))
       if (trapped) say('error', `suite root ${trapped} lies inside ${holder}, which the harness may read; move one out of the other`)
     }
@@ -93,9 +99,11 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
       }
     }
 
-    if (o.proofs !== false && c.truth?.kind === 'seeded') {
+    // A proof/ tree already reported as bad would fail every proof the same way.
+    if (o.proofs !== false && !proofBad && c.truth?.kind === 'seeded') {
       for (const bug of c.truth.bugs) {
-        const why = await proof(c, bug, copy, redact, o.proofTimeoutS ?? s.timeout_s)
+        if (o.signal?.aborted) break
+        const why = await proof(c, bug, copy, redact, o.proofTimeoutS ?? s.timeout_s, o.signal)
         if (why) say('error', `bug ${bug.id}: ${why}`)
       }
     }
@@ -105,7 +113,7 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
 
 // One bug's proof on its own copy: the change plus proof/ must fail it, and
 // the change plus proof/ plus the bug's fix must pass it.
-async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: string }, copy: () => ReturnType<typeof buildWorkdir>, redact: Redactor, timeoutS: number): Promise<string | undefined> {
+async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: string }, copy: () => ReturnType<typeof buildWorkdir>, redact: Redactor, timeoutS: number, signal?: AbortSignal): Promise<string | undefined> {
   let wd: ReturnType<typeof buildWorkdir>
   try {
     wd = copy()
@@ -114,12 +122,19 @@ async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: strin
   }
   try {
     const proofDir = join(c.dir, 'proof')
-    if (existsSync(proofDir)) copyTree(proofDir, wd.dir, c.id, 'proof/')
+    try {
+      if (existsSync(proofDir)) copyTree(proofDir, wd.dir, c.id, 'proof/')
+    } catch (e) {
+      return (e as Error).message
+    }
     const fix = resolve(c.dir, bug.fix)
     if (!inside(fix, c.dir)) return `fix ${bug.fix} lies outside the case`
     if (!existsSync(fix)) return `fix ${bug.fix} does not exist`
+    // Links followed: a fix/ that is a link out of the case lies outside it too.
+    if (!inside(realpathSync.native(fix), realpathSync.native(c.dir))) return `fix ${bug.fix} resolves outside the case`
 
-    const before = await sh(bug.proof, wd, c, redact, timeoutS)
+    const before = await sh(bug.proof, wd, c, redact, timeoutS, signal)
+    if (signal?.aborted) return undefined
     if (before.pass) return `its proof passes before the fix, so it proves nothing: ${bug.proof}${before.rationale.replace(/^exit 0/, '')}`
     if (/^timeout after/.test(before.rationale)) return `its proof timed out before the fix (${timeoutS}s): ${bug.proof}`
     try {
@@ -127,7 +142,8 @@ async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: strin
     } catch (e) {
       return (e as Error).message
     }
-    const after = await sh(bug.proof, wd, c, redact, timeoutS)
+    const after = await sh(bug.proof, wd, c, redact, timeoutS, signal)
+    if (signal?.aborted) return undefined
     if (!after.pass) return `its proof still fails with the fix applied: ${bug.proof}\n${after.rationale}`
     return undefined
   } finally {
@@ -136,11 +152,35 @@ async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: strin
 }
 
 // The command grader's runner: a scrubbed env, its own process group killed on
-// timeout, and output redacted before it is cut.
-function sh(run: string, wd: { dir: string; home: string }, c: LoadedCase, redact: Redactor, timeoutS: number) {
+// timeout or on the signal, and output redacted before it is cut.
+function sh(run: string, wd: { dir: string; home: string }, c: LoadedCase, redact: Redactor, timeoutS: number, signal = new AbortController().signal) {
   const trial = { workdir: wd.dir, home: wd.home } as TrialResult
-  const ctx = { case: c, redact, signal: new AbortController().signal } as GradeContext
+  const ctx = { case: c, redact, signal } as GradeContext
   return command({ kind: 'command', run, timeout_s: timeoutS }, trial, ctx).then(r => ({ pass: r.pass, rationale: r.rationale ?? '' }))
+}
+
+// What is wrong with a case's proof/ tree, overlaid on a post-change copy: a
+// proof may only add regular files, and only where the fixture has none.
+function proofTree(c: LoadedCase, proofDir: string, work: string): string[] {
+  if (lstatSync(proofDir).isSymbolicLink()) return [`proof/ is a symlink; a proof may not be or contain a link`]
+  const out: string[] = []
+  for (const rel of files(proofDir)) {
+    const parts = rel.split('/')
+    // A proof path that runs through a fixture file cannot be laid over it.
+    const through = parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/')).find(p => existsSync(join(work, p)) && !lstatSync(join(work, p)).isDirectory())
+    if (through !== undefined) out.push(`proof/${rel} runs through ${through}, a file in the fixture (after change.patch); a proof may only add files`)
+    // An overlay that replaced a file of the change would test something
+    // other than what the subject is shown.
+    else if (existsSync(join(work, rel))) out.push(`proof/${rel} also exists in the fixture (after change.patch); a proof may only add files`)
+  }
+  if (out.length) return out
+  // The overlay itself refuses a link, a .git, or anything but a file or directory.
+  try {
+    copyTree(proofDir, work, c.id, 'proof/')
+  } catch (e) {
+    return [(e as Error).message]
+  }
+  return []
 }
 
 // Every regular file under dir, as a path relative to it.

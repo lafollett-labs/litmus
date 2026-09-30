@@ -235,8 +235,8 @@ export async function serveCommand(f: { configFile: string; port: string }, io: 
 }
 
 // Exit 0 when every case is valid, 1 when any is not (a suite that will not
-// load included), and 2 for a usage error or a config file that will not load.
-// Warnings never change the exit code.
+// load included), 2 for a usage error or a config file that will not load, and
+// 130 or 143 when cancelled. Warnings never change the exit code.
 export async function validateCommand(f: { configFile: string; selectors: string[] }, io: Io): Promise<number> {
   const paint = paintFor(io)
   const config = loadConfig(f.configFile)
@@ -250,7 +250,12 @@ export async function validateCommand(f: { configFile: string; selectors: string
     return 1
   }
   const cases = select(project.suites, f.selectors, new Set(Object.keys(config.configs))).map(s => s.case)
-  const problems = await validate(config, cases)
+  const problems = await validate(config, cases, io.signal ? { signal: io.signal } : {})
+  // A cut-short validate has not checked every case, so it vouches for none.
+  if (io.signal?.aborted) {
+    io.err('validate cancelled before every case was checked; nothing is reported')
+    return io.cancelCode?.() ?? 130
+  }
   const width = Math.max(...cases.map(c => c.id.length))
   for (const c of cases) {
     const mine = problems.filter(p => p.case === c.id)

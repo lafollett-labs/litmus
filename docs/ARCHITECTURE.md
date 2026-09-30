@@ -312,14 +312,16 @@ It fails a case in any of these situations:
 
 - the tree contains a symlink after the change is applied
 - the fixture contains a `.git` entry
-- a `proof/` path also exists under `fixture/`
+- a `proof/` path also exists under `fixture/`, runs through a fixture file,
+  or is (or contains) a symlink
+- a bug's `fix` resolves outside the case, links followed
 - `min_trials` exceeds `trials`, or a `rate` threshold is outside (0, 1)
 - a harness case's plugins or fixture declare hooks or MCP servers without
   `allow_hooks: true`
 - a harness case with `setting_sources: [project]` has a fixture
   `.claude/settings.json` (or `settings.local.json`) that sets any key other
   than `$schema`
-- a suite root lies inside one of the case's plugin or subject roots
+- a suite root lies inside one of a harness case's plugin or subject roots
 
 It warns in two situations:
 
@@ -329,7 +331,11 @@ It warns in two situations:
   as `min_recall` on a clean case
 
 The same checks run when a suite is loaded for `run`. `validate` adds only the
-proof runs.
+proof runs. A proof is a suite author's command, run as the command grader
+runs one: in its own process group, with a scrubbed env and the case's
+`timeout_s`. Ctrl-C or SIGTERM kills that group, removes the copy, and exits
+130 or 143 with nothing reported, since a cut-short validate vouches for no
+case.
 
 ## Flow of a run
 

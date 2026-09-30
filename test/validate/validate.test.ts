@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
-import { mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { loadProject } from '../../src/suite/load.ts'
 import { validate, type Problem } from '../../src/validate/validate.ts'
@@ -119,8 +119,11 @@ test('a harness case gets the checks a run makes before the SDK loads: hooks nee
   assert.match(only(hooked, 's/h').join('\n'), /^error: .*has hooks\/hooks\.json; set allow_hooks: true/)
   assert.deepEqual(await check(project({ h: harness(outside, '  allow_hooks: true\n') })), [])
   // The plugin holds the whole project, suites and all.
+  // The plugin holds the whole project, suites and all: one fault, one error.
   const configFile = project({ h: harness('../../../..') }, { '.claude-plugin/plugin.json': '{"name":"p"}' })
-  assert.match(only(await check(configFile), 's/h').join('\n'), /contains .*, which the plugin loader could read before the gate runs/)
+  const held = only(await check(configFile), 's/h')
+  assert.equal(held.length, 1, held.join('\n'))
+  assert.match(held[0]!, /contains .*, which the plugin loader could read before the gate runs/)
   // A subject directory that holds the suites: the harness may read its subject, and so every case's truth.
   const subject = project({ h: { ...harness(outside, '  allow_hooks: true\n'), 'case.yaml': harness(outside, '  allow_hooks: true\n')['case.yaml'].replace('graders:', 'subject: ../../../..\ngraders:') } })
   assert.match(only(await check(subject), 's/h').join('\n'), /suite root .* lies inside .*, which the harness may read; move one out of the other/)
@@ -158,4 +161,77 @@ test('litmus validate prints each case, exits 1 when any is invalid and 0 when o
   const warned = run(project({ rate: { 'case.yaml': 'name: rate\ntrials: 2\npolicy: rate\nthreshold: 0.9\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, target: response.txt, pattern: x }]\n' } }))
   assert.equal(warned.status, 0, warned.stderr)
   assert.match(warned.stdout, /1 case: 0 invalid, 1 warning\n$/)
+})
+
+test('a bad proof/ tree is an error for its case alone, reported even with proofs: false', async () => {
+  const configFile = project({
+    linked: seeded('linked', {}, { 'proof/ok.sh': 'true\n' }),
+    through: seeded('through', {}, { 'proof/a.txt/x': 'y\n' }),
+    rooted: seeded('rooted'),
+    fine: seeded('fine'),
+  })
+  const cases = join(configFile, '../suites/s/cases')
+  symlinkSync('/etc/hosts', join(cases, 'linked/proof/hosts'))
+  symlinkSync(join(cases, 'fine/fix'), join(cases, 'rooted/proof'))
+  for (const o of [{}, { proofs: false }]) {
+    const ps = await check(configFile, o)
+    assert.match(only(ps, 's/linked').join('\n'), /^error: s\/linked: proof\/ contains a symlink at .*hosts$/)
+    assert.deepEqual(only(ps, 's/through'), ['error: proof/a.txt/x runs through a.txt, a file in the fixture (after change.patch); a proof may only add files'])
+    assert.deepEqual(only(ps, 's/rooted'), ['error: proof/ is a symlink; a proof may not be or contain a link'])
+    assert.deepEqual(only(ps, 's/fine'), [])
+  }
+})
+
+test('a fix/ that links out of the case resolves outside it', async () => {
+  const configFile = project({ out: seeded('out') }, { 'elsewhere/b1.patch': FIX })
+  const fixDir = join(configFile, '../suites/s/cases/out/fix')
+  rmSync(join(fixDir, 'b1.patch'))
+  rmSync(join(fixDir), { recursive: true })
+  symlinkSync(join(configFile, '../elsewhere'), fixDir)
+  assert.match(only(await check(configFile), 's/out').join('\n'), /fix fix\/b1\.patch resolves outside the case/)
+})
+
+test('a model case\'s subject file may sit anywhere, even above the suites: nothing reads its folder', async () => {
+  const configFile = project({ m: { 'case.yaml': 'name: m\nsubject: ../../../../SYSTEM.md\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, target: response.txt, pattern: x }]\n' } }, { 'SYSTEM.md': 'be terse\n' })
+  assert.deepEqual(await check(configFile), [])
+})
+
+test('an aborted validate kills the running proof\'s process group and leaves no copy', async () => {
+  const marks = realpathSync(tree({ '.keep': '' }))
+  const late = join(marks, 'late')
+  // After the abort, a later case is not checked at all: its warning never comes.
+  const configFile = project({
+    slow: seeded('slow', { proof: `sleep 2 && touch ${late}; exit 1` }),
+    zlater: { 'case.yaml': 'name: zlater\ntrials: 2\npolicy: rate\nthreshold: 0.9\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, target: response.txt, pattern: x }]\n' },
+  })
+  const ctl = new AbortController()
+  setTimeout(() => ctl.abort(), 300)
+  const started = Date.now()
+  assert.deepEqual(await check(configFile, { signal: ctl.signal }), [])
+  assert.ok(Date.now() - started < 1_500, 'returns on the abort, not when the proof ends')
+  await new Promise(r => setTimeout(r, 2_500))
+  assert.equal(existsSync(late), false, 'the proof was killed, not orphaned')
+})
+
+test('litmus validate: SIGTERM cancels with 143 and kills the proof; a suite that will not load exits 1', async () => {
+  const MAIN = join(import.meta.dirname, '../../src/cli/main.ts')
+  const marks = realpathSync(tree({ '.keep': '' }))
+  const [begun, late] = [join(marks, 'begun'), join(marks, 'late')]
+  const configFile = project({ slow: seeded('slow', { proof: `touch ${begun}; sleep 2 && touch ${late}; exit 1` }) })
+  const child = spawn(process.execPath, [MAIN, 'validate', '--config-file', configFile], { stdio: ['ignore', 'pipe', 'pipe'] })
+  let stderr = ''
+  child.stderr.on('data', d => (stderr += d))
+  const exited = new Promise<number | null>(r => child.on('exit', code => r(code)))
+  for (let i = 0; i < 100 && !existsSync(begun); i++) await new Promise(r => setTimeout(r, 50))
+  assert.ok(existsSync(begun), 'the proof started')
+  child.kill('SIGTERM')
+  assert.equal(await exited, 143)
+  assert.match(stderr, /validate cancelled before every case was checked/)
+  await new Promise(r => setTimeout(r, 2_500))
+  assert.equal(existsSync(late), false, 'the proof was killed, not orphaned')
+
+  const broken = project({ bad: { 'case.yaml': 'name: bad\nexecutor: { kind: nope }\n' } })
+  const r = spawnSync(process.execPath, [MAIN, 'validate', '--config-file', broken], { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } })
+  assert.equal(r.status, 1, r.stderr)
+  assert.match(r.stdout, /invalid: the suites do not load\n$/)
 })

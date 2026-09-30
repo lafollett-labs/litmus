@@ -15,4 +15,4 @@ configs:
     effort: medium
 
 pricing:
-  claude-sonnet-5: { input: 3, output: 15 }
+  claude-sonnet-5: { input: 2, output: 10 }  # USD per million tokens; check the live price before recording a run's cost

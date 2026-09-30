@@ -178,15 +178,15 @@ if (import.meta.main) {
   const write = (text: string) => void (closed || process.stdout.write(text))
   // A log reader that has gone (`2>&1 | head`) is not the run's failure either.
   process.stderr.on('error', () => undefined)
-  // Only a run (or a server, with its live runs) is worth cancelling: the
-  // first Ctrl-C (or SIGTERM) cancels, trials in flight end cancelled and each
-  // run is written; a second one leaves at once. Every other command finishes
-  // in moments.
+  // Only a run (or a server, with its live runs), or a validate running proofs,
+  // is worth cancelling: the first Ctrl-C (or SIGTERM) cancels, trials or
+  // proofs in flight are stopped (their process groups killed) and cleaned
+  // up; a second one leaves at once. Every other command finishes in moments.
   const ctl = new AbortController()
   let code = 130
   // main() takes the first argument as the command; were options ever allowed
   // before it, this gate would have to follow.
-  if (process.argv[2] === 'run' || process.argv[2] === 'serve') {
+  if (['run', 'serve', 'validate'].includes(process.argv[2] ?? '')) {
     const cancel = (signal: 'SIGINT' | 'SIGTERM', exit: number) => () => {
       if (ctl.signal.aborted) process.exit(exit)
       code = exit
