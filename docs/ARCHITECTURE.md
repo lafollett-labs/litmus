@@ -694,8 +694,10 @@ extractor hashes differ, and the same goes for judges. This lets a real
 An extraction that yields nothing says why:
 - there was no source, or it was empty, which is never extracted into zero findings
 - the reply was not `litmus:findings`, or it stopped at the extractor's token cap
-- `to` could not be written, because a subject can plant a directory there The graders then fail on the missing artifact, and the
-reason is recorded with the trial. The extracted findings are redacted before
+- `to` could not be written, because a subject can plant a directory there.
+
+The graders then fail on the missing artifact, and the reason is recorded with
+the trial. The extracted findings are redacted before
 they are written.
 
 ### Grader
@@ -733,7 +735,7 @@ its graders say.
 
 | Grader | Passes when |
 | - | - |
-| `regex` | The pattern matches the target (an artifact or `transcript`) between `min` and `max` times. An empty match does not count. `transcript` is what the subject wrote: its messages and tool calls, not litmus's prompt and not tool results, which are the fixture it read |
+| `regex` | The pattern matches the target (an artifact or `transcript`) between `min` and `max` times. An empty match does not count, and counting stops once past `max`, when `matches` reads null (a lower bound, not a count). `transcript` is what the subject wrote: its messages and tool calls, not litmus's prompt and not tool results, which are the fixture it read |
 | `json-schema` | The artifact parses and validates against the schema (`litmus:findings`, or a path to a JSON Schema) |
 | `file-exists` | The path exists (or does not) in the workdir after the trial. A path that leads outside the workdir through a symlink fails |
 | `tool-used` | A tool was called between `min` and `max` times, read from the transcript. Useful for capping subagent fan-out |
@@ -789,8 +791,9 @@ applied has checked nothing, so it fails. At load, a review-match must set a
 bound that can apply to its truth: on a clean case, one other than
 `min_recall` and `min_claims_correct`. More than 1,000 findings fail the grade
 rather than being matched. On a seeded case, the load-time rule is stricter:
-a review-match must set `min_recall` or `min_claims_correct`, because with
-`max_*` bounds alone an empty review would pass at recall 0. Matching grows
+some review-match in the case must set `min_recall` above 0 or
+`min_claims_correct`, because with `max_*` bounds alone, or `min_recall: 0`, an
+empty review would pass at recall 0. Matching grows
 roughly with the cube of the bug count, so a case with dozens of bugs grades
 in seconds rather than milliseconds; the few seeded bugs a case usually has
 cost nothing.

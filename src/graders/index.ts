@@ -25,7 +25,12 @@ export const gradeAll: GradeAll = async (trial, ctx) => {
   // like a failed trial.
   for (const spec of ctx.case.spec.graders) {
     if (ctx.signal.aborted) throw ctx.signal.reason
-    const r = await grade(spec, trial, ctx)
+    let r: GraderResult
+    try {
+      r = await grade(spec, trial, ctx)
+    } catch (e) {
+      throw ctx.signal.aborted ? ctx.signal.reason : e // a cancel inside a judge call is still the cancel
+    }
     if (ctx.signal.aborted) throw ctx.signal.reason
     // A rationale quotes what the subject wrote, a command printed or a judge said.
     results.push(r.rationale === undefined ? r : { ...r, rationale: ctx.redact.text(r.rationale) })

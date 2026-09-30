@@ -30,5 +30,6 @@ export const regex: Grader<'regex'> = async (spec, trial) => {
   for (const m of text.matchAll(re)) if (m[0].length > 0 && ++n >= stop) break
   const c = countCheck(n, spec)
   const seen = n >= stop ? `more than ${spec.max}` : String(n)
-  return { grader: 'regex', pass: c.pass, metrics: { matches: n }, rationale: `/${spec.pattern}/${flags} matched ${spec.target} ${seen} time(s); want ${c.want}` }
+  // A count that stopped past max is a lower bound, not a count: null says so.
+  return { grader: 'regex', pass: c.pass, metrics: { matches: n >= stop ? null : n }, rationale: `/${spec.pattern}/${flags} matched ${spec.target} ${seen} time(s); want ${c.want}` }
 }

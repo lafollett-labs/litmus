@@ -82,3 +82,13 @@ test('a cancel rejects gradeAll, never a result set that reads like a failed tri
   pre.abort(new Error('cancelled'))
   await assert.rejects(gradeAll(t, { ...ctx(c), signal: pre.signal }), /cancelled/)
 })
+
+test('a cancel that lands inside a judge call rejects with the signal\'s own reason', async () => {
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders:\n  - { kind: judge, judge: default, question: q, target: response.txt }\n')
+  const stuck = judgeOf({ id: 'fake', complete: () => new Promise(() => {}) })
+  const ctl = new AbortController()
+  const reason = new Error('operator cancel')
+  const pending = gradeAll(trial({ artifacts: { 'response.txt': 'x' } }), { ...ctx(c, { default: stuck }), signal: ctl.signal })
+  setTimeout(() => ctl.abort(reason), 50)
+  await assert.rejects(pending, (e: unknown) => e === reason)
+})

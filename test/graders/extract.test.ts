@@ -117,9 +117,11 @@ test('canary: an empty review is not extracted into zero findings, so a clean ca
 })
 
 test('a reply cut off at the token cap says so, not "not litmus:findings"', async () => {
-  const capped: Provider = { id: 'fake', complete: async () => ({ text: '```json\n{"findings": [', stop_reason: 'max_tokens', usage: { input_tokens: 1, output_tokens: 16000 }, raw: {} }) }
-  const r = await run(capped, { 'final_message.txt': review }).out
-  assert.match(r.error ?? '', /stopped at its 16000-token cap/)
+  for (const stop_reason of ['max_tokens', 'length']) {
+    const capped: Provider = { id: 'fake', complete: async () => ({ text: '```json\n{"findings": [', stop_reason, usage: { input_tokens: 1, output_tokens: 16000 }, raw: {} }) }
+    const r = await run(capped, { 'final_message.txt': review }).out
+    assert.match(r.error ?? '', /stopped at its 16000-token cap/, stop_reason)
+  }
 })
 
 test('the extracted findings and the quoted reply are both redacted', async () => {

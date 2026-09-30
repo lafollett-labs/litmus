@@ -9,6 +9,8 @@ import { EXTRACT_PROMPT_VERSION, EXTRACT_SYSTEM, extractRequest } from './prompt
 import type { RunExtract, TrialResult } from './types.ts'
 
 const EXTRACT_MAX_TOKENS = 16000
+// How a provider says it stopped at max_tokens: Anthropic and Bedrock, then OpenRouter.
+const CAPPED = new Set(['max_tokens', 'length'])
 
 // docs/ARCHITECTURE.md § Extract: a pinned model turns a free-form review into
 // litmus:findings, so a real /review skill is scored without changing what it
@@ -41,7 +43,7 @@ export const runExtract: RunExtract = async (trial, ctx) => {
   const parsed = Findings.safeParse(extractJson(reply.text))
   if (!parsed.success) {
     // Cut off at litmus's own token cap is litmus's limit, not the subject's.
-    if (reply.stop_reason === 'max_tokens') return { trial: without, extractor_hash, usage, error: `the extractor stopped at its ${EXTRACT_MAX_TOKENS}-token cap before finishing litmus:findings` }
+    if (CAPPED.has(reply.stop_reason ?? '')) return { trial: without, extractor_hash, usage, error: `the extractor stopped at its ${EXTRACT_MAX_TOKENS}-token cap before finishing litmus:findings` }
     const said = ctx.redact.text(reply.text)
     return { trial: without, extractor_hash, usage, error: `the extractor's reply is not litmus:findings: ${JSON.stringify(said.length > 200 ? `${said.slice(0, 197)}...` : said)}` }
   }

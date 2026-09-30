@@ -37,7 +37,7 @@ export const command: Grader<'command'> = (spec, trial, ctx) =>
       const safe = ctx.redact.bytes(tail)
       // Cut on a character boundary: never start inside a UTF-8 sequence.
       let from = Math.max(0, safe.length - TAIL_BYTES)
-      while (from < safe.length && (safe[from]! & 0xc0) === 0x80) from++
+      for (let k = 0; k < 3 && from < safe.length && (safe[from]! & 0xc0) === 0x80; k++) from++ // UTF-8 has at most 3
       const text = safe.subarray(from).toString('utf8').trimEnd()
       return text ? `\n${text}` : ''
     }

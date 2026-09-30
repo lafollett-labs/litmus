@@ -73,4 +73,5 @@ test('matches are counted, not collected, and counting stops once past max', asy
   const r = await regex(spec({ kind: 'regex', target: 'response.txt', pattern: 'a', min: 0, max: 3 }), t, ctx())
   assert.equal(r.pass, false)
   assert.match(r.rationale ?? '', /matched response\.txt more than 3 time\(s\)/)
+  assert.equal(r.metrics?.['matches'], null) // a lower bound, not a count
 })
