@@ -48,7 +48,8 @@ export type TrialRecord = {
   reason?: string
   attempts: number // 1 + infra retries
   graders: GraderResult[]
-  usage: Usage
+  usage: Usage // the subject's, summed over every attempt
+  grading_usage?: Usage // judge, confirm and extract calls, priced by their judge's model
   wall_clock_ms: number
   started_at: string
   finished_at: string
