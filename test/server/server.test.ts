@@ -1,6 +1,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { request, type IncomingHttpHeaders } from 'node:http'
+import { connect } from 'node:net'
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { RunEvent } from '../../src/core/types.ts'
@@ -220,11 +221,12 @@ test('a finished run\'s stream answers 204 once nothing is left, so an EventSour
 test('a client that goes away is dropped from its run\'s stream', async () => {
   const { id } = (await post('/api/runs', { select: ['e2e/slow'], configs: ['fake'] })).json()
   await new Promise<void>((ok, fail) => {
-    const req = request({ host: '127.0.0.1', port: litmus.port, path: `/api/runs/${id}/events`, headers: { host: HOST }, setHost: false }, res => {
+    const req = request({ host: '127.0.0.1', port: litmus.port, path: `/api/runs/${id}/events`, headers: { host: HOST }, setHost: false, signal: AbortSignal.timeout(10_000) }, res => {
       res.once('data', () => {
         req.destroy()
         ok()
       })
+      res.once('end', () => fail(new Error('the stream ended before sending anything')))
     })
     req.on('error', e => (e as NodeJS.ErrnoException).code === 'ECONNRESET' || fail(e))
     req.end()
@@ -264,5 +266,56 @@ test('close() returns even with a client stuck mid-request', async () => {
     await Promise.race([other.close(), new Promise((_, no) => setTimeout(() => no(new Error('close() hung on a stuck client')), 3000))])
   } finally {
     req.destroy()
+  }
+})
+
+test('a pipelined request behind a live stream still gets its answer when the stream ends', async () => {
+  const { id } = (await post('/api/runs', { select: ['e2e/slow'], configs: ['fake'] })).json()
+  const socket = connect(litmus.port, '127.0.0.1')
+  socket.setTimeout(10_000, () => socket.destroy(new Error('no answer to the queued request')))
+  let text = ''
+  const got404 = new Promise<void>((ok, fail) => {
+    socket.on('data', d => {
+      text += d
+      if (/HTTP\/1\.1 404/.test(text)) ok()
+    })
+    socket.on('error', fail)
+  })
+  socket.write(`GET /api/runs/${id}/events HTTP/1.1\r\nHost: ${HOST}\r\n\r\nGET /api/nope HTTP/1.1\r\nHost: ${HOST}\r\n\r\n`)
+  await new Promise(r => setTimeout(r, 100))
+  await post(`/api/runs/${id}/cancel`)
+  await got404
+  socket.destroy()
+})
+
+test('a body over the limit is a 413 that closes its connection', async () => {
+  const r = await call('POST', '/api/runs', { headers: { origin: ORIGIN }, body: { select: ['x'.repeat(1_100_000)] } })
+  assert.deepEqual([r.status, r.headers['connection']], [413, 'close'])
+})
+
+test('a transcript over 64 MiB comes back empty and says so', async () => {
+  const { id } = (await post('/api/runs', { select: ['e2e/passes'], configs: ['fake'] })).json()
+  await events(id)
+  writeFileSync(join(ROOT, '.litmus/runs', id, 'trials/e2e/passes/fake/1/transcript.jsonl'), Buffer.alloc((64 << 20) + 1, 0x61))
+  const t = (await call('GET', `/api/runs/${id}/trial?key=${encodeURIComponent('e2e/passes@fake#1')}`)).json()
+  assert.deepEqual([t.transcript, t.transcript_truncated], [[], true])
+})
+
+test('a run is planned against the server\'s environment, so its credential check sees the server\'s keys', async () => {
+  const secret = 'sk-ant-only-in-the-server-env-1234'
+  const root = tree({
+    // Only the real config holds the value; the run itself would use fake.
+    'litmus.config.yaml': `suites: [./suites]\nresults: ./.litmus/runs\nconfigs:\n  fake: { provider: fake }\n  real: { provider: anthropic, model: m, params: { note: "${secret}" } }\n`,
+    'suites/e2e/suite.yaml': 'name: e2e\n',
+    'suites/e2e/cases/c/case.yaml': 'name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, target: response.txt, pattern: x }]\n',
+    'suites/e2e/cases/c/fake.yaml': 'responses: [{ text: x }]\n',
+  })
+  const other = await serve({ configFile: join(root, 'litmus.config.yaml'), port: 0, env: { ANTHROPIC_API_KEY: secret } })
+  try {
+    const r = await fetch(`${other.url}/api/runs`, { method: 'POST', headers: { origin: other.url, 'content-type': 'application/json' }, body: JSON.stringify({ select: [], configs: ['fake'] }), signal: AbortSignal.timeout(10_000) })
+    assert.equal(r.status, 400)
+    assert.match(((await r.json()) as { error: string }).error, /real\.params\.note holds the value of a credential variable/)
+  } finally {
+    await other.close()
   }
 })
