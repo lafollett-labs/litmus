@@ -509,7 +509,7 @@ function comparisonsOf(o: RunOptions, current: RunSide): { comparisons: Comparis
 // A comparison over the cases both sides scored, WARN medians included: taken
 // over every case a side ran, a median would measure which cases were picked
 // rather than how the model did on the same ones.
-function pair(a: RunSide, configA: string, b: RunSide, configB: string, opts: CompareOptions): Comparison {
+export function pair(a: RunSide, configA: string, b: RunSide, configB: string, opts: CompareOptions): Comparison {
   const side = (s: RunSide, config: string): CompareSide => ({ label: s.label, verdicts: s.verdicts.filter(v => v.config === config), hashes: s.hashes })
   const sa = side(a, configA)
   const sb = side(b, configB)
