@@ -67,6 +67,11 @@ export function loadConfig(file: string, env: NodeJS.ProcessEnv = process.env): 
       if ('params' in def && def.params) refuseCredentials(def.params, `${section}.${name}.params`, secrets, path)
     }
   }
+  // fake.yaml scripts the subject, per trial, and a judge would read the
+  // subject's scripted reply as its own verdict. Grading on a fake config uses
+  // graders that need no judge.
+  const fakeJudge = Object.entries(spec.judges).find(([, d]) => d.provider === 'fake')
+  if (fakeJudge) throw new ConfigError(`${path}: judges.${fakeJudge[0]} uses the fake provider, which scripts a subject, not a judge; give it a real provider`)
   const dir = dirname(path)
   return { ...spec, file: path, dir, roots: spec.suites.map(r => resolve(dir, r)), resultsDir: resolve(dir, spec.results) }
 }
@@ -192,8 +197,23 @@ function loadCase(suite: SuiteFile, dir: string): LoadedCase {
     loaded.truth = parseFile(truthFile, TruthFile)
     for (const bug of loaded.truth.bugs) requireFile(resolve(dir, bug.fix), truthFile, `fix for bug "${bug.id}"`)
   }
+  // A seeded case must gate on finding its bugs somewhere: with max_* bounds
+  // alone, or min_recall: 0, an empty review passes at recall 0. One grader
+  // bounding recall is enough, since a trial passes only if every grader does.
+  const reviews = spec.graders.filter((g): g is Extract<typeof g, { kind: 'review-match' }> => g.kind === 'review-match')
+  if (loaded.truth?.kind === 'seeded' && reviews.length && !reviews.some(g => (g.pass.min_recall ?? 0) > 0 || g.pass.min_claims_correct !== undefined)) {
+    throw new ConfigError(`${file}: no review-match bounds finding the seeded bugs (set min_recall above 0, or min_claims_correct)`)
+  }
   for (const g of spec.graders) {
     if (g.kind === 'review-match' && !loaded.truth) throw new ConfigError(`${file}: a review-match grader needs a truth.yaml beside it`)
+    // A clean-case review-match must measure noise: min_recall and
+    // min_claims_correct never apply there, so they do not count.
+    if (g.kind === 'review-match' && loaded.truth?.kind === 'clean') {
+      const usable = Object.keys(g.pass).filter(b => b !== 'min_recall' && b !== 'min_claims_correct')
+      if (usable.length === 0) {
+        throw new ConfigError(`${file}: review-match sets no pass bound that applies to a clean case (set max_false_positives, say)`)
+      }
+    }
     if (g.kind === 'json-schema' && g.schema.startsWith('litmus:') && !BUILTIN_SCHEMAS.has(g.schema)) {
       throw new ConfigError(`${file}: unknown built-in schema "${g.schema}" (known: ${[...BUILTIN_SCHEMAS].join(', ')})`)
     }

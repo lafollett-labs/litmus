@@ -32,6 +32,7 @@ export type GraderResult = {
   score?: number
   metrics?: Record<string, number | null> // null when a ratio's denominator is 0
   rationale?: string
+  usage?: Usage // judge or confirm calls this grade made
 }
 
 export type TrialStatus = 'pass' | 'fail' | 'error' | 'cancelled'

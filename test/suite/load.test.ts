@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ConfigError } from '../../src/core/errors.ts'
 import { sha256 } from '../../src/core/hash.ts'
@@ -308,7 +308,7 @@ test('an unknown built-in schema or judge name is refused at load, before any tr
 
   const project = (graders: string, extra = '') => {
     const root = tree({
-      'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\njudges: { default: { provider: fake } }\n',
+      'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\njudges: { default: { provider: anthropic, model: m } }\n',
       'suites/s/suite.yaml': 'name: s\n',
       'suites/s/cases/c/case.yaml': `name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [${graders}]\n${extra}`,
       'suites/s/cases/c/truth.yaml': 'kind: clean\n',
@@ -318,7 +318,7 @@ test('an unknown built-in schema or judge name is refused at load, before any tr
   assert.doesNotThrow(() => loadProject(project('{ kind: judge, judge: default, question: q }', 'extract: { with: default }\n'), {}))
   for (const [graders, extra] of [
     ['{ kind: judge, judge: nope, question: q }', ''],
-    ['{ kind: review-match, confirm: nope }', ''],
+    ['{ kind: review-match, confirm: nope, pass: { max_findings: 9 } }', ''],
     ['{ kind: regex, pattern: x }', 'extract: { with: nope }\n'],
   ] as const) {
     assert.throws(() => loadProject(project(graders, extra), {}), configError(/judge "nope" is not defined .* \(defined: default\)/), graders + extra)
@@ -341,4 +341,36 @@ test('a subject that is itself a symlink is refused, file or directory', () => {
   const fileLink = tree({ ...suite('s'), 's/skill.md': 'S', 's/cases/c/case.yaml': harness('../../link.md') })
   symlinkSync('skill.md', join(fileLink, 's/link.md'))
   assert.throws(() => discoverSuites([fileLink]), configError(/subject .*link\.md is a symlink/))
+})
+
+test('a judge on the fake provider is refused at load: fake.yaml scripts the subject, not a judge', () => {
+  const root = tree({ 'litmus.config.yaml': 'suites: [./s]\nconfigs: { f: { provider: fake } }\njudges: { j: { provider: fake } }\n' })
+  assert.throws(() => loadConfig(join(root, 'litmus.config.yaml')), (e: Error) => e instanceof ConfigError && /judges\.j uses the fake provider/.test(e.message))
+})
+
+test('a review-match with no pass bound that can apply to its truth is refused at load', () => {
+  const at = (truth: string, pass: string) =>
+    tree({
+      'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\n',
+      'suites/s/suite.yaml': 'name: s\n',
+      'suites/s/cases/c/case.yaml': `name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: ${pass} }]\n`,
+      'suites/s/cases/c/truth.yaml': truth,
+    })
+  const seededTruth = 'kind: seeded\nbugs: [{ id: b, file: a.go, lines: [1, 1], severity: high, category: c, summary: s, proof: p, fix: fix/b.patch }]\n'
+  const load = (root: string) => loadProject(join(root, 'litmus.config.yaml'))
+  assert.throws(() => load(at('kind: clean\n', '{ min_recall: 1 }')), /no pass bound that applies to a clean case \(set max_false_positives, say\)/)
+  assert.throws(() => load(at('kind: clean\n', '{}')), /no pass bound/)
+  assert.doesNotThrow(() => load(at('kind: clean\n', '{ min_recall: 1, max_false_positives: 0 }')))
+  const seeded = at(seededTruth, '{}')
+  mkdirSync(join(seeded, 'suites/s/cases/c/fix'), { recursive: true })
+  writeFileSync(join(seeded, 'suites/s/cases/c/fix/b.patch'), 'x')
+  assert.throws(() => load(seeded), /no review-match bounds finding the seeded bugs \(set min_recall above 0, or min_claims_correct\)/)
+  writeFileSync(join(seeded, 'suites/s/cases/c/case.yaml'), 'name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { max_false_positives: 0 } }]\n')
+  assert.throws(() => load(seeded), /finding the seeded bugs/, 'max_* alone would pass an empty review at recall 0')
+  const g = (pass: string) => `{ kind: review-match, pass: ${pass} }`
+  const graders = (...gs: string[]) => writeFileSync(join(seeded, 'suites/s/cases/c/case.yaml'), `name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [${gs.join(', ')}]\n`)
+  graders(g('{ min_recall: 0, max_decoy_hits: 0 }'))
+  assert.throws(() => load(seeded), /finding the seeded bugs/, 'min_recall: 0 is no bound on finding them')
+  graders(g('{ min_recall: 1 }'), g('{ max_decoy_hits: 0 }'))
+  assert.doesNotThrow(() => load(seeded), 'recall bounded in one grader is enough')
 })

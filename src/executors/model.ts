@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { InfraError } from '../core/errors.ts'
 import type { ExecutorResult, Usage } from '../core/types.ts'
 import { createProvider, priced, type Provider } from '../providers/index.ts'
-import { deadline } from './deadline.ts'
+import { deadline, raced } from './deadline.ts'
 import { extractJson, renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
 import type { ExecJob } from './types.ts'
@@ -57,10 +57,7 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
       signal: clock.signal,
       trace: { case_id: job.case.id, trial: job.trial, attempt: job.attempt, ...(job.case.fakeFile ? { fake_file: job.case.fakeFile } : {}) },
     })
-    call.catch(() => {}) // a call that loses the race below may still reject later
-    // Raced against the clock: a provider that ignores its signal and never
-    // settles would otherwise hold the trial past timeout_s forever.
-    const r = await Promise.race([call, stopped(clock.signal)])
+    const r = await raced(call, clock.signal)
     // A provider that answers after its signal fired did not answer in time.
     const late = byClock()
     if (late) return late
@@ -86,8 +83,3 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
   }
 }
 
-const stopped = (signal: AbortSignal): Promise<never> =>
-  new Promise((_ok, fail) => {
-    if (signal.aborted) fail(signal.reason)
-    else signal.addEventListener('abort', () => fail(signal.reason), { once: true })
-  })

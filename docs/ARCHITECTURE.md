@@ -169,7 +169,9 @@ case directory.
 It can therefore read its `text_file` from anywhere the author points it,
 including a case's `truth.yaml`. Scripting the right answer is how the grading
 pipeline is tested for $0, and under a `fake` config there is no subject to hide
-anything from.
+anything from. A judge may not use the `fake` provider: `fake.yaml` scripts
+the subject, trial by trial, so a fake judge would read the subject's scripted
+reply as its verdict. Grading on a fake config uses graders that need no judge.
 
 `validate` fails a case whose tree contains a symlink **after the change is
 applied**. A patch can create a symlink too, and an absolute link could point
@@ -450,6 +452,11 @@ executor lands (see "After 0.1.0" in the plan):
 A shell command, hook or MCP server started by the harness is a child of the
 harness process, so it inherits the harness's credential.
 
+A `command` grader leads its own process group, and the whole group is killed
+when the shell exits or times out. A process that leaves the group (`setsid`)
+is not killed. Once the shell has exited, the grade waits 2 s for the rest of
+its output and then finishes on the shell's exit code.
+
 ## Contracts
 
 ### Provider
@@ -684,32 +691,55 @@ hash of the judge definition plus the prompt version. That hash is recorded in
 extractor hashes differ, and the same goes for judges. This lets a real
 `/review` skill be scored without changing the format it writes.
 
+An extraction that yields nothing says why:
+- there was no source, or it was empty, which is never extracted into zero findings
+- the reply was not `litmus:findings`, or it stopped at the extractor's token cap
+- `to` could not be written, because a subject can plant a directory there.
+
+The graders then fail on the missing artifact, and the reason is recorded with
+the trial. The extracted findings are redacted before
+they are written.
+
 ### Grader
 
 ```ts
-interface Grader {
-  kind: string
-  grade(trial: TrialResult, ctx: { case: Case; truth?: Truth; judges: Judges; signal: AbortSignal }): Promise<{
-    grader: string
-    pass: boolean
-    score?: number                         // 0..1
-    metrics?: Record<string, number | null>
-    rationale?: string                     // shown in the UI, including on a pass
-  }>                                       // throws InfraError when a judge's provider fails
+type TrialResult = ExecutorResult & { workdir: string; home: string }
+type GradeContext = {
+  case: LoadedCase                         // its truth, if any, is case.truth
+  judge(name: string): Judge               // ConfigError for an unknown name
+  signal: AbortSignal
+  redact: Redactor
 }
+type Grader = (spec: GraderSpec, trial: TrialResult, ctx: GradeContext) => Promise<{
+  grader: string
+  pass: boolean
+  score?: number                           // 0..1
+  metrics?: Record<string, number | null>
+  rationale?: string                       // shown in the UI, including on a pass; redacted
+  usage?: Usage                            // what its judge calls spent
+}>                                         // throws InfraError when a judge's provider fails
 ```
 
+Every judge, confirm and extract call has its own deadline, raced against the
+call as the model executor's is: 300 s, or 1 s per 20 tokens the call may
+write when that is longer. A call that gives no answer in
+time is a retryable `InfraError`. The material sent to a judge or extractor is
+capped at 400,000 characters: past that the head and tail are kept, with a
+marker saying how much of the middle was cut. The cap is part of the prompt
+version.
+
 A trial passes when its executor finished (`exit == ok`) and every one of its
-graders passes. A cancelled, failed or errored trial never passes, whatever
+graders passes. A cancel during grading rejects the whole grading step: it
+never leaves a partial set of grades that would read as a failed trial. A cancelled, failed or errored trial never passes, whatever
 its graders say.
 
 | Grader | Passes when |
 | - | - |
-| `regex` | The pattern matches the target (an artifact or `transcript`) between `min` and `max` times |
+| `regex` | The pattern matches the target (an artifact or `transcript`) between `min` and `max` times. An empty match does not count, and counting stops once past `max`, when `matches` reads null (a lower bound, not a count). `transcript` is what the subject wrote: its messages and tool calls, not litmus's prompt and not tool results, which are the fixture it read |
 | `json-schema` | The artifact parses and validates against the schema (`litmus:findings`, or a path to a JSON Schema) |
-| `file-exists` | The subject created (or did not create) the path |
+| `file-exists` | The path exists (or does not) in the workdir after the trial. A path that leads outside the workdir through a symlink fails |
 | `tool-used` | A tool was called between `min` and `max` times, read from the transcript. Useful for capping subagent fan-out |
-| `command` | A shell command, run in the workdir after the trial with the scrubbed environment, exits 0 within `timeout_s`. **Uncontained** (see Sandbox) |
+| `command` | A shell command, run in the workdir after the trial with the scrubbed environment, exits 0 within `timeout_s`. Its output is redacted before it is cut to its last 4,000 bytes. **Uncontained** (see Sandbox) |
 | `review-match` | Findings matched against `truth.yaml` meet the case's `pass` bounds (below) |
 | `judge` | A pinned binary judge answers yes to its `question` about its `target` |
 
@@ -746,7 +776,7 @@ Paths are normalized before they are compared. A leading workdir path
 The metrics are below. A metric is null when its denominator is 0.
 
 ```
-recall            = matched / bugs                    # also recall_<severity> per severity
+recall            = matched / bugs                    # also recall_critical, _high, _medium, _low: always present, null for a severity the truth lacks
 precision         = matched / (matched + false_positives + decoy_hits)
 precision_all     = matched / findings
 false_positives, decoy_hits, duplicates, nits, findings   # counts
@@ -756,7 +786,17 @@ claims_correct    = confirmed / matched               # only with confirm
 The `pass` bounds are `min_recall`, `max_false_positives`, `max_decoy_hits`,
 `max_duplicates`, `max_nits`, `max_findings` and `min_claims_correct`. A bound
 that is not set does not apply. Nor does a bound whose metric is null, such as
-`min_recall` on a clean case; its rationale says "n/a".
+`min_recall` on a clean case; its rationale says "n/a". A grade where no bound
+applied has checked nothing, so it fails. At load, a review-match must set a
+bound that can apply to its truth: on a clean case, one other than
+`min_recall` and `min_claims_correct`. More than 1,000 findings fail the grade
+rather than being matched. On a seeded case, the load-time rule is stricter:
+some review-match in the case must set `min_recall` above 0 or
+`min_claims_correct`, because with `max_*` bounds alone, or `min_recall: 0`, an
+empty review would pass at recall 0. Matching grows
+roughly with the cube of the bug count, so a case with dozens of bugs grades
+in seconds rather than milliseconds; the few seeded bugs a case usually has
+cost nothing.
 
 With `confirm: <judge>`, each matched pair goes to a binary judge. It asks
 whether the finding states the seeded bug's mechanism, and whether that
