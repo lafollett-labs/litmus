@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync, statSync } from 'node:fs'
 import { extname, join, resolve, sep } from 'node:path'
 import { z } from 'zod'
-import { resolveSide } from '../cli/address.ts'
+import { resolveSide } from '../runner/address.ts'
 import { ConfigError } from '../core/errors.ts'
 import { parseTrialKey, RUN_ID } from '../core/ids.ts'
 import { redactor, secretValues } from '../core/redact.ts'
@@ -21,7 +21,8 @@ export type ServeOptions = {
   runSeams?: Partial<RunOptions> // tests only: stand-in executors, no backoff
 }
 
-export type Litmus = { server: Server; port: number; url: string; close: () => Promise<void> }
+// stats: live runs and their open event streams, so a leak can be seen.
+export type Litmus = { server: Server; port: number; url: string; close: () => Promise<void>; stats: () => { live: number; subscribers: number } }
 
 // A run started here: its events so far (the backlog a late subscriber gets
 // first), the streams listening, and the switch that cancels it.
@@ -56,14 +57,19 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
   const env = o.env ?? process.env
   const uiDir = resolve(o.uiDir ?? join(import.meta.dirname, '../../ui/dist'))
   const live = new Map<string, Live>()
+  let closing = false
   let hosts = new Set<string>()
   let origins = new Set<string>()
 
   const server = createServer((req, res) => {
     handle(req, res).catch(e => {
+      // The client left mid-request: there is no one to answer. (The request
+      // itself reads as destroyed after any body is read; the socket tells.)
+      if (!res.socket || res.socket.destroyed) return
       const status = e instanceof HttpError ? e.status : e instanceof ConfigError || e instanceof z.ZodError ? 400 : 500
       if (status === 500) process.stderr.write(`litmus serve: ${(e as Error).stack ?? String(e)}\n`)
       if (res.headersSent) return void res.end()
+      if ((e as { close?: boolean }).close) res.shouldKeepAlive = false
       const message = e instanceof z.ZodError ? e.issues.map(i => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') : (e as Error).message
       json(res, status, { error: status === 500 ? 'internal error' : message })
     })
@@ -91,6 +97,7 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
       case 'GET /runs':
         return json(res, 200, listRuns(loadConfig(o.configFile, env).resultsDir))
       case 'POST /runs':
+        if (closing) throw new HttpError(503, 'the server is shutting down')
         return json(res, 202, await start(StartRun.parse(await body(req))))
       case 'GET /runs/:id':
         return json(res, 200, stored(id))
@@ -195,31 +202,44 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
   // Last-Event-ID picks up where it left off.
   function events(req: IncomingMessage, res: ServerResponse, id: string): void {
     stored(id)
-    const last = Number(req.headers['last-event-id'])
-    const from = Number.isSafeInteger(last) && last >= 0 ? last + 1 : 0
-    res.writeHead(200, { ...SECURITY, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' })
+    const last = String(req.headers['last-event-id'] ?? '')
+    const from = /^\d{1,15}$/.test(last) ? Number(last) + 1 : 0
+    const stream = () => res.writeHead(200, { ...SECURITY, 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive' })
     const r = live.get(id)
     if (r && !r.done) {
+      stream()
       r.backlog.forEach((e, n) => n >= from && send(res, n, e))
       r.subscribers.add(res)
       req.on('close', () => r.subscribers.delete(res))
       return
     }
-    readEvents(loadConfig(o.configFile, env).resultsDir, id).forEach((e, n) => n >= from && send(res, n, e))
+    // A run that is over has nothing new to say. When a reconnect asks for
+    // more, 204 is the one answer that stops an EventSource retrying forever;
+    // that covers a run that ended without a last event, too.
+    const rest = readEvents(loadConfig(o.configFile, env).resultsDir, id).map((e, n) => [n, e] as const).filter(([n]) => n >= from)
+    if (rest.length === 0) {
+      res.writeHead(204, SECURITY)
+      res.end()
+      return
+    }
+    stream()
+    for (const [n, e] of rest) send(res, n, e)
     res.end()
   }
 
   // The record, the transcript, and each artifact: as text when it is UTF-8,
-  // otherwise only its size. Every file is read without following a link.
+  // otherwise only its size. Every file must really be inside the trial's
+  // directory, links followed, and is read without following a final link.
   function trial(id: string, key: string | null) {
     const ref = key === null ? undefined : parseTrialKey(key)
     if (!ref) throw new HttpError(400, `key must be a trial key, percent-encoded (got ${JSON.stringify(key)})`)
     stored(id)
     const dir = join(loadConfig(o.configFile, env).resultsDir, id, 'trials', ref.suite, ref.case, ref.config, String(ref.trial))
-    const record = readRegular(join(dir, 'trial.json'))
-    if (!record) throw new HttpError(404, `run ${id} has no trial ${key}`)
-    const parsed = JSON.parse(record.toString('utf8')) as TrialRecord
-    const transcript = (readRegular(join(dir, 'transcript.jsonl'), 64 << 20)?.toString('utf8') ?? '').split('\n').flatMap(line => {
+    const record = readInside(dir, 'trial.json', ARTIFACT_MAX)
+    if (!('data' in record)) throw new HttpError(404, `run ${id} has no trial ${key}`)
+    const parsed = JSON.parse(record.data.toString('utf8')) as TrialRecord
+    const log = readInside(dir, 'transcript.jsonl', TRANSCRIPT_MAX)
+    const transcript = ('data' in log ? log.data.toString('utf8') : '').split('\n').flatMap(line => {
       if (!line) return []
       try {
         return [JSON.parse(line) as unknown]
@@ -227,16 +247,14 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
         return [] // a torn line
       }
     })
-    const root = join(dir, 'artifacts')
     const artifacts = parsed.artifacts.map(name => {
-      const path = resolve(root, name)
-      if (!path.startsWith(root + sep)) return { name, missing: true }
-      const data = readRegular(path, ARTIFACT_MAX)
-      if (!data) return { name, missing: true }
-      const text = utf8(data)
-      return text === undefined ? { name, size: data.length, binary: true } : { name, size: data.length, text }
+      const got = readInside(join(dir, 'artifacts'), name, ARTIFACT_MAX)
+      if ('missing' in got) return { name, missing: true }
+      if ('size' in got) return { name, size: got.size, truncated: true }
+      const text = utf8(got.data)
+      return text === undefined ? { name, size: got.data.length, binary: true } : { name, size: got.data.length, text }
     })
-    return { record: parsed, transcript, artifacts }
+    return { record: parsed, transcript, ...('size' in log ? { transcript_truncated: true } : {}), artifacts }
   }
 
   function compare(a: string | null, b: string | null) {
@@ -258,10 +276,11 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
       throw new HttpError(400, 'bad path')
     }
     if (rel.includes('\0') || rel.split('/').includes('..')) throw new HttpError(400, 'bad path')
-    const path = resolve(uiDir, `.${rel}`)
-    const asked = path.startsWith(uiDir + sep) ? readRegular(path) : undefined
-    const content = asked ?? readRegular(join(uiDir, 'index.html')) ?? Buffer.from(NOT_BUILT)
-    const type = asked ? (TYPES[extname(path)] ?? 'application/octet-stream') : 'text/html; charset=utf-8'
+    const got = readInside(uiDir, `.${rel}`, ARTIFACT_MAX)
+    const asked = 'data' in got ? got.data : undefined
+    const index = readInside(uiDir, 'index.html', ARTIFACT_MAX)
+    const content = asked ?? ('data' in index ? index.data : Buffer.from(NOT_BUILT))
+    const type = asked ? (TYPES[extname(rel)] ?? 'application/octet-stream') : 'text/html; charset=utf-8'
     res.writeHead(200, { ...SECURITY, 'content-type': type, 'content-length': content.length })
     res.end(req.method === 'HEAD' ? undefined : content)
   }
@@ -272,7 +291,10 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
     let size = 0
     for await (const chunk of req) {
       size += (chunk as Buffer).length
-      if (size > MAX_BODY) throw new HttpError(413, 'body too large')
+      if (size > MAX_BODY) {
+        // The rest of the body is never read, so this connection cannot serve another request.
+        throw Object.assign(new HttpError(413, 'body too large'), { close: true })
+      }
       chunks.push(chunk as Buffer)
     }
     try {
@@ -294,17 +316,43 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
     server,
     port,
     url: `http://127.0.0.1:${port}`,
+    stats: () => ({ live: live.size, subscribers: [...live.values()].reduce((n, r) => n + r.subscribers.size, 0) }),
     // Cancels every live run and waits for each to be written, then stops.
+    // New connections are refused and open ones dropped at once: a client
+    // halfway through a request must not hold the process open.
     async close() {
+      closing = true
       for (const r of live.values()) r.ctl.abort(new Error('the server is shutting down'))
-      await Promise.all([...live.values()].map(r => r.settled))
-      await new Promise<void>(ok => server.close(() => ok()))
+      const closed = new Promise<void>(ok => server.close(() => ok()))
       server.closeAllConnections()
+      await Promise.all([...live.values()].map(r => r.settled))
+      await closed
     },
   }
 }
 
 const ARTIFACT_MAX = 8 << 20
+const TRANSCRIPT_MAX = 64 << 20
+
+// A file under root, only if its real path is under root's real path (a
+// linked directory on the way cannot lead out), read without following a
+// final link. Too big for max: its size, unread.
+function readInside(root: string, rel: string, max: number): { data: Buffer } | { size: number } | { missing: true } {
+  let real: string
+  let base: string
+  try {
+    base = realpathSync(root)
+    real = realpathSync(resolve(root, rel))
+  } catch {
+    return { missing: true }
+  }
+  if (!real.startsWith(base + sep)) return { missing: true }
+  const st = statSync(real, { throwIfNoEntry: false })
+  if (!st?.isFile()) return { missing: true }
+  if (st.size > max) return { size: st.size }
+  const data = readRegular(real, max)
+  return data ? { data } : { missing: true }
+}
 
 // Frames and sniffing are how another page could borrow this one's clicks or
 // reinterpret its bytes; nothing here is meant to be cached or referred.

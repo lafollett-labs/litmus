@@ -12,7 +12,7 @@ import { planRun } from '../runner/plan.ts'
 import { pair, run } from '../runner/run.ts'
 import { baselines, readTrials, setBaseline } from '../store/store.ts'
 import { loadConfig } from '../suite/load.ts'
-import { resolveSide } from './address.ts'
+import { resolveSide } from '../runner/address.ts'
 import type { Io } from './main.ts'
 
 const paintFor = (io: Io): Paint => (io.colour ? colour : plain)
