@@ -1,14 +1,14 @@
 import type { Exit, TrialStatus, Verdict, VerdictKind } from '../core/types.ts'
 import { passAtK, passPowK, wilson } from './intervals.ts'
 
-export type TrialOutcome = { status: TrialStatus | 'cancelled'; exit: Exit }
+export type TrialOutcome = { status: TrialStatus; exit: Exit }
 
 export type SettleInput = {
   case: string
   config: string
   policy: 'all' | 'rate'
   threshold: number // rate policy only
-  min_trials: number
+  min_trials: number // the effective value (suite/load.ts effectiveMinTrials), never the raw configured one
   expect: 'pass' | 'fail'
   trials: number // scheduled
   outcomes: TrialOutcome[]
@@ -17,7 +17,9 @@ export type SettleInput = {
 // Rules in docs/ARCHITECTURE.md § Verdicts. Everything is computed on
 // successes rather than passes, so a canary that starts passing loses
 // successes and reads as a drop, the same as any other regression.
-export function settle(input: SettleInput): Verdict {
+export function settle(raw: SettleInput): Verdict {
+  // Capped by the trials scheduled: a run that asked for fewer can still settle.
+  const input = { ...raw, min_trials: Math.min(raw.min_trials, raw.trials) }
   const { outcomes, expect } = input
   // A cancelled trial never ran to an outcome, so it is neither scored nor an
   // error; counting it as either would let Ctrl-C decide a verdict.
@@ -91,7 +93,12 @@ export function minTrialsToPass(threshold: number, z?: number): number {
   if (!(threshold >= 0 && threshold < 1)) {
     throw new RangeError(`threshold ${threshold} is outside [0, 1); no finite run can reach it`)
   }
-  let n = 1
+  // n/n's Wilson lower bound is n/(n + z²), so the answer is near z²t/(1−t).
+  // The walk starts just below it: a threshold near 1 would otherwise loop for
+  // trillions of steps, and walking the last few keeps exact agreement.
+  const zz = (z ?? 1.959963984540054) ** 2
+  let n = Math.max(1, Math.ceil((zz * threshold) / (1 - threshold)) - 2)
+  while (n > 1 && wilson(n - 1, n - 1, z)!.lo >= threshold) n--
   while (wilson(n, n, z)!.lo < threshold) n++
   return n
 }

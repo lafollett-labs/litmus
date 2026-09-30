@@ -189,3 +189,27 @@ test('k shrinks to the scored count when fewer than three trials scored', () => 
   assert.equal(v.pass_at_k, 1)
   assert.equal(v.pass_pow_k, 0)
 })
+
+test('INCONCLUSIVE at exactly min_trials scored is the interval, not too few trials', () => {
+  const v = settle({ case: 's/c', config: 'f', policy: 'rate', threshold: 0.8, min_trials: 5, expect: 'pass', trials: 5, outcomes: Array.from({ length: 5 }, () => ({ status: 'pass' as const, exit: 'ok' as const })) })
+  assert.equal(v.verdict, 'INCONCLUSIVE')
+  assert.equal(v.inconclusive_reason, 'interval')
+})
+
+test('min_trials is capped by the trials scheduled, so one requested trial can still settle', () => {
+  const v = settle({ case: 's/c', config: 'f', policy: 'all', threshold: 0.8, min_trials: 5, expect: 'pass', trials: 1, outcomes: [{ status: 'pass', exit: 'ok' }] })
+  assert.equal(v.verdict, 'PASS')
+})
+
+test('minTrialsToPass is exact and instant even for a threshold a hair below 1', () => {
+  assert.deepEqual([0.5, 0.8, 0.9, 0.95, 0.99].map(t => minTrialsToPass(t)), [4, 16, 35, 73, 381])
+  const t0 = Date.now()
+  assert.equal(minTrialsToPass(0.999999999999), 3841543802248)
+  assert.ok(Date.now() - t0 < 50)
+})
+
+test('a lower bound exactly on the threshold clears it under the rate policy', () => {
+  const threshold = wilson(16, 16)!.lo
+  const v = settle({ case: 's/c', config: 'f', policy: 'rate', threshold, min_trials: 1, expect: 'pass', trials: 16, outcomes: Array.from({ length: 16 }, () => ({ status: 'pass' as const, exit: 'ok' as const })) })
+  assert.equal(v.verdict, 'PASS')
+})

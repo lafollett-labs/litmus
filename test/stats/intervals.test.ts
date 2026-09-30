@@ -64,3 +64,9 @@ test('the median leaves its input in place', () => {
   median(xs)
   assert.deepEqual(xs, [3, 1, 2])
 })
+
+test('Wilson 3/5 agrees with R prop.test(correct = FALSE) to 1e-12', () => {
+  const ci = wilson(3, 5)!
+  assert.ok(Math.abs(ci.lo - 0.2307242812760128) < 1e-12, String(ci.lo))
+  assert.ok(Math.abs(ci.hi - 0.882379225767352) < 1e-12, String(ci.hi))
+})
