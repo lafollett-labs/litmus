@@ -41,7 +41,7 @@ const tone = (c: Comparison) => ({ REGRESSION: 'fail', IMPROVEMENT: 'pass', 'NO 
       <span v-if="problem" class="error">{{ problem }}</span>
     </form>
 
-    <article v-for="(c, i) in shown" :key="i" class="comparison" :data-verdict="c.verdict">
+    <article v-for="(c, i) in shown" :key="`${c.a}→${c.b}${i < state.comparisons.length ? '' : ' (asked)'}`" class="comparison" :data-verdict="c.verdict">
       <header>
         <strong class="mono">{{ c.a }} → {{ c.b }}</strong>
         <span class="verdict" :class="tone(c)">{{ c.verdict }}</span>

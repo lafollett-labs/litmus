@@ -1,25 +1,72 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { BADGE, type Node, type Status } from '../model.ts'
 import { openTrial, state, toggle, visible } from '../store.ts'
 import StatusIcon from './StatusIcon.vue'
 
 const CHIPS: Status[] = ['pass', 'fail', 'flaky', 'error', 'inconclusive']
 
-// The visible tree flattened into rows; a filter opens every branch it keeps.
+type Row = { node: Node; level: number; size: number; pos: number; parent: string | null; open: boolean }
+
+// A filter opens every branch it keeps.
+const filtering = computed(() => state.filter.trim() !== '' || state.chips.size > 0)
+const isOpen = (n: Node) => n.children.length > 0 && (filtering.value || state.expanded.has(n.id))
+
+// The visible tree flattened into rows, each with what a flat ARIA tree needs
+// to say where it sits.
 const rows = computed(() => {
-  const out: { node: Node; depth: number }[] = []
-  const open = (n: Node) => state.filter.trim() !== '' || state.chips.size > 0 || state.expanded.has(n.id)
-  const walk = (n: Node, depth: number) => {
-    out.push({ node: n, depth })
-    if (open(n)) for (const c of n.children) walk(c, depth + 1)
-  }
-  visible.value.forEach(n => walk(n, 0))
+  const out: Row[] = []
+  const walk = (siblings: Node[], level: number, parent: string | null) =>
+    siblings.forEach((n, i) => {
+      const open = isOpen(n)
+      out.push({ node: n, level, size: siblings.length, pos: i + 1, parent, open })
+      if (open) walk(n.children, level + 1, n.id)
+    })
+  walk(visible.value, 1, null)
   return out
 })
 
-const select = (n: Node) => (n.kind === 'trial' ? void openTrial(n.id) : toggle(state.expanded, n.id))
+// Roving tabindex: one row is the tree's tab stop, and the arrows move it.
+const current = ref<string | null>(null)
+const focusable = computed(() => (rows.value.some(r => r.node.id === current.value) ? current.value : (rows.value[0]?.node.id ?? null)))
+const list = ref<HTMLElement | null>(null)
+watch(focusable, id => (current.value = id))
+
+function focus(id: string | undefined) {
+  if (id === undefined) return
+  current.value = id
+  void nextTick(() => list.value?.querySelector<HTMLElement>(`li[data-id="${CSS.escape(id)}"]`)?.focus())
+}
+
+const activate = (n: Node) => (n.kind === 'trial' ? openTrial(n.id) : toggle(state.expanded, n.id))
+const check = (n: Node) => n.selectable && toggle(state.checked, n.id)
 const chip = (s: Status) => (state.chips.has(s) ? state.chips.delete(s) : state.chips.add(s))
+
+function key(e: KeyboardEvent, r: Row) {
+  const all = rows.value
+  const i = all.indexOf(r)
+  const go: Record<string, () => void> = {
+    ArrowDown: () => focus(all[i + 1]?.node.id),
+    ArrowUp: () => focus(all[i - 1]?.node.id),
+    Home: () => focus(all[0]?.node.id),
+    End: () => focus(all.at(-1)?.node.id),
+    ArrowRight: () => {
+      if (!r.node.children.length) return
+      if (!r.open) state.expanded.add(r.node.id)
+      else focus(all[i + 1]?.node.id)
+    },
+    ArrowLeft: () => {
+      if (r.open && !filtering.value) state.expanded.delete(r.node.id)
+      else focus(r.parent ?? undefined)
+    },
+    Enter: () => activate(r.node),
+    ' ': () => check(r.node),
+  }
+  const act = go[e.key]
+  if (!act) return
+  e.preventDefault()
+  act()
+}
 </script>
 
 <template>
@@ -30,28 +77,37 @@ const chip = (s: Status) => (state.chips.has(s) ? state.chips.delete(s) : state.
         <StatusIcon :status="s" /> {{ s }}
       </button>
     </div>
-    <ul role="tree" class="rows">
+    <!-- Space checks a row and Enter opens it; the checkbox is the mouse's way to the same aria-checked. -->
+    <ul ref="list" role="tree" class="rows" aria-label="Case tree">
       <li
-        v-for="{ node, depth } in rows"
-        :key="node.id"
+        v-for="r in rows"
+        :key="r.node.id"
         role="treeitem"
         class="row"
-        :class="[node.kind, { selected: state.detail?.key === node.id }]"
-        :style="{ paddingLeft: `${8 + depth * 16}px` }"
-        :aria-expanded="node.children.length ? state.expanded.has(node.id) : undefined"
-        :data-id="node.id"
-        :data-status="node.status"
-        @click="select(node)"
+        :class="[r.node.kind, { selected: state.detail?.key === r.node.id }]"
+        :style="{ paddingLeft: `${8 + (r.level - 1) * 16}px` }"
+        :tabindex="r.node.id === focusable ? 0 : -1"
+        :aria-level="r.level"
+        :aria-setsize="r.size"
+        :aria-posinset="r.pos"
+        :aria-expanded="r.node.children.length ? r.open : undefined"
+        :aria-checked="r.node.selectable ? state.checked.has(r.node.id) : undefined"
+        :aria-selected="r.node.kind === 'trial' ? state.detail?.key === r.node.id : undefined"
+        :aria-disabled="r.node.selectable ? undefined : true"
+        :data-id="r.node.id"
+        :data-status="r.node.status"
+        @click="(current = r.node.id), activate(r.node)"
+        @keydown="key($event, r)"
       >
-        <span class="caret">{{ node.children.length ? (state.expanded.has(node.id) || state.filter || state.chips.size ? '▾' : '▸') : '' }}</span>
-        <input type="checkbox" :checked="state.checked.has(node.id)" :aria-label="`select ${node.id}`" @click.stop @change="toggle(state.checked, node.id)" />
-        <StatusIcon :status="node.status" />
-        <span class="label" :class="{ mono: node.kind !== 'suite' }">{{ node.label }}</span>
-        <span v-if="node.kind !== 'trial'" class="badge" :aria-label="`counts for ${node.id}`">
-          <span v-for="[k, glyph] in BADGE" :key="k" :class="[k, { zero: !node.counts[k] }]">{{ glyph }} {{ node.counts[k] }}</span>
+        <span class="caret" aria-hidden="true">{{ r.node.children.length ? (r.open ? '▾' : '▸') : '' }}</span>
+        <input type="checkbox" tabindex="-1" aria-hidden="true" :checked="state.checked.has(r.node.id)" :disabled="!r.node.selectable" :title="r.node.selectable ? undefined : 'beyond the case\'s own trial count: rerun it from its config row'" @click.stop @change="check(r.node)" />
+        <StatusIcon :status="r.node.status" />
+        <span class="label" :class="{ mono: r.node.kind !== 'suite' }">{{ r.node.label }}</span>
+        <span v-if="r.node.kind !== 'trial'" class="badge" :aria-label="`counts for ${r.node.id}`">
+          <span v-for="[k, glyph] in BADGE" :key="k" :class="[k, { zero: !r.node.counts[k] }]">{{ glyph }} {{ r.node.counts[k] }}</span>
         </span>
       </li>
-      <li v-if="!rows.length" class="empty muted">No cases match.</li>
+      <li v-if="!rows.length" class="empty muted" role="none">No cases match.</li>
     </ul>
   </section>
 </template>
@@ -66,6 +122,7 @@ const chip = (s: Status) => (state.chips.has(s) ? state.chips.delete(s) : state.
 .row { display: flex; align-items: center; gap: 7px; height: 26px; padding-right: 8px; cursor: pointer; white-space: nowrap; }
 .row:hover { background: var(--hover); }
 .row.selected { background: var(--selected); }
+.row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .row.suite .label { font-weight: 600; }
 .caret { width: 10px; color: var(--muted); font-size: 11px; }
 .label { overflow: hidden; text-overflow: ellipsis; }
@@ -75,6 +132,6 @@ const chip = (s: Status) => (state.chips.has(s) ? state.chips.delete(s) : state.
 .badge .flaky { color: var(--flaky); }
 .badge .error { color: var(--error); }
 .badge .inconclusive { color: var(--unsure); }
-.badge .zero { opacity: 0.35; }
+.badge .zero { color: var(--muted); }
 .empty { padding: 12px; }
 </style>

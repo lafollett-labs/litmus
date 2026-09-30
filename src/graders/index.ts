@@ -32,8 +32,13 @@ export const gradeAll: GradeAll = async (trial, ctx) => {
       throw ctx.signal.aborted ? ctx.signal.reason : e // a cancel inside a judge call is still the cancel
     }
     if (ctx.signal.aborted) throw ctx.signal.reason
-    // A rationale quotes what the subject wrote, a command printed or a judge said.
-    results.push(r.rationale === undefined ? r : { ...r, rationale: ctx.redact.text(r.rationale) })
+    // A rationale quotes what the subject wrote, a command printed or a judge
+    // said, and review details carry the subject's finding titles.
+    results.push({
+      ...r,
+      ...(r.rationale === undefined ? {} : { rationale: ctx.redact.text(r.rationale) }),
+      ...(r.details === undefined ? {} : { details: ctx.redact.json(r.details) }),
+    })
   }
   return results
 }

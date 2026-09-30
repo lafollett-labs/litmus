@@ -1,36 +1,23 @@
-import type { GraderResult } from '../../src/core/types.ts'
+import type { GraderResult, ReviewDetails, ReviewFinding } from '../../src/core/types.ts'
 
-// A review-match grade, read back into what the Findings panel shows. The
-// rationale's line format is review-match's (src/graders/review-match.ts);
-// test/ui/findings.test.ts runs the real grader, so the two cannot drift apart.
+// A review-match grade as the Findings panel shows it, read from the grade's
+// structured details, never from its rationale: a finding title is the
+// subject's output, and parsed prose would let it forge a line of its own.
 export type FindingsView = {
-  matched: { bug: string; at: string }[]
+  matched: ReviewDetails['matched']
   missed: string[]
-  falsePositives: string[]
-  decoyHits: string[]
-  nits: string[]
-  duplicates: string[]
+  falsePositives: ReviewFinding[]
+  decoyHits: (ReviewFinding & { near?: string })[]
+  nits: ReviewFinding[]
+  duplicates: (ReviewFinding & { near?: string })[]
   metrics: Record<string, number | null>
 }
 
-const OUTCOMES = { 'false positive: ': 'falsePositives', 'decoy hit: ': 'decoyHits', 'nit: ': 'nits', 'duplicate: ': 'duplicates' } as const
-
 export function findingsOf(g: GraderResult): FindingsView | undefined {
-  if (g.grader !== 'review-match') return undefined
-  const out: FindingsView = { matched: [], missed: [], falsePositives: [], decoyHits: [], nits: [], duplicates: [], metrics: g.metrics ?? {} }
-  for (const line of (g.rationale ?? '').split('\n')) {
-    const m = /^ {2}(\S+) <- (.*)$/.exec(line)
-    if (m) {
-      out.matched.push({ bug: m[1]!, at: m[2]! })
-      continue
-    }
-    if (line.startsWith('missed: ')) {
-      out.missed.push(...line.slice('missed: '.length).split(', '))
-      continue
-    }
-    for (const [prefix, field] of Object.entries(OUTCOMES) as [keyof typeof OUTCOMES, (typeof OUTCOMES)[keyof typeof OUTCOMES]][]) {
-      if (line.startsWith(prefix)) out[field].push(line.slice(prefix.length))
-    }
-  }
-  return out
+  if (g.grader !== 'review-match' || !g.details) return undefined
+  const { matched, missed, unmatched } = g.details
+  const as = (kind: ReviewDetails['unmatched'][number]['as']) => unmatched.filter(u => u.as === kind)
+  return { matched, missed, falsePositives: as('false_positive'), decoyHits: as('decoy_hit'), nits: as('nit'), duplicates: as('duplicate'), metrics: g.metrics ?? {} }
 }
+
+export const where = (f: ReviewFinding) => `${f.file}:${f.line} "${f.title}"`

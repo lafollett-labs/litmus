@@ -1,9 +1,13 @@
-import { computed, reactive } from 'vue'
+import { computed, markRaw, reactive, watch } from 'vue'
 import type { Comparison, VerdictKind } from '../../src/core/types.ts'
 import { api, follow, type TrialDetail } from './api.ts'
 import { apply, buildTree, emptyRun, filterTree, selection, type RunState, type Status, type SuiteView } from './model.ts'
 
 export type View = 'tree' | 'compare'
+
+// A trial's detail belongs to the run it was opened in. `waiting` is a trial
+// that has not finished, whose record does not exist yet.
+type Detail = { run: string; key: string; data: TrialDetail | null; error: string | null; waiting: boolean }
 
 export const state = reactive({
   suites: [] as SuiteView[],
@@ -16,7 +20,7 @@ export const state = reactive({
   expanded: new Set<string>(),
   filter: '',
   chips: new Set<Status>(),
-  detail: null as { key: string; data: TrialDetail | null; error: string | null } | null,
+  detail: null as Detail | null,
   view: 'tree' as View,
   message: null as string | null,
   busy: false,
@@ -38,29 +42,37 @@ export async function load(): Promise<void> {
   if (latest && !state.run) watchRun(latest.id)
 }
 
-// Shows a run: its stored events replayed, then live ones while it runs.
+// Shows a run: its stored events replayed, then live ones while it runs. The
+// trial open in the detail pane belonged to the run before, so it closes.
 export function watchRun(id: string): void {
   unfollow?.()
   // Reactive from the start: events fold into the same proxy the tree reads.
   const run = reactive(emptyRun(id))
   state.run = run
   state.comparisons = []
+  state.detail = null
   unfollow = follow(id, e => apply(run, e), () => void settled(id))
 }
 
+// The stream has ended. The stored run is the truth: a stream can end
+// without a last event when the run is live in another process (the CLI), or
+// when the server itself has gone.
 async function settled(id: string): Promise<void> {
   if (state.run?.id !== id) return
-  // The stream can end without a last event (a run whose record was cut
-  // short): the stored run is the truth then.
-  const [stored, suites] = await Promise.all([api.run(id), api.suites()])
-  if (state.run?.id !== id) return
-  if (state.run.done === 'running') state.run.done = stored.manifest.status === 'running' ? 'failed' : stored.manifest.status
-  state.comparisons = stored.comparisons
-  state.suites = suites
+  try {
+    const [stored, suites] = await Promise.all([api.run(id), api.suites()])
+    if (state.run?.id !== id) return
+    if (state.run.done === 'running') state.run.done = stored.manifest.status === 'running' ? 'elsewhere' : stored.manifest.status
+    state.comparisons = stored.comparisons
+    state.suites = suites
+  } catch (e) {
+    if (state.run?.id !== id) return
+    if (state.run.done === 'running') state.run.done = 'lost'
+    state.message = `lost touch with litmus: ${(e as Error).message}`
+  }
 }
 
 async function start(body: Parameters<typeof api.start>[0]): Promise<void> {
-  state.message = null
   state.busy = true
   try {
     const r = await api.start(body)
@@ -73,23 +85,41 @@ async function start(body: Parameters<typeof api.start>[0]): Promise<void> {
   }
 }
 
-const trialCount = () => {
-  const n = Number(state.trials)
-  return state.trials.trim() && Number.isSafeInteger(n) && n > 0 ? { trials: n } : {}
+// Blank uses each case's own count. Anything else must be a whole number
+// above zero, and a run is not started on a count that is not one.
+function trialCount(): { trials?: number } | undefined {
+  const text = state.trials.trim()
+  if (!text) return {}
+  const n = Number(text)
+  if (/^[1-9][0-9]*$/.test(text) && Number.isSafeInteger(n)) return { trials: n }
+  state.message = `the trial count must be a whole number above zero, or blank for each case's own; got "${text}"`
+  return undefined
 }
 
-export const runAll = () => start({ select: [], configs: state.chosen, ...trialCount() })
+export function runAll(): Promise<void> {
+  state.message = null
+  const t = trialCount()
+  return t ? start({ select: [], configs: state.chosen, ...t }) : Promise.resolve()
+}
 
 export function runSelected(): Promise<void> {
+  state.message = null
   const s = selection(tree.value, state.checked, state.chosen)
-  if (!s.select.length) {
-    state.message = 'check the rows to run first'
+  if ('problem' in s) {
+    state.message = s.problem
     return Promise.resolve()
   }
-  return start({ ...s, ...trialCount() })
+  const t = trialCount()
+  if (!t) return Promise.resolve()
+  const keyed = s.select.some(x => x.includes('#'))
+  return start({ ...s, ...t }).then(() => {
+    // The server runs a trial key's own trial, whatever the count says.
+    if (keyed && t.trials !== undefined && !state.message) state.message = 'trial and config rows ran the trials they name; the trial count applied only to case and suite rows'
+  })
 }
 
 export function rerun(only: VerdictKind[]): Promise<void> {
+  state.message = null
   if (!state.run) {
     state.message = 'no run to rerun from'
     return Promise.resolve()
@@ -106,17 +136,33 @@ export async function cancel(): Promise<void> {
   }
 }
 
-export async function openTrial(key: string): Promise<void> {
+export function openTrial(key: string): void {
   if (!state.run) return
-  const id = state.run.id
-  state.detail = { key, data: null, error: null }
+  const run = state.run.id
+  const finished = !['queued', 'running'].includes(state.run.trials[key] ?? '')
+  state.detail = { run, key, data: null, error: null, waiting: !finished }
+  if (finished) void fetchTrial(run, key)
+}
+
+async function fetchTrial(run: string, key: string): Promise<void> {
+  const mine = () => state.detail?.run === run && state.detail.key === key
   try {
-    const data = await api.trial(id, key)
-    if (state.detail?.key === key) state.detail.data = data
+    // Raw: a transcript can be large, and nothing in it changes once written.
+    const data = markRaw(await api.trial(run, key))
+    if (mine()) Object.assign(state.detail!, { data, waiting: false })
   } catch (e) {
-    if (state.detail?.key === key) state.detail.error = (e as Error).message
+    if (mine()) Object.assign(state.detail!, { error: (e as Error).message, waiting: false })
   }
 }
+
+// A trial opened while it ran is fetched the moment it finishes.
+watch(
+  () => (state.detail?.waiting && state.run?.id === state.detail.run ? state.run.trials[state.detail.key] : undefined),
+  s => {
+    const d = state.detail
+    if (d?.waiting && s !== undefined && s !== 'queued' && s !== 'running') void fetchTrial(d.run, d.key)
+  },
+)
 
 export function toggle(set: Set<string>, id: string): void {
   if (set.has(id)) set.delete(id)

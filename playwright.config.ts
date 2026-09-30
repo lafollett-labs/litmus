@@ -19,6 +19,8 @@ export default defineConfig({
     url: `http://127.0.0.1:${port}/api/configs`,
     env: { LITMUS_UI_PORT: String(port) },
     reuseExistingServer: false,
+    // serve.ts removes its temporary project on SIGTERM.
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 5_000 },
     timeout: 60_000,
   },
 })

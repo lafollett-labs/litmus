@@ -3,15 +3,17 @@
   --panel: #f6f7f9;
   --line: #e2e5ea;
   --text: #1c2027;
-  --muted: #6b7280;
-  --accent: #2563eb;
-  --pass: #16a34a;
-  --fail: #dc2626;
-  --flaky: #d97706;
-  --error: #9ca3af;
-  --unsure: #7c3aed;
-  --hover: #eef2f7;
-  --selected: #dbeafe;
+  /* Every colour below is also text: each holds 4.5:1 (WCAG AA) on --bg,
+     --panel, --hover and --selected. */
+  --muted: #57606f;
+  --accent: #1d4ed8;
+  --pass: #13733a;
+  --fail: #c81e1e;
+  --flaky: #a14a07;
+  --error: #5f6773;
+  --unsure: #6d28d9;
+  --hover: #f1f4f8;
+  --selected: #e6eefc;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   color-scheme: light;
 }
@@ -24,12 +26,12 @@
   --muted: #9aa3af;
   --accent: #60a5fa;
   --pass: #22c55e;
-  --fail: #f87171;
+  --fail: #fb8484;
   --flaky: #fbbf24;
-  --error: #6b7280;
-  --unsure: #a78bfa;
+  --error: #9ca3af;
+  --unsure: #b39dfb;
   --hover: #232833;
-  --selected: #1e3a5f;
+  --selected: #182a40;
   color-scheme: dark;
 }
 

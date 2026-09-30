@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs'
 import { ConfigError } from '../core/errors.ts'
-import type { Usage } from '../core/types.ts'
+import type { ReviewDetails, Usage } from '../core/types.ts'
 import { Findings, type Finding, type Grader as GraderSpec, type TruthFile } from '../suite/schema.ts'
 import { normPath, readArtifact, unread } from './common.ts'
 import { askJudge, sumUsage } from './judges.ts'
@@ -188,7 +188,13 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
   lines.push(...unconfirmed)
   for (const f of failed) lines.push(`failed: ${f}`)
   lines.push(...na)
-  return { grader: 'review-match', pass: !('error' in read) && failed.length === 0, metrics: m, rationale: lines.join('\n'), ...(spent.length ? { usage: sumUsage(spent) } : {}) }
+  const at = (j: number) => ({ file: findings[j]!.file, line: findings[j]!.line, title: findings[j]!.title })
+  const details: ReviewDetails = {
+    matched: s.pairs.map(p => ({ bug: truth.bugs[p.bug]!.id, ...at(p.finding) })),
+    missed,
+    unmatched: s.unmatched.map(u => ({ as: u.as, ...at(u.finding), ...(u.near ? { near: u.near } : {}) })),
+  }
+  return { grader: 'review-match', pass: !('error' in read) && failed.length === 0, metrics: m, rationale: lines.join('\n'), details, ...(spent.length ? { usage: sumUsage(spent) } : {}) }
 }
 
 function readFindings(trial: TrialResult, name: string): { findings: Finding[] } | { error: string } {

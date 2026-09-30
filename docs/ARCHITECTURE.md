@@ -741,6 +741,7 @@ type Grader = (spec: GraderSpec, trial: TrialResult, ctx: GradeContext) => Promi
   score?: number                           // 0..1
   metrics?: Record<string, number | null>
   rationale?: string                       // shown in the UI, including on a pass; redacted
+  details?: ReviewDetails                  // review-match only: every finding's outcome; redacted
   usage?: Usage                            // what its judge calls spent
 }>                                         // throws InfraError when a judge's provider fails
 ```
@@ -807,6 +808,13 @@ precision_all     = matched / findings
 false_positives, decoy_hits, duplicates, nits, findings   # counts
 claims_correct    = confirmed / matched               # only with confirm
 ```
+
+Its result's `details` hold every outcome, uncapped, for the UI's Findings tab:
+`matched` (file, line, title, bug), `missed` (bug ids), and `unmatched`
+(file, line, title, and `as`: decoy_hit, duplicate, nit or false_positive,
+with `near`, the decoy or bug it fell within reach of). The UI reads these,
+never the rationale: a title is the subject's text, and prose parsed back out
+of a rationale would let a title forge a line of its own.
 
 The `pass` bounds are `min_recall`, `max_false_positives`, `max_decoy_hits`,
 `max_duplicates`, `max_nits`, `max_findings` and `min_claims_correct`. A bound
@@ -1139,6 +1147,14 @@ API and nothing else.
 - **Tree:** suite → case → config → trial.
   - Each row has a checkbox, a status icon, and a counts badge
     (`✓ 12 ✗ 2 ~ 1 ! 0 ? 0`).
+  - Checking a case or suite runs it on the toolbar's configs. Checking a
+    config or trial runs those trial keys on their own config, so the toolbar's
+    trial count does not apply to them. When both kinds are checked, every
+    key's config must also be chosen in the toolbar, or the run is refused
+    with the reason. A trial numbered past its case's own count cannot be
+    checked: no selector names it.
+  - The tree is a WAI-ARIA tree: arrows move, Right and Left open and close,
+    Home and End jump, Space checks a row and Enter opens it.
   - A text filter and status chips narrow the tree.
   - Status icons: queued (hollow), running (spinner), pass (green), fail
     (red), flaky (amber), error (grey), inconclusive (outlined), cancelled
@@ -1150,6 +1166,9 @@ API and nothing else.
   - **Findings:** matched bugs, missed bugs, false positives, decoy hits and
     nits, set against the ground truth.
   - **Usage:** tokens, cost, time and attempts.
+- A run that the stream stops following while its record still says running
+  is shown as running elsewhere (the CLI's); one whose server went away is
+  shown as lost.
 - **Compare view:** a grid of cases × configs with a verdict in each cell. The
   flip list sits on top, next to the suite verdict and any WARN metrics.
 

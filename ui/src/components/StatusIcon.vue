@@ -43,5 +43,5 @@ defineProps<{ status: Status }>()
   transform: rotate(-45deg);
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 </style>

@@ -65,11 +65,33 @@ test('the filter keeps matching rows with their ancestors; chips keep config row
   assert.deepEqual(filterTree(tree, 'nothing', new Set()), [])
 })
 
-test('checked rows become selectors, and a checked config or trial brings its config', () => {
+test('checked rows become selectors: case and suite rows on the toolbar configs, config and trial rows as their own keys', () => {
   const run = emptyRun('r')
-  apply(run, { type: 'trial.queued', key: 's/b@other#1' })
+  for (const n of [1, 2, 3]) apply(run, { type: 'trial.queued', key: `s/b@other#${n}` }) // #3: a run with a larger trial count
   const tree = buildTree(suites, ['fake', 'other'], run)
   assert.deepEqual(selection(tree, new Set(['s']), ['fake']), { select: ['s'], configs: ['fake'] })
-  assert.deepEqual(selection(tree, new Set(['s/a', 's/b@other#1']), ['fake']), { select: ['s/a', 's/b@other#1'], configs: ['fake', 'other'] })
-  assert.deepEqual(selection(tree, new Set(['s/b@other']), []), { select: ['s/b@other#1'], configs: ['other'] })
+  // A config row names 1 to the case's own count, whatever its last run had.
+  assert.deepEqual(selection(tree, new Set(['s/b@other']), []), { select: ['s/b@other#1', 's/b@other#2'], configs: ['other'] })
+  // Keys alone run on their own configs; the toolbar does not matter.
+  assert.deepEqual(selection(tree, new Set(['s/b@other#2']), ['fake']), { select: ['s/b@other#2'], configs: ['other'] })
+  // Mixed, when every key's config is chosen: the toolbar's configs.
+  assert.deepEqual(selection(tree, new Set(['s/a', 's/b@other#1']), ['fake', 'other']), { select: ['s/a', 's/b@other#1'], configs: ['fake', 'other'] })
+})
+
+test('a selection that would run something unasked is refused with the reason', () => {
+  const run = emptyRun('r')
+  for (const n of [1, 2, 3]) apply(run, { type: 'trial.queued', key: `s/b@other#${n}` })
+  const tree = buildTree(suites, ['fake', 'other'], run)
+  const problem = (checked: string[], chosen: string[]) => {
+    const s = selection(tree, new Set(checked), chosen)
+    return 'problem' in s ? s.problem : undefined
+  }
+  // (a) a key's config would spread to the checked case rows
+  assert.match(problem(['s/a', 's/b@other#1'], ['fake']) ?? '', /would run on other too/)
+  // (b) case rows with no config chosen
+  assert.match(problem(['s/a'], []) ?? '', /choose the configs/)
+  // (c) nothing that can run: a trial beyond the case's own count cannot be named
+  assert.equal(find(tree, 's/b@other#3')!.selectable, false)
+  assert.match(problem(['s/b@other#3'], ['fake']) ?? '', /check the rows/)
+  assert.match(problem([], ['fake']) ?? '', /check the rows/)
 })

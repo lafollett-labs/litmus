@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { load, state } from './store.ts'
+import type { RunState } from './model.ts'
+import { load, state, type View } from './store.ts'
+import { tabKey } from './tabs.ts'
 import AppToolbar from './components/AppToolbar.vue'
 import CompareView from './components/CompareView.vue'
 import TestTree from './components/TestTree.vue'
@@ -27,6 +29,16 @@ watch(
   { immediate: true },
 )
 
+const VIEWS: [View, string][] = [['tree', 'Runner'], ['compare', 'Compare']]
+const views = VIEWS.map(([v]) => v)
+const DONE: Record<RunState['done'], string> = {
+  running: 'running',
+  finished: 'finished',
+  cancelled: 'cancelled',
+  failed: 'failed',
+  elsewhere: 'running in another process (the CLI): shown as far as it had got; reload to see more',
+  lost: 'lost touch with the server',
+}
 const failed = ref<string | null>(null)
 onMounted(() => load().catch(e => (failed.value = (e as Error).message)))
 </script>
@@ -36,22 +48,35 @@ onMounted(() => load().catch(e => (failed.value = (e as Error).message)))
     <header class="top">
       <h1>litmus</h1>
       <AppToolbar />
-      <nav class="views" role="tablist" aria-label="View">
-        <button role="tab" :aria-selected="state.view === 'tree'" :class="{ on: state.view === 'tree' }" @click="state.view = 'tree'">Runner</button>
-        <button role="tab" :aria-selected="state.view === 'compare'" :class="{ on: state.view === 'compare' }" @click="state.view = 'compare'">Compare</button>
-      </nav>
+      <div class="views" role="tablist" aria-label="View">
+        <button
+          v-for="[v, label] in VIEWS"
+          :id="`view-${v}`"
+          :key="v"
+          role="tab"
+          :data-tab="v"
+          :aria-selected="state.view === v"
+          aria-controls="view"
+          :tabindex="state.view === v ? 0 : -1"
+          :class="{ on: state.view === v }"
+          @click="state.view = v"
+          @keydown="tabKey($event, views, state.view, t => (state.view = t))"
+        >{{ label }}</button>
+      </div>
       <button class="theme" :aria-label="`switch to ${theme === 'dark' ? 'light' : 'dark'} theme`" @click="theme = theme === 'dark' ? 'light' : 'dark'">{{ theme === 'dark' ? '☀' : '☾' }}</button>
     </header>
     <p v-if="failed" class="banner error" role="alert">Could not reach litmus: {{ failed }}</p>
     <p v-if="state.message" class="banner" role="status">{{ state.message }}</p>
     <p v-if="state.run" class="runline muted" role="status" :data-run="state.run.id" :data-done="state.run.done">
-      run <code>{{ state.run.id }}</code> · {{ state.run.done }}
+      run <code>{{ state.run.id }}</code> · {{ DONE[state.run.done] }}
     </p>
-    <main v-if="state.view === 'tree'" class="split">
-      <TestTree />
-      <TrialDetail />
+    <main id="view" role="tabpanel" :aria-labelledby="`view-${state.view}`" :class="state.view === 'tree' ? 'split' : 'single'">
+      <template v-if="state.view === 'tree'">
+        <TestTree />
+        <TrialDetail />
+      </template>
+      <CompareView v-else />
     </main>
-    <main v-else class="single"><CompareView /></main>
   </div>
 </template>
 
