@@ -120,7 +120,7 @@ PE-Vue marked all 9 round-2 findings RESOLVED:
 | LOW-002 | compare printed `exit 0`, then returned 3 when its write failed | Fixed: the write comes first, then the exit really returned is printed. The dangling-link case that reached it is now caught by the pre-check (tested for compare too) |
 | INFO-001 | listRuns' parsed-time sort had no killing test, and the chmod test found its run by mtime | Adopted: a store test orders two runs whose `started_at` offsets sort one way as text and the other as time, and `runUntil` hands `act` the output so far, so the test takes the run id from it |
 
-At the fix commit, `npm run check` is clean, and 477 tests pass with 4 (live) skipped.
+The fix commit `1e52749` passed all 477 tests but **did not typecheck**: compare's `final` kept the `0 | 1` type of `compareExit`. My check step printed nothing, and I missed that it had not passed. It is fixed in the next commit, and at that commit `npm run check` is clean, which I have verified, and 477 tests pass with 4 (live) skipped.
 
 ## Merge Eligibility (latest)
 
