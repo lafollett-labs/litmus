@@ -1,6 +1,6 @@
 # Code Review: m11-release
 
-**Verdict:** 🔄 CHANGES REQUESTED (round 1; round 2 pending on `b180d6d`)
+**Verdict:** ✅ APPROVED (round 2, locked to `8aa848b`)
 
 | | |
 | - | - |
@@ -60,6 +60,46 @@ At `b180d6d`:
 
 - `npm run check` exits 0.
 - `npm test` passes 532 of 536, with 4 (live) skipped.
+
+## Review Round 2
+
+| | |
+| - | - |
+| **Review Round** | 2 |
+| **Reviewed SHA** | `8aa848b` |
+| **Reviewer** | PE-Vue |
+
+PE-Vue marked MEDIUM-001, LOW-002, LOW-003, INFO-001 and INFO-002 RESOLVED, with evidence.
+
+LOW-001 is PARTIAL. The code is right, but its rerun half had no test, so the round-1 disposition overclaimed.
+
+PE-Vue ran 11 mutants:
+
+- 8 were killed.
+- 3 survived: the rerun filter, and two in the harness's region lookup. The findings below close all three.
+
+At the reviewed SHA, `npm run check` exits 0, `npm test` passes 532 of 536 with 4 (live) skipped, and `validate` exits 0.
+
+**✅ APPROVED:** no finding at MEDIUM or above. The findings were fixed after approval, in `bf4188e`:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-002 | The rerun `only` filter in `runnable()` was untested | Tested. A stored run on fake, with a regionless bedrock config added to its manifest, reruns `--only fail` and is planned. The filter's mutant is killed |
+| LOW-003 | A trial key naming a config the run does not use was refused for that config's region or provider | Fixed. `planRun` gives `expand()`'s own message ("names config …, which this run does not use") before any other check. Tested for both probes; the mutant is killed |
+| INFO-001 | The harness call site of the shared region rule had no test | Tested. When `AWS_REGION` is empty and `AWS_DEFAULT_REGION` is set, the harness forwards the latter as `AWS_REGION`. The old `??` lookup, as a mutant, fails the test |
+
+At `bf4188e`, `npm run check` exits 0 and `npm test` passes 534 of 538, with 4 (live) skipped.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `8aa848b`. The PR opens once M5 through M10 merge. It carries the post-approval commit `bf4188e` (LOW and INFO fixes only), and Gate 2 reviews it.
+
+These wait for everything to merge:
+
+- the version bump to `0.1.0`
+- the `v0.1.0` tag
+- the GitHub release
+- the PLAN tick
 
 ---
 
