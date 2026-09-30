@@ -101,8 +101,6 @@ pricing:                             # USD per million tokens, used when a provi
 
 compare:
   tolerance: 0.05                    # δ, the band a difference must clear to count
-  resamples: 2000
-  seed: 1
   warn_ratio: 1.5
 
 redact: []                           # extra environment variable names whose values are scrubbed from output
@@ -130,8 +128,6 @@ too, so token budgets go through `effort` and the executor's `max_tokens`.
 | Key | Valid range |
 | - | - |
 | `tolerance` | 0 ≤ δ < 1 |
-| `resamples` | an integer ≥ 100 |
-| `seed` | an integer |
 | `warn_ratio` | > 1 |
 
 Keys never appear in this file. Each provider reads its key from the standard
@@ -869,15 +865,27 @@ the cases both of them scored.
   real use. It is listed in the comparison's `notes` instead.
 - **Flips.** Every case whose verdict changed is listed with its old and new
   verdicts. This is the headline of the comparison, not a footnote.
-- **Suite verdict.** d is the mean over paired cases of B's observed success
-  rate minus A's. Its 95% interval comes from a two-level bootstrap:
-  1. Each resample draws cases with replacement.
-  2. For each case drawn, it draws a difference from a normal distribution
-     centred on that case's observed difference.
-  3. The spread comes from Jeffreys-smoothed rates, p̃ = (s + ½)/(n + 1), with
-     variance p̃(1 − p̃)/n per side. Each draw is clamped to [−1, 1].
+- **Suite verdict.** D is the mean over paired cases of B's observed success
+  rate minus A's. The verdict is about these cases, not about a population of
+  cases like them. That is a choice: only trial noise is uncertain, and a drop
+  concentrated in a few cases is a REGRESSION of the suite, whatever the other
+  cases do. Three of ten collapsing from 30/30 to 0/30 reads about
+  [−0.33, −0.26]. D's 95% interval is MOVER (Zou & Donner), recovered from
+  each side's own interval for each case:
 
-  The randomness is a seeded mulberry32, so a comparison is reproducible.
+  ```
+  lo = D − √Σ[(p̂B − lB)² + (uA − p̂A)²] / cases
+  hi = D + √Σ[(uB − p̂B)² + (p̂A − lA)²] / cases       # clamped to [−1, 1]
+  ```
+
+  A side's interval is Wilson from 9 scored trials, and exact
+  (Clopper–Pearson) below 9. Wilson's coverage dips at small n: 30/30 against
+  a single failure would read as a REGRESSION about one time in twelve with
+  nothing changed, and 7 v 7 trials at 0.5 claims a change 2.87% of the time
+  in each direction. 9 is the smallest cutover at which no single-case cell
+  claims more than 2.5% in either direction. The interval is deterministic:
+  pairs are summed in case-id order, so the same records always give the same
+  interval to the last bit.
 
   With δ = `compare.tolerance`:
 
@@ -886,26 +894,46 @@ the cases both of them scored.
   elif ci.hi < -δ:                       REGRESSION
   elif ci.lo > δ:                        IMPROVEMENT
   elif -δ <= ci.lo and ci.hi <= δ:       NO CHANGE
-  else:                                  INCONCLUSIVE    # run more trials or cases
+  else:                                  INCONCLUSIVE    # run more trials
   ```
 
-  Resampling cases alone treats each pass rate as exact, so one case at 1/1
-  against 0/1 would come out as a certain regression. The per-case draw keeps
-  each case's trial uncertainty in the interval.
+  Calibration. With both sides drawn from the same true rate, a single case
+  claims a change at most 2.5% of the time in each direction. The worst cell
+  over 1 to 60 trials a side is 2.32%, and a test counts every pair of trial
+  counts from 1 to 30 exactly, at rates from 0.01 to 0.99.
 
-  Centring on the observed difference, rather than on a posterior mean, keeps
-  unequal trial counts unbiased. A posterior mean pulls 1/1 to 0.75 and 5/5 to
-  0.92, so two sides that never failed would read as a confident regression.
+  Across many cases the interval pays for trial noise once. Its coverage is
+  conservative near rates of 0 and 1 (98–99.7%), and a little narrow at
+  mid-range rates (about 88–91% at 9 to 12 trials a side, about 93–94% at
+  30), because Wilson's half-width shrinks there.
+  A tolerance above zero absorbs that: at δ = 0.05 no many-case null suite
+  tried read as REGRESSION more than 2.3% of the time. At δ = 0 about twice the
+  nominal share do, and the comparison's `notes` say so. (Clopper–Pearson for
+  every side would restore full coverage at a cost in power.)
 
-  NO CHANGE takes real evidence. Two identical all-pass sides reach it at
-  δ = 0.05 with about 20 cases × 30 trials, or 200 cases × 10. Smaller suites
-  come out INCONCLUSIVE, which is why `run` treats a comparison's
-  INCONCLUSIVE as information rather than a failure (see CLI).
+  Power, measured by simulation: a real drop of 0.9 to 0.75 across 30 cases at
+  5 trials is called a REGRESSION about 43% of the time, and 0.9 to 0.7 across
+  10 cases at 10 trials about 76%.
 
+  Centred on the observed rates rather than on posterior means, it stays
+  unbiased at unequal trial counts. A posterior mean pulls 1/1 to 0.75 and 5/5
+  to 0.92, so two sides that never failed would read as a confident
+  regression. One case at 1/1 against 0/1 is INCONCLUSIVE.
+
+  NO CHANGE takes evidence from trials. At δ = 0.05, two identical all-pass
+  sides reach NO CHANGE from 6 cases × 30 trials, 31 × 10, 109 × 5 or
+  201 × 3. Smaller suites come out INCONCLUSIVE, which is why `run` treats a
+  comparison's INCONCLUSIVE as information rather than a failure (see CLI).
+
+  A case is excluded, and never flips, when its hash differs between the sides
+  or is missing on one of them, or when only one side ran it. A case one side
+  could not score is excluded from the interval but still flips, since a case
+  that stopped scoring is news. When neither side carries case hashes, the
+  comparison's `notes` say that changed cases were not detected.
 - **WARN.** Raised for a metric when the ratio of B's per-trial median to A's
   falls outside [1/`warn_ratio`, `warn_ratio`]. The metrics are total tokens,
   cost, wall-clock time, tool calls, and findings. A metric is skipped when
-  A's median is 0 or missing. A WARN never changes an exit code.
+  A's median is 0 or missing, or B's is missing, or either is not finite. A WARN never changes an exit code.
 
 ### Addressing runs and comparisons
 

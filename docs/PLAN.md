@@ -128,20 +128,20 @@ stay on the branch, and their messages go into the squash commit's body.
     `review-match` metrics match hand-computed examples, including the case
     that greedy pairing gets wrong.
 
-- [ ] **M5: Statistics and verdicts**
+- [x] **M5: Statistics and verdicts**
   - The Wilson interval, `minTrialsToPass`, and unbiased pass@k and pass^k
     with k = min(3, scored).
   - The `all` and `rate` policies, where `rate` has no FLAKY. Under
     `expect: fail`, a trial counts as a success only when the graders ran and
     rejected the output, and any pass makes the case FAIL.
-  - The two-level bootstrap with a Jeffreys posterior and a seeded mulberry32.
+  - The suite interval: MOVER over per-side Wilson intervals, exact below 9 trials.
   - Comparison: flips, excluded cases, the suite verdict, and WARN with its
     zero-median skip.
   - Done when: tests match hand-computed values (Wilson for 3/5; 5/5 at 0.8
     is INCONCLUSIVE and 16/16 is PASS). A one-case 1/1 against 0/1 is
     INCONCLUSIVE, not REGRESSION. Thirty all-pass cases at 5/5 against 1/1 are
     not a REGRESSION, and the mirror case is not an IMPROVEMENT. A case whose
-    hash changed is excluded. The same seed gives the same interval every time.
+    hash changed is excluded. The same records give the same interval every time.
     Every branch of the verdict rules is covered.
 
 - [ ] **M6: Runner and store**

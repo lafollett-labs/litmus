@@ -38,7 +38,9 @@ Playwright. Litmus has its own engine and calls the vendor SDKs directly:
   default-deny tool gate, which litmus's harness gate follows.
 - **The statistics are small.** The Wilson interval, the pass@k and pass^k
   estimators and a seeded paired bootstrap come to a few hundred lines of code
-  with tests that check them against hand-computed values.
+  with tests that check them against hand-computed values. (The bootstrap was
+  later replaced by a deterministic MOVER interval; see ARCHITECTURE §
+  Comparison. The argument holds either way.)
 - **Review coverage.** LaFollett Labs' review agents cover TypeScript and Vue.
   None covers Python.
 
