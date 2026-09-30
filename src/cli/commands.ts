@@ -198,7 +198,7 @@ export function compareCommand(f: { configFile: string; sides: string[]; allowIn
   io.out(comparisonLines(c, paintFor(io)).join('\n'))
   // As for run: the verdict stands; a failed write only turns a pass into 3,
   // and the exit printed is the one returned.
-  let final = exit
+  let final: number = exit
   if (f.out !== undefined) {
     try {
       writeFileSync(f.out, `${JSON.stringify(c, null, 2)}\n`)
