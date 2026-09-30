@@ -93,9 +93,15 @@ PE-Vue marked all 15 round-1 findings RESOLVED:
 
 At `72ce24c`, `npm run check` is clean, and 450 tests pass with 4 (live) skipped.
 
+One more LOW, found while testing M10's `validate`, was fixed after approval in `20be21c`:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-006 (self) | Every workdir removed itself, but the run's `litmus/<run>/` above them stayed, one empty directory in TMPDIR per run | Fixed: the run removes that directory when it ends, however it ends, and only if it is empty. The end-to-end test asserts nothing is left under the work base; the mutant fails it. At `20be21c`, `npm run check` exits 0 and 450 of 454 tests pass, with 4 (live) skipped |
+
 ## Merge Eligibility (latest)
 
-**Locked to SHA:** `bdbca9e`. The PR opens once M5 (#7) merges and this branch is rebased onto main. It carries the post-approval commits `404134c` and `72ce24c` (LOW and INFO fixes only), and Gate 2 reviews them.
+**Locked to SHA:** `bdbca9e`. The PR opens once M5 (#7) merges and this branch is rebased onto main. It carries the post-approval commits `404134c`, `72ce24c` and `20be21c` (LOW and INFO fixes only), and Gate 2 reviews them.
 
 ---
 
