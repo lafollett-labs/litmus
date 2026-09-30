@@ -866,19 +866,23 @@ the cases both of them scored.
 - **Flips.** Every case whose verdict changed is listed with its old and new
   verdicts. This is the headline of the comparison, not a footnote.
 - **Suite verdict.** D is the mean over paired cases of B's observed success
-  rate minus A's. Both sides run the same cases, so the cases are fixed and
-  only trial noise is uncertain. D's 95% interval is MOVER (Zou & Donner),
-  recovered from each side's own interval for each case:
+  rate minus A's. The verdict is about these cases, not about a population of
+  cases like them. That is a choice: only trial noise is uncertain, and a drop
+  concentrated in a few cases is a REGRESSION of the suite, whatever the other
+  cases do. Three of ten collapsing from 30/30 to 0/30 reads about
+  [−0.33, −0.26]. D's 95% interval is MOVER (Zou & Donner), recovered from
+  each side's own interval for each case:
 
   ```
   lo = D − √Σ[(p̂B − lB)² + (uA − p̂A)²] / cases
   hi = D + √Σ[(uB − p̂B)² + (p̂A − lA)²] / cases       # clamped to [−1, 1]
   ```
 
-  A side's interval is Wilson from 6 scored trials, and exact
-  (Clopper–Pearson) below 6. Wilson's coverage at 1 to 5 trials dips far
-  enough that 30/30 against a single failure would read as a REGRESSION about
-  one time in twelve with nothing changed. The interval is deterministic:
+  A side's interval is Wilson from 9 scored trials, and exact
+  (Clopper–Pearson) below 9. Wilson's coverage dips at small n: 30/30 against
+  a single failure would read as a REGRESSION about one time in twelve with
+  nothing changed, and 7 v 7 trials at 0.5 claims a change 2.87% of the time.
+  9 is the smallest cutover at which no single-case cell claims more than 2.5%. The interval is deterministic:
   pairs are summed in case-id order, so the same records always give the same
   interval to the last bit.
 
@@ -889,16 +893,25 @@ the cases both of them scored.
   elif ci.hi < -δ:                       REGRESSION
   elif ci.lo > δ:                        IMPROVEMENT
   elif -δ <= ci.lo and ci.hi <= δ:       NO CHANGE
-  else:                                  INCONCLUSIVE    # run more trials or cases
+  else:                                  INCONCLUSIVE    # run more trials
   ```
 
   Calibration. With both sides drawn from the same true rate, a single case
-  claims a change at most 2.5% of the time in each direction, at any trial
-  counts. A test counts this exactly over trial counts 1 to 30 and rates 0.1
-  to 0.95. Across many cases the interval keeps close to 95% coverage and
-  pays for trial noise once. So a real drop of 0.9 to 0.75 across 30 cases at 5
-  trials is called a REGRESSION about 41% of the time, and 0.9 to 0.7 across
-  10 cases at 10 trials about 71% of the time.
+  claims a change at most 2.5% of the time in each direction. The worst cell
+  over 1 to 60 trials a side is 2.32%, and a test counts every pair of trial
+  counts from 1 to 30 exactly.
+
+  Across many cases the interval pays for trial noise once. Its coverage is
+  conservative near rates of 0 and 1 (98–99.7%), and a little narrow at
+  mid-range rates (about 88–91%), because Wilson's half-width shrinks there.
+  A tolerance above zero absorbs that: at δ = 0.05 no many-case null suite
+  tried read as REGRESSION more than 2.3% of the time. At δ = 0 about twice the
+  nominal share do, and the comparison's `notes` say so. (Clopper–Pearson for
+  every side would restore full coverage at a cost in power.)
+
+  Power, measured by simulation: a real drop of 0.9 to 0.75 across 30 cases at
+  5 trials is called a REGRESSION about 43% of the time, and 0.9 to 0.7 across
+  10 cases at 10 trials about 76%.
 
   Centred on the observed rates rather than on posterior means, it stays
   unbiased at unequal trial counts. A posterior mean pulls 1/1 to 0.75 and 5/5
