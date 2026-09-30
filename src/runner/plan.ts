@@ -1,4 +1,5 @@
 import { ConfigError } from '../core/errors.ts'
+import { trialKey } from '../core/ids.ts'
 import type { VerdictKind } from '../core/types.ts'
 import { baselineRun, readRun } from '../store/store.ts'
 import { bedrockRegion } from '../providers/index.ts'
@@ -47,6 +48,11 @@ export function planRun(configFile: string, req: RunRequest, wording: { configs:
   if (req.trials !== undefined && !(Number.isSafeInteger(req.trials) && req.trials > 0)) throw new ConfigError(`trials must be a positive whole number, got ${req.trials}`)
   const baseline = req.baseline === undefined ? undefined : baselineSide(config.resultsDir, baselineRun(config.resultsDir, req.baseline), `baseline:${req.baseline}`)
   const selection = select(suites, selectors, new Set(Object.keys(config.configs)))
+  // expand() refuses the same way; saying so here keeps a key's config from
+  // being judged on a region or provider the run was never going to use.
+  for (const t of selection.flatMap(s => s.trials ?? [])) {
+    if (!configs.includes(t.config)) throw new ConfigError(`trial ${trialKey(t)} names config "${t.config}", which this run does not use (${wording.configs} ${configs.join(',')})`)
+  }
   runnable(config, configs, selection, only, env)
   return {
     kind: 'run',
