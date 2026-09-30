@@ -207,10 +207,10 @@ test('a case whose content changed between the sides is excluded with its reason
 // within 1e-12.
 const near = (got: { lo: number; hi: number }, want: { lo: number; hi: number }) =>
   assert.ok(Math.abs(got.lo - want.lo) < 1e-12 && Math.abs(got.hi - want.hi) < 1e-12, `${JSON.stringify(got)} vs ${JSON.stringify(want)}`)
-test('a seeded mixed comparison reproduces its interval to the last digit', () => {
+test('a mixed comparison reproduces its interval to the last digit', () => {
   const mixed = (label: string, pat: string) => side(label, Array.from({ length: 6 }, (_, i): [string, string] => [`s/m${i}`, pat.slice(0, 3 + i)]))
   const c = compare(mixed('a', 'pppppfp'), mixed('b', 'ppfpfpp'))
-  near(c.interval!, { lo: -0.4274988756864533, hi: -0.004064142027615551 })
+  near(c.interval!, { lo: -0.4409234153234949, hi: 0.009864019286772349 })
 })
 
 test('the suite is the cases it holds: three of ten collapsing from 30/30 to 0/30 is a REGRESSION', () => {
@@ -232,6 +232,7 @@ test('the NO CHANGE boundary for identical all-pass suites is where the spec say
   assert.deepEqual([at(5, 30), at(6, 30)], ['INCONCLUSIVE', 'NO CHANGE'])
   assert.deepEqual([at(30, 10), at(31, 10)], ['INCONCLUSIVE', 'NO CHANGE'])
   assert.deepEqual([at(108, 5), at(109, 5)], ['INCONCLUSIVE', 'NO CHANGE'])
+  assert.deepEqual([at(200, 3), at(201, 3)], ['INCONCLUSIVE', 'NO CHANGE'])
 })
 
 test('the interval does not depend on the order verdicts arrive in', () => {
@@ -282,6 +283,8 @@ test('without case hashes on either side the comparison says the changed-case ch
   assert.deepEqual(compare(side('a', cases(1, 'p')), side('b', cases(1, 'p'))).notes, ['case hashes unavailable on both sides: a case that changed between them was not detected'])
   const hashed = { 'smoke/c0': 'h' }
   assert.deepEqual(compare({ ...side('a', cases(1, 'p')), hashes: hashed }, { ...side('b', cases(1, 'p')), hashes: hashed }).notes, [])
+  // One side hashed: every case is excluded as missing a hash, which already says it.
+  assert.deepEqual(compare({ ...side('a', cases(1, 'p')), hashes: hashed }, side('b', cases(1, 'p'))).notes, [])
 })
 
 test('a non-finite metric median is skipped, never warned on', () => {
@@ -295,8 +298,9 @@ test('a non-finite metric median is skipped, never warned on', () => {
 test('a single case claims a change no more often than a 95% interval allows, at any trial counts', () => {
   const binom = (n: number, k: number, q: number) => choose(n, k) * q ** k * (1 - q) ** (n - k)
   const trials = (n: number, s: number) => p(s) + f(n - s)
-  for (const [na, nb] of [[1, 1], [1, 30], [30, 1], [3, 3], [5, 5], [5, 6], [6, 6], [10, 1], [30, 3], [30, 6], [10, 10], [30, 30]] as const) {
-    for (const q of [0.1, 0.5, 0.8, 0.9, 0.95]) {
+  const counts = Array.from({ length: 30 }, (_, i) => i + 1)
+  for (const na of counts) for (const nb of counts) {
+    for (const q of [0.05, 0.2, 0.5, 0.8, 0.95]) {
       let down = 0
       let up = 0
       for (let sa = 0; sa <= na; sa++) {
@@ -310,4 +314,9 @@ test('a single case claims a change no more often than a 95% interval allows, at
       assert.ok(down <= 0.025 && up <= 0.025, `${na}v${nb} at ${q}: REGRESSION ${down}, IMPROVEMENT ${up}`)
     }
   }
+})
+
+test('a tolerance of zero is allowed, and the comparison says what it costs', () => {
+  const c = compare(side('a', cases(10, p(10))), side('b', cases(10, p(10))), { tolerance: 0 })
+  assert.ok(c.notes.some(n => n.startsWith('tolerance 0:')))
 })

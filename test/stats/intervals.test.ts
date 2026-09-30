@@ -81,3 +81,7 @@ test('Clopper–Pearson matches its exact reference values, and is exact at the 
   assert.equal(clopperPearson(0, 0), null)
   assert.throws(() => clopperPearson(6, 5), RangeError)
 })
+
+test('Clopper–Pearson refuses what it cannot sum exactly: a non-integer, NaN or huge n', () => {
+  for (const [s, n] of [[NaN, 5], [2.5, 5], [1, 1001], [1, 5.5], [-1, 5]]) assert.throws(() => clopperPearson(s!, n!), RangeError, `${s}/${n}`)
+})

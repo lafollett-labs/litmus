@@ -29,9 +29,14 @@ export function wilson(successes: number, n: number, z: number = Z_95): Interval
 // successes has probability 2.5%, found by bisection on the binomial tail.
 // Conservative by construction, which is what a 1- to 5-trial side needs:
 // Wilson's coverage there dips well under 95%.
+export const CP_MAX_N = 1000
+
 export function clopperPearson(successes: number, n: number): Interval | null {
+  // The tail is summed term by term, which overflows past about n = 1000; the
+  // comparison only needs it below 9 trials.
+  if (!Number.isInteger(n) || n < 0 || n > CP_MAX_N) throw new RangeError(`clopperPearson: n ${n} must be an integer in 0..${CP_MAX_N}`)
   if (n === 0) return null
-  if (successes < 0 || successes > n) throw new RangeError(`clopperPearson: successes ${successes} is outside 0..${n}`)
+  if (!Number.isInteger(successes) || successes < 0 || successes > n) throw new RangeError(`clopperPearson: successes ${successes} is not an integer in 0..${n}`)
   const atMost = (x: number, p: number) => {
     let t = 0
     for (let k = 0; k <= x; k++) t += choose(n, k) * p ** k * (1 - p) ** (n - k)

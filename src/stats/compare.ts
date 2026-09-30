@@ -70,12 +70,15 @@ export function compare(a: CompareSide, b: CompareSide, opts: CompareOptions = {
   // Without hashes on either side, a case whose ground truth changed cannot be
   // told from one whose model did; the comparison says so rather than guessing.
   const unhashed = a.hashes === undefined && b.hashes === undefined ? ['case hashes unavailable on both sides: a case that changed between them was not detected'] : []
+  // At mid-range rates across many cases the interval is a little narrow
+  // (about 88-91% coverage); a tolerance above zero absorbs that, zero does not.
+  const exact = tolerance === 0 ? ['tolerance 0: at mid-range pass rates about twice the nominal share of unchanged suites read as a change'] : []
   return {
     a: a.label,
     b: b.label,
     cases: n,
     excluded,
-    notes: [...new Set([...(a.notes ?? []), ...(b.notes ?? []), ...unhashed])],
+    notes: [...new Set([...(a.notes ?? []), ...(b.notes ?? []), ...unhashed, ...exact])],
     flips,
     delta,
     interval,
@@ -109,10 +112,12 @@ const rate = (v: Verdict) => v.successes / v.scored
 //
 // It is deterministic, holds its coverage at unequal trial counts, and pays
 // for trial noise once. A per-side interval is Wilson from WILSON_MIN_TRIALS
-// trials, and exact (Clopper–Pearson) below: Wilson's coverage at 1 to 5
-// trials dips far enough that 30/30 against a single failure read as a
-// REGRESSION about one time in twelve with nothing changed.
-export const WILSON_MIN_TRIALS = 6
+// trials, and exact (Clopper–Pearson) below. Wilson's coverage dips at small
+// n: 30/30 against a single failure read as a REGRESSION about one time in
+// twelve with nothing changed, and 7v7 at 0.5 claimed a change 2.87% of the
+// time. 9 is the smallest cutover at which no single-case cell over 1 to 60
+// trials exceeds 2.5% per direction (the worst is 2.32%).
+export const WILSON_MIN_TRIALS = 9
 
 function mover(pairs: [Verdict, Verdict][]): Interval {
   const n = pairs.length
@@ -128,6 +133,8 @@ function mover(pairs: [Verdict, Verdict][]): Interval {
     below += (pb - ib.lo) ** 2 + (ia.hi - pa) ** 2
     above += (ib.hi - pb) ** 2 + (pa - ia.lo) ** 2
   }
+  // Every per-side interval lies in [0, 1], so the bounds already lie in
+  // [-1, 1]; the clamp only guards the last ulp of rounding.
   return { lo: Math.max(-1, (d - Math.sqrt(below)) / n), hi: Math.min(1, (d + Math.sqrt(above)) / n) }
 }
 
