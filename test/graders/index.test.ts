@@ -50,7 +50,7 @@ graders:
 
 test('the index wires the extractor and judges the runner uses', async () => {
   const judges = makeJudges({ default: { provider: 'fake', model: 'm' } }, () => stub(['```json\n{"findings": []}\n```']))
-  const { c } = oneCase(`name: c\nexecutor: { kind: model, prompt: hi }\nextract: { with: default }\ngraders: [{ kind: review-match }]\n`, { 'truth.yaml': JSON.stringify({ kind: 'clean' }) })
+  const { c } = oneCase(`name: c\nexecutor: { kind: model, prompt: hi }\nextract: { with: default }\ngraders: [{ kind: review-match, pass: { max_findings: 100000 } }]\n`, { 'truth.yaml': JSON.stringify({ kind: 'clean' }) })
   const r = await runExtract(trial({ artifacts: { 'final_message.txt': 'LGTM' } }), { case: c, judge: judges, signal: new AbortController().signal, redact: redactor([]) })
   assert.ok(r.trial.artifacts['findings.json'])
   assert.match(r.extractor_hash ?? '', /^[0-9a-f]{64}$/)

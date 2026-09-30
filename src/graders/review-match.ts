@@ -88,7 +88,7 @@ export function metrics(truth: TruthFile, findings: Finding[], s: Scored, confir
   const m: Record<string, number | null> = { recall: ratio(matched, truth.bugs.length) }
   for (const sev of ['critical', 'high', 'medium', 'low'] as const) {
     const of = truth.bugs.filter(b => b.severity === sev).length
-    if (of) m[`recall_${sev}`] = ratio(s.pairs.filter(p => truth.bugs[p.bug]!.severity === sev).length, of)
+    m[`recall_${sev}`] = ratio(s.pairs.filter(p => truth.bugs[p.bug]!.severity === sev).length, of)
   }
   m['precision'] = ratio(matched, matched + fp + decoys)
   m['precision_all'] = ratio(matched, findings.length)
@@ -122,9 +122,13 @@ const BOUNDS: { bound: keyof Bounds; metric: string; min?: true; na?: string }[]
 // says so. The check is explicit: JavaScript compares null as 0, so
 // `null <= 5` is true and a careless bound would pass on a metric that was
 // never measured.
+// A grade with no bound that applies has measured nothing, so it fails: with
+// `pass: {}`, or only bounds that read n/a, an empty review of a seeded case
+// would otherwise pass at recall 0.
 export function checkBounds(pass: Bounds, m: Record<string, number | null>): { failed: string[]; na: string[] } {
   const failed: string[] = []
   const na: string[] = []
+  let applied = 0
   for (const b of BOUNDS) {
     const limit = pass[b.bound]
     if (limit === undefined) continue
@@ -133,9 +137,11 @@ export function checkBounds(pass: Bounds, m: Record<string, number | null>): { f
       na.push(`${b.bound}: n/a (${b.na ?? 'not measured'})`)
       continue
     }
+    applied++
     const ok = b.min ? v >= limit : v <= limit
     if (!ok) failed.push(`${b.metric} ${round(v)} ${b.min ? '<' : '>'} ${b.bound} ${limit}`)
   }
+  if (applied === 0) failed.push('no pass bound applies to this case, so nothing was checked')
   return { failed, na }
 }
 
@@ -196,6 +202,8 @@ function readFindings(trial: TrialResult, name: string): { findings: Finding[] }
   }
   const r = Findings.safeParse(raw)
   if (!r.success) return { error: `${name} is not valid litmus:findings: ${r.error.issues.slice(0, 3).map(i => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')}` }
+  // Matching is bugs × findings on the event loop; no real review is this long.
+  if (r.data.findings.length > MAX_FINDINGS) return { error: `${name} has ${r.data.findings.length} findings, more than the ${MAX_FINDINGS} litmus grades` }
   return { findings: r.data.findings }
 }
 
@@ -209,3 +217,5 @@ function workdirs(dir: string): string[] {
 }
 
 const round = (v: number) => Number(v.toFixed(3))
+
+export const MAX_FINDINGS = 1000

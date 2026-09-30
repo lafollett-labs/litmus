@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
-import { checkBounds, gap, reviewMatch, score } from '../../src/graders/review-match.ts'
+import { checkBounds, gap, MAX_FINDINGS, reviewMatch, score } from '../../src/graders/review-match.ts'
 import type { Provider } from '../../src/providers/index.ts'
 import { CaseFile, type Finding, type TruthFile } from '../../src/suite/schema.ts'
 import { oneCase } from '../helpers/cases.ts'
@@ -25,7 +25,7 @@ const T = 'internal/auth/token.go'
 function graded(truth: TruthFile, findings: Finding[] | string | null, pass: Record<string, number> = {}, extra: Record<string, unknown> = {}, judge?: Provider) {
   const files: Record<string, string> = { 'truth.yaml': JSON.stringify(truth) }
   for (const b of truth.bugs) files[b.fix] = ''
-  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match }]\n', files)
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { max_findings: 100000 } }]\n', files)
   const artifacts = findings === null ? {} : { 'findings.json': typeof findings === 'string' ? findings : JSON.stringify({ findings }) }
   const s = spec({ kind: 'review-match', pass, ...extra })
   return reviewMatch(s, trial({ artifacts }), ctx(c, judge ? { strict: judgeOf(judge, 'strict') } : {}))
@@ -102,7 +102,7 @@ test('an absolute path inside the workdir, or its realpath, is stripped to the t
 test('an absolute path is stripped when graded end to end', async () => {
   const truth = seeded([bug('b', T, [10, 10])])
   const files: Record<string, string> = { 'truth.yaml': JSON.stringify(truth), 'fix/b.patch': '' }
-  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match }]\n', files)
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { max_findings: 100000 } }]\n', files)
   const t = trial()
   const findings = JSON.stringify({ findings: [f(join(realpathSync(t.workdir), T), 10)] })
   const withFindings = trial({ artifacts: { 'findings.json': findings } })
@@ -158,8 +158,10 @@ test('hand-computed metrics for a mixed review', async () => {
   const r = await graded(truth, findings)
   assert.deepEqual(r.metrics, {
     recall: 2 / 3,
+    recall_critical: null,
     recall_high: 1 / 2,
     recall_medium: 1,
+    recall_low: null,
     precision: 2 / 4, // matched / (matched + false positives + decoy hits)
     precision_all: 2 / 6,
     false_positives: 1,
@@ -170,7 +172,8 @@ test('hand-computed metrics for a mixed review', async () => {
     matched: 2,
     bugs: 3,
   })
-  assert.equal(r.pass, true) // no bounds set: none apply
+  assert.equal(r.pass, false) // no bounds set: nothing was checked
+  assert.match(r.rationale ?? '', /no pass bound applies/)
   assert.match(r.rationale ?? '', /matched 2\/3 bugs/)
   assert.match(r.rationale ?? '', /missed: b/)
 })
@@ -195,12 +198,27 @@ test('each bound fails on its own metric', async () => {
   assert.equal(loose.pass, true, loose.rationale ?? '')
 })
 
-test('severity recall is reported only for severities the truth has', async () => {
+test('every severity recall is reported, null for a severity the truth does not have', async () => {
   const r = await graded(seeded([bug('a', T, [10, 10], 'critical'), bug('b', T, [50, 50], 'low')]), [f(T, 50, 'low')])
   assert.equal(r.metrics?.['recall_critical'], 0)
   assert.equal(r.metrics?.['recall_low'], 1)
-  assert.equal('recall_high' in (r.metrics ?? {}), false)
-  assert.equal('recall_medium' in (r.metrics ?? {}), false)
+  assert.equal(r.metrics?.['recall_high'], null)
+  assert.equal(r.metrics?.['recall_medium'], null)
+})
+
+test('canary: a seeded case with no bound that applies fails, even on an empty review', async () => {
+  const truth = seeded([bug('a', T, [10, 10])])
+  const r = await graded(truth, [], {})
+  assert.equal(r.pass, false)
+  assert.match(r.rationale ?? '', /no pass bound applies/)
+  // Only bounds that read n/a: min_claims_correct when nothing matched.
+  assert.deepEqual(checkBounds({ min_claims_correct: 0.5 }, { claims_correct: null }).failed, ['no pass bound applies to this case, so nothing was checked'])
+})
+
+test('more findings than litmus grades fail the grade instead of stalling the event loop', async () => {
+  const r = await graded(seeded([bug('a', T, [10, 10])]), Array.from({ length: MAX_FINDINGS + 1 }, (_, i) => f(T, i + 1)), { min_recall: 0 })
+  assert.equal(r.pass, false)
+  assert.match(r.rationale ?? '', /more than the 1000 litmus grades/)
 })
 
 test('a clean case: every finding is a false positive or a decoy hit, whatever its severity', async () => {
@@ -234,8 +252,8 @@ test('ratios with a zero denominator are null, never 0 and never NaN', async () 
 
 test('a null metric never satisfies or fails a bound by comparing as 0', () => {
   // null >= 0.5 is false and null <= 5 is true in JavaScript; neither may decide a bound.
-  assert.deepEqual(checkBounds({ min_recall: 0 }, { recall: null }), { failed: [], na: ['min_recall: n/a (no bugs)'] })
-  assert.deepEqual(checkBounds({ min_claims_correct: 0.5 }, { claims_correct: null }), { failed: [], na: ['min_claims_correct: n/a (nothing matched)'] })
+  assert.deepEqual(checkBounds({ min_recall: 0, max_nits: 9 }, { recall: null, nits: 0 }), { failed: [], na: ['min_recall: n/a (no bugs)'] })
+  assert.deepEqual(checkBounds({ min_claims_correct: 0.5, max_nits: 9 }, { claims_correct: null, nits: 0 }), { failed: [], na: ['min_claims_correct: n/a (nothing matched)'] })
   assert.deepEqual(checkBounds({ min_recall: 0 }, { recall: 0 }), { failed: [], na: [] })
 })
 

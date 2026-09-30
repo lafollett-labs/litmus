@@ -199,6 +199,15 @@ function loadCase(suite: SuiteFile, dir: string): LoadedCase {
   }
   for (const g of spec.graders) {
     if (g.kind === 'review-match' && !loaded.truth) throw new ConfigError(`${file}: a review-match grader needs a truth.yaml beside it`)
+    // A review-match with no bound that can apply to its truth checks nothing,
+    // so it would pass any review. min_recall and min_claims_correct never apply
+    // on a clean case (no bugs, nothing to match).
+    if (g.kind === 'review-match' && loaded.truth) {
+      const usable = Object.keys(g.pass).filter(b => loaded.truth!.kind === 'seeded' || (b !== 'min_recall' && b !== 'min_claims_correct'))
+      if (usable.length === 0) {
+        throw new ConfigError(`${file}: review-match sets no pass bound that applies to a ${loaded.truth.kind} case (${loaded.truth.kind === 'clean' ? 'set max_false_positives, say' : 'set min_recall, say'})`)
+      }
+    }
     if (g.kind === 'json-schema' && g.schema.startsWith('litmus:') && !BUILTIN_SCHEMAS.has(g.schema)) {
       throw new ConfigError(`${file}: unknown built-in schema "${g.schema}" (known: ${[...BUILTIN_SCHEMAS].join(', ')})`)
     }
