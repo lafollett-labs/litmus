@@ -362,8 +362,8 @@ for each job, at most `concurrency` at once:
 
 on finish or cancel:
     write verdicts.json                  # settled cases only
-    if the run has more than one config, or --baseline was given:
-        write comparison.json
+on finish, if the run has more than one config, or --baseline was given:
+    write comparison.json                # a cancelled run compares nothing
 ```
 
 | How the executor stopped | `exit` | Retried | Trial status |
@@ -374,6 +374,10 @@ on finish or cancel:
 | Auth failure, another 4xx, or a missing key | `infra_error` (not retryable) | Never | `error` |
 | The operator cancelled | `cancelled` | Never | `cancelled` |
 | The workdir could not be built (a patch that no longer applies), or an executor threw | none | Only a retryable `InfraError` | `error`, with the reason; the run goes on |
+| The trial threw outside its attempts (the store could not move its files) | none | Never | `error`, with the reason; the run goes on |
+
+A trial with no executor result records `exit: infra_error`, whatever the
+reason says.
 
 A review loop that never converges is exactly what litmus is meant to catch, so
 a harness timeout or max-turns stop is a model failure, and it is never
@@ -389,6 +393,12 @@ Retries back off exponentially with jitter (1 s, 2 s, 4 s ... up to 30 s), and
 a cancel cuts a backoff short. Once a run is cancelled no new trial starts, the
 ones in flight end `cancelled`, and no further case settles. The run writes the
 verdicts of the cases that settled before it stopped.
+
+A grading retry emits `trial.retry` too, with its reason prefixed `grading:`.
+A listener that throws is ignored, so a closed SSE socket never stops a run.
+If litmus cannot record even an error trial (the store cannot be written),
+every worker stops, `run.json` is marked `failed`, and the run rejects with
+the error.
 
 A case's hash covers its whole directory (`case.yaml`, `truth.yaml`,
 `fixture/`, `change.patch`, `proof/`, `fix/`, `fake.yaml`), the prompt it
@@ -871,10 +881,14 @@ the cases both of them scored.
   - its **case hash** differs between the sides
 
   The case hash covers `case.yaml`, `truth.yaml`, `fixture/`, `change.patch`,
-  `proof/`, `fix/`, and the grader and extractor hashes. An edit to ground
-  truth would otherwise be blamed on the model. A difference in a subject or
-  plugin hash does not exclude a case, because comparing subject versions is a
-  real use. It is listed in the comparison's `notes` instead.
+  `proof/`, `fix/`, the resolved prompt, every `json-schema` file its graders
+  read (inside the case or not), and the grader and extractor hashes. An edit
+  to ground truth would otherwise be blamed on the model. A `command`
+  grader's script outside the case is not covered, since litmus cannot tell
+  what it reads. A difference in a subject or plugin hash does not exclude a
+  case, because comparing subject versions is a real use. It is listed in the
+  comparison's `notes` instead: `<case>: subject changed (<old> → <new>)`,
+  `plugin <root>: changed`, or `plugin <root>: loaded only by <side>`.
 - **Flips.** Every case whose verdict changed is listed with its old and new
   verdicts. This is the headline of the comparison, not a footnote.
 - **Suite verdict.** D is the mean over paired cases of B's observed success
@@ -943,7 +957,9 @@ the cases both of them scored.
   that stopped scoring is news. When neither side carries case hashes, the
   comparison's `notes` say that changed cases were not detected.
 - **WARN.** Raised for a metric when the ratio of B's per-trial median to A's
-  falls outside [1/`warn_ratio`, `warn_ratio`]. The metrics are total tokens,
+  falls outside [1/`warn_ratio`, `warn_ratio`]. Both medians are taken over
+  the scored trials of the paired cases only, so a baseline that ran more
+  cases than this run cannot raise a WARN on its own. The metrics are total tokens,
   cost, wall-clock time, tool calls, and findings. A metric is skipped when
   A's median is 0 or missing, or B's is missing, or either is not finite. A WARN never changes an exit code.
 
@@ -959,7 +975,7 @@ the cases both of them scored.
 - `litmus run --config a,b` compares every later config against the first.
 - `litmus run --baseline <name>` compares each config against the config of
   the same name in the baseline run. A config missing from the baseline is
-  reported and skipped.
+  reported (in the run's outcome, for the CLI to print) and skipped.
 - A rerun (`--rerun <run> --only …`) selects (case, config) pairs whose verdict
   is in the set. Its jobs are those pairs, not the cross product of their
   cases and configs.
@@ -972,7 +988,8 @@ the cases both of them scored.
 .litmus/
 ├── baselines.json                        # { "<name>": "<run id>" }
 └── runs/<run id>/
-    ├── run.json                          # manifest: id, parent, status, started/finished, litmus version,
+    ├── run.json                          # manifest: id, parent, status (running, finished, cancelled, failed),
+    │                                     #   started/finished, litmus version,
     │                                     #   selection, configs (no secrets), case, subject, judge and plugin hashes
     ├── events.jsonl                      # every event, in order; the UI can replay a run from it
     ├── verdicts.json                     # Verdict[]
@@ -983,7 +1000,10 @@ the cases both of them scored.
         └── artifacts/
 ```
 
-The record shapes are the types in `src/core/types.ts`. Runs are append-only.
+The record shapes are the types in `src/core/types.ts`. Runs are append-only,
+and each JSON file is written to a temporary name and renamed into place, so
+a reader never sees half of one. A `run.json` that does not parse is skipped
+when runs are listed.
 Each attempt writes under the trial's `.attempts/<n>/`, so a retry never
 appends to the transcript of the attempt before it. Only the kept attempt
 becomes the trial's `transcript.jsonl` and `artifacts/`, and the others are
