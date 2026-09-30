@@ -85,6 +85,15 @@ At `fd9c2b7`, `npm run check` is clean, and 417 tests pass with 4 (live) skipped
 
 **Locked to SHA:** `6f64868`. The PR opens with the post-approval commits `3f49bc1` and `fd9c2b7` (LOW and INFO fixes only), and Gate 2 reviews them.
 
+
+## Gate 2: PR #7 (local substitute: Copilot's quota is exhausted)
+
+A fresh PE-Vue review with no Gate 1 context stood in for Copilot.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `4f69e42` | 1 HIGH, 2 MEDIUM, 2 LOW | **A design defect, not a coding slip**. It is fixed in `da00b73`, with docs in `48fc202`. HIGH-001: at few cases the two-level bootstrap was too narrow. Counted exactly, a single 5v5 case claimed a change 11% of the time (5.47% each way), 30v1 claimed 8.25%, and 30v3 claimed 17.7%. MEDIUM-001: at many cases it counted trial noise twice. Coverage was 98–99.8%, and a real 0.9 → 0.75 drop across 30 × 5 was called only 34% of the time. **The fix replaces the bootstrap with MOVER over per-side Wilson intervals, exact (Clopper–Pearson) below 6 trials.** The cutover was chosen by sweeping it against exact single-case enumeration over 1–30 trials and rates 0.05–0.95. At 6, the worst cell is 2.12% per direction, against 3.27% at 5. MOVER holds every single-case cell at or under 2.5% (a test counts this exactly), and it catches more real drops: 30 × 5 0.9 → 0.75 at 41%, and 10 × 10 0.9 → 0.7 at 71% (it was 53%). It is deterministic, so `compare.resamples`, `compare.seed`, mulberry32 and the normal sampler are removed. **This changes one approved semantic**: the suite is its fixed cases, so three of ten collapsing from 30/30 to 0/30 is now a REGRESSION rather than INCONCLUSIVE. The NO CHANGE boundary is now 6 × 30, 31 × 10, 109 × 5 and 201 × 3, and it never falls back. MEDIUM-002: a canary comparison test was added (A rejects every canary, B waves them all through, the result is REGRESSION); it fails on a `passes` mutant. LOW-001: `tolerance` and `warnRatio` are validated, and a non-finite metric is skipped. LOW-002: when neither side carries hashes, the notes say so |
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
