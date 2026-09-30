@@ -27,7 +27,7 @@ export function wilson(successes: number, n: number, z: number = Z_95): Interval
 
 // Exact (Clopper–Pearson) 95%: the p at which seeing s or fewer (or s or more)
 // successes has probability 2.5%, found by bisection on the binomial tail.
-// Conservative by construction, which is what a 1- to 5-trial side needs:
+// Conservative by construction, which is what a 1- to 8-trial side needs:
 // Wilson's coverage there dips well under 95%.
 export const CP_MAX_N = 1000
 

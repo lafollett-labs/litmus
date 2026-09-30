@@ -294,24 +294,30 @@ test('a non-finite metric median is skipped, never warned on', () => {
 
 // Calibration, counted exactly: one case, both sides drawn from the same true
 // rate, every possible record weighed by its probability. A 95% interval may
-// claim a change at most 2.5% of the time in each direction.
+// claim a change at most 2.5% of the time in each direction. The verdict of
+// each (successes A, successes B) is found once, then weighed over a fine grid
+// of rates: the worst cells sit off round rates (8v9 breaks the bound only
+// between 0.40 and 0.60, and holds at 0.5 itself).
 test('a single case claims a change no more often than a 95% interval allows, at any trial counts', () => {
   const binom = (n: number, k: number, q: number) => choose(n, k) * q ** k * (1 - q) ** (n - k)
   const trials = (n: number, s: number) => p(s) + f(n - s)
   const counts = Array.from({ length: 30 }, (_, i) => i + 1)
+  const rates = Array.from({ length: 99 }, (_, i) => (i + 1) / 100)
   for (const na of counts) for (const nb of counts) {
-    for (const q of [0.05, 0.2, 0.5, 0.8, 0.95]) {
-      let down = 0
-      let up = 0
-      for (let sa = 0; sa <= na; sa++) {
-        for (let sb = 0; sb <= nb; sb++) {
-          const v = compare(side('a', [['s/x', trials(na, sa)]]), side('b', [['s/x', trials(nb, sb)]])).verdict
-          const w = binom(na, sa, q) * binom(nb, sb, q)
-          if (v === 'REGRESSION') down += w
-          if (v === 'IMPROVEMENT') up += w
-        }
+    const down: [number, number][] = []
+    const up: [number, number][] = []
+    for (let sa = 0; sa <= na; sa++) {
+      for (let sb = 0; sb <= nb; sb++) {
+        const v = compare(side('a', [['s/x', trials(na, sa)]]), side('b', [['s/x', trials(nb, sb)]])).verdict
+        if (v === 'REGRESSION') down.push([sa, sb])
+        if (v === 'IMPROVEMENT') up.push([sa, sb])
       }
-      assert.ok(down <= 0.025 && up <= 0.025, `${na}v${nb} at ${q}: REGRESSION ${down}, IMPROVEMENT ${up}`)
+    }
+    const weigh = (cells: [number, number][], q: number) => cells.reduce((w, [sa, sb]) => w + binom(na, sa, q) * binom(nb, sb, q), 0)
+    for (const q of rates) {
+      const d = weigh(down, q)
+      const u = weigh(up, q)
+      assert.ok(d <= 0.025 && u <= 0.025, `${na}v${nb} at ${q}: REGRESSION ${d}, IMPROVEMENT ${u}`)
     }
   }
 })

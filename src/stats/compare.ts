@@ -72,13 +72,13 @@ export function compare(a: CompareSide, b: CompareSide, opts: CompareOptions = {
   const unhashed = a.hashes === undefined && b.hashes === undefined ? ['case hashes unavailable on both sides: a case that changed between them was not detected'] : []
   // At mid-range rates across many cases the interval is a little narrow
   // (about 88-91% coverage); a tolerance above zero absorbs that, zero does not.
-  const exact = tolerance === 0 ? ['tolerance 0: at mid-range pass rates about twice the nominal share of unchanged suites read as a change'] : []
+  const untolerant = tolerance === 0 ? ['tolerance 0: at mid-range pass rates about twice the nominal share of unchanged suites read as a change'] : []
   return {
     a: a.label,
     b: b.label,
     cases: n,
     excluded,
-    notes: [...new Set([...(a.notes ?? []), ...(b.notes ?? []), ...unhashed, ...exact])],
+    notes: [...new Set([...(a.notes ?? []), ...(b.notes ?? []), ...unhashed, ...untolerant])],
     flips,
     delta,
     interval,
