@@ -169,7 +169,9 @@ case directory.
 It can therefore read its `text_file` from anywhere the author points it,
 including a case's `truth.yaml`. Scripting the right answer is how the grading
 pipeline is tested for $0, and under a `fake` config there is no subject to hide
-anything from.
+anything from. A judge may not use the `fake` provider: `fake.yaml` scripts
+the subject, trial by trial, so a fake judge would read the subject's scripted
+reply as its verdict. Grading on a fake config uses graders that need no judge.
 
 `validate` fails a case whose tree contains a symlink **after the change is
 applied**. A patch can create a symlink too, and an absolute link could point

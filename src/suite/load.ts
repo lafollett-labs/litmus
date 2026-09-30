@@ -67,6 +67,11 @@ export function loadConfig(file: string, env: NodeJS.ProcessEnv = process.env): 
       if ('params' in def && def.params) refuseCredentials(def.params, `${section}.${name}.params`, secrets, path)
     }
   }
+  // fake.yaml scripts the subject, per trial, and a judge would read the
+  // subject's scripted reply as its own verdict. Grading on a fake config uses
+  // graders that need no judge.
+  const fakeJudge = Object.entries(spec.judges).find(([, d]) => d.provider === 'fake')
+  if (fakeJudge) throw new ConfigError(`${path}: judges.${fakeJudge[0]} uses the fake provider, which scripts a subject, not a judge; give it a real provider`)
   const dir = dirname(path)
   return { ...spec, file: path, dir, roots: spec.suites.map(r => resolve(dir, r)), resultsDir: resolve(dir, spec.results) }
 }

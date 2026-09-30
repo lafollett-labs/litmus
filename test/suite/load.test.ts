@@ -308,7 +308,7 @@ test('an unknown built-in schema or judge name is refused at load, before any tr
 
   const project = (graders: string, extra = '') => {
     const root = tree({
-      'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\njudges: { default: { provider: fake } }\n',
+      'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\njudges: { default: { provider: anthropic, model: m } }\n',
       'suites/s/suite.yaml': 'name: s\n',
       'suites/s/cases/c/case.yaml': `name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [${graders}]\n${extra}`,
       'suites/s/cases/c/truth.yaml': 'kind: clean\n',
@@ -341,4 +341,9 @@ test('a subject that is itself a symlink is refused, file or directory', () => {
   const fileLink = tree({ ...suite('s'), 's/skill.md': 'S', 's/cases/c/case.yaml': harness('../../link.md') })
   symlinkSync('skill.md', join(fileLink, 's/link.md'))
   assert.throws(() => discoverSuites([fileLink]), configError(/subject .*link\.md is a symlink/))
+})
+
+test('a judge on the fake provider is refused at load: fake.yaml scripts the subject, not a judge', () => {
+  const root = tree({ 'litmus.config.yaml': 'suites: [./s]\nconfigs: { f: { provider: fake } }\njudges: { j: { provider: fake } }\n' })
+  assert.throws(() => loadConfig(join(root, 'litmus.config.yaml')), (e: Error) => e instanceof ConfigError && /judges\.j uses the fake provider/.test(e.message))
 })
