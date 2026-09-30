@@ -1,6 +1,6 @@
 # Code Review: m8-server
 
-**Verdict:** 🔄 CHANGES REQUESTED (round 1)
+**Verdict:** ✅ APPROVED (round 2, locked to `bd93180`, since rebased onto M7's approved tip)
 
 | | |
 | - | - |
@@ -63,6 +63,42 @@ At the reviewed SHA, `npm run check` is clean, and 475 tests pass with 4 (live) 
 | INFO-004 | The server imported from the CLI layer | Adopted in `64a0aef`: `address.ts` moves to `src/runner/` |
 
 At `1181dc8`, `npm run check` is clean, and 488 tests pass with 4 (live) skipped.
+
+## Review Round 2
+
+| | |
+| - | - |
+| **Review Round** | 2 |
+| **Reviewed SHA** | `bd93180` (round-1 fixes on M7 at `813dd2b`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue marked all 14 round-1 findings RESOLVED:
+
+- 13 mutants were killed.
+- A live stream and a replay of the same run matched event for event.
+- `close()` returned in 17 ms with a live subscriber.
+- No stack or path leaked in a 500.
+- 19 CLI flag cases behaved identically before and after the `planRun` refactor.
+- `server.test.ts` failed 0 of 12 times under load.
+
+**✅ APPROVED:** no finding at MEDIUM or above. The branch was then rebased onto M7's approved tip. The findings were fixed after approval, in `5d346b5`, `22e9b8e` and `85fbb24`:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | The "client left" check read a pipelined response's missing socket as a departed client, so the queued request's error was never answered | Fixed. The check reads the request's socket. Tested over a raw socket: a 404 queued behind a live stream arrives when the stream ends, and the old check, as a mutant, fails the test. Fixing this surfaced a worse bug: leaving a `for await` over the request early destroyed the socket, so an oversize body never got its 413. `body()` now reads with listeners and stops consuming past the limit. A test asserts the 413 and `connection: close` |
+| LOW-002 | The 204 also ends the stream of a run live in another process, which the docs did not say | Kept, and the docs now say so: a client following a run started elsewhere reads its status from `/api/runs/:id` |
+| LOW-003 | Four behaviours had no test, and the drop test could hang | Tested: the 413 closes its connection; a transcript over 64 MiB is empty with `transcript_truncated`; the server's env reaches `planRun` (a credential in another config's params is refused only through the server's env, and the no-env mutant fails the test); the drop test has a timeout and fails if the stream ends empty. The 503 is covered under INFO-001 |
+| INFO-001 | The shutdown 503 cannot be reached | Kept as a commented defensive guard; the docs no longer promise it |
+| INFO-002 | `close()` cuts live subscribers off before their run's last event, while the record on disk stays complete | Accepted, as the reviewer suggested |
+| INFO-003 | A directory swapped between realpath and open is followed | Accepted: that needs a writer racing inside `results/` or `ui/dist`, which the single-operator model rules out |
+| INFO-004 | index.html was read on every static request | Fixed: it is read only when the asked file is missing |
+| INFO-005 | M7 moved during the review | The branch is rebased onto M7's approved tip. The CLI rules re-run through the rebased suite |
+
+At `85fbb24`, `npm run check` exits 0 and 495 tests pass with 4 (live) skipped.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `bd93180`, which is now carried by the rebase onto M7's approved tip. The PR opens once M5, M6 and M7 merge. It carries the post-approval commits (LOW and INFO fixes only), and Gate 2 reviews them.
 
 ---
 
