@@ -1,6 +1,6 @@
 # Code Review: m6-runner-and-store
 
-**Verdict:** 🔄 CHANGES REQUESTED (round 1)
+**Verdict:** ✅ APPROVED (round 2, locked to `bdbca9e`)
 
 | | |
 | - | - |
@@ -63,6 +63,39 @@ pass.
 | INFO-003 | The trial-key `filter` never filtered | Adopted in `ef49621`: a plain validation loop |
 
 At `aaa49f6`, `npm run check` is clean, and 443 tests pass with 4 (live) skipped.
+
+## Review Round 2
+
+| | |
+| - | - |
+| **Review Round** | 2 |
+| **Reviewed SHA** | `bdbca9e` (round-1 fixes: `c6d942c..bdbca9e`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue marked all 15 round-1 findings RESOLVED:
+
+- The fault path cannot orphan a worker, and every throw after the store exists reaches `finish('failed')`.
+- It ran 25 mutants. Every one that removes a fix is killed.
+- `mechanics.test.ts` passed 12 of 12 parallel stress runs.
+
+**✅ APPROVED:** no finding at MEDIUM or above. The new LOWs and INFOs were fixed after approval, in `404134c` and `72ce24c`:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | WARN pooled every scored trial into one median, so a case with more scored trials weighed more | Fixed. A side's metric is now the median over cases of each case's median. Probe P1b is now a test, and it fails on `bdbca9e` |
+| LOW-002 | `crashed()` recorded 0 attempts and zero usage, which hid real spend | Fixed. A throw inside a trial carries its attempts, its usage and its grading usage (`TrialCrash`) into the error record. Tested with 5,900 tokens and $1.20 |
+| LOW-003 | A replaced extraction's findings.json stayed on disk | Fixed. Each grading attempt removes the previous attempt's extracted file, and a file the final record does not list is removed too. Tested |
+| LOW-004 | Mutants T1, T5, T6, T7, T9 and T10 survived | Tests added for: a zero-token attempt next to a priced one; a changed plugin and a plugin on one side only; a crash during a cancel; a leftover `.tmp` replaced by the rename; and the exact "already exists" ConfigError. All six mutants now fail the suite |
+| LOW-005 | The Flow paragraph on the case hash disagreed with § Comparison | Replaced with a cross-reference |
+| INFO-001 | A failed run emitted no terminal event | Adopted: `run.failed` (best effort), in the event union and § Events. Tested |
+| INFO-002 | An unreadable schema at run time rejected with a raw errno | Adopted: a ConfigError naming the case and the schema, raised before any run dir exists. Tested |
+| INFO-003 | Plugin notes are keyed by absolute root | Documented as a limitation in § Comparison |
+
+At `72ce24c`, `npm run check` is clean, and 450 tests pass with 4 (live) skipped.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `bdbca9e`. The PR opens once M5 (#7) merges and this branch is rebased onto main. It carries the post-approval commits `404134c` and `72ce24c` (LOW and INFO fixes only), and Gate 2 reviews them.
 
 ---
 
