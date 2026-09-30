@@ -1104,9 +1104,11 @@ not parse) is a 400 with `{ error }`, and a run, trial or route that does not
 exist is a 404. Each event on the stream carries its index as its `id`, so a
 client that reconnects with `Last-Event-ID` (a plain number; anything else is
 ignored) gets only what it missed; the stream ends after `run.finished`,
-`run.cancelled` or `run.failed`. For a run that is over, a request with
-nothing left to send gets a 204, the one answer that stops an EventSource
-reconnecting, including for a run whose record ends without a last event. A
+`run.cancelled` or `run.failed`. For a run that is not live in this server
+(it is over, crashed, or is running in another process such as the CLI), a
+request with nothing left to send gets a 204, the one answer that stops an
+EventSource reconnecting; a client following a run started elsewhere reads
+its status from `/api/runs/:id` instead. A
 trial's artifacts come back as text when they are UTF-8 and at most 8 MiB,
 as a size when binary, and as a size with `truncated` when larger; a
 transcript over 64 MiB comes back empty with `transcript_truncated`. Every
@@ -1118,9 +1120,9 @@ Any path outside `/api` serves the built UI (`ui/dist`), with `index.html` for
 a path that is not a file, so the UI's own routes survive a reload. Every
 response says `nosniff`, forbids framing (`frame-ancestors 'none'`, since a
 framed page could borrow the operator's clicks), and sends no referrer.
-`litmus serve` stops on Ctrl-C: it refuses new runs (503), drops open
-connections at once, cancels the live runs, waits for each to be written,
-and exits 0. A port in use is exit 2.
+`litmus serve` stops on Ctrl-C: it drops open connections at once, cancels
+the live runs, waits for each to be written, and exits 0. A port in use is
+exit 2.
 
 The CLI runs in-process on the same runner module. The UI is a client of the
 API and nothing else.
