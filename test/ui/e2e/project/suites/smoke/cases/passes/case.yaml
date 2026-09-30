@@ -1,0 +1,3 @@
+name: passes
+executor: { kind: model, prompt: "Review {{fixture}}" }
+graders: [{ kind: regex, target: response.txt, pattern: LGTM }]

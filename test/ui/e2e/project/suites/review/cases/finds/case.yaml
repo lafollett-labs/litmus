@@ -1,0 +1,3 @@
+name: finds
+executor: { kind: model, prompt: "Review {{fixture}}" }
+graders: [{ kind: review-match, artifact: response.txt, pass: { min_recall: 0.5, max_false_positives: 1 } }]
