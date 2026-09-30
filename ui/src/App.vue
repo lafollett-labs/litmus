@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import type { RunState } from './model.ts'
 import { load, state, type View } from './store.ts'
 import { tabKey } from './tabs.ts'
@@ -40,6 +40,17 @@ const DONE: Record<RunState['done'], string> = {
   lost: 'lost touch with the server',
 }
 const failed = ref<string | null>(null)
+
+// A toolbar button disables itself as a run starts or ends, and the focus it
+// held would fall to the page (focus fixup runs later, so the button may still
+// be the active element here); it goes to the run line, which says what happened.
+const runline = ref<HTMLElement | null>(null)
+watch([() => state.busy, () => state.run?.id, () => state.run?.done], () =>
+  nextTick(() => {
+    const a = document.activeElement
+    if (a === document.body || (a instanceof HTMLButtonElement && a.disabled)) runline.value?.focus()
+  }),
+)
 onMounted(() => load().catch(e => (failed.value = (e as Error).message)))
 </script>
 
@@ -67,15 +78,17 @@ onMounted(() => load().catch(e => (failed.value = (e as Error).message)))
     </header>
     <p v-if="failed" class="banner error" role="alert">Could not reach litmus: {{ failed }}</p>
     <p v-if="state.message" class="banner" role="status">{{ state.message }}</p>
-    <p v-if="state.run" class="runline muted" role="status" :data-run="state.run.id" :data-done="state.run.done">
+    <p v-if="state.run" ref="runline" tabindex="-1" class="runline muted" role="status" :data-run="state.run.id" :data-done="state.run.done">
       run <code>{{ state.run.id }}</code> · {{ DONE[state.run.done] }}
     </p>
-    <main id="view" role="tabpanel" :aria-labelledby="`view-${state.view}`" :class="state.view === 'tree' ? 'split' : 'single'">
-      <template v-if="state.view === 'tree'">
-        <TestTree />
-        <TrialDetail />
-      </template>
-      <CompareView v-else />
+    <main>
+      <div id="view" role="tabpanel" :aria-labelledby="`view-${state.view}`" :class="state.view === 'tree' ? 'split' : 'single'">
+        <template v-if="state.view === 'tree'">
+          <TestTree />
+          <TrialDetail />
+        </template>
+        <CompareView v-else />
+      </div>
     </main>
   </div>
 </template>
@@ -90,6 +103,10 @@ h1 { font-size: 15px; margin: 0; letter-spacing: 0.02em; }
 .banner { margin: 0; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--hover); }
 .banner.error { color: var(--fail); }
 .runline { margin: 0; padding: 4px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+main { flex: 1; display: flex; min-height: 0; }
+main > div { flex: 1; }
+.runline:focus { outline: none; }
+.runline:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .split { flex: 1; display: grid; grid-template-columns: minmax(340px, 42%) 1fr; min-height: 0; }
 .split > :first-child { border-right: 1px solid var(--line); }
 .single { flex: 1; min-height: 0; display: flex; }

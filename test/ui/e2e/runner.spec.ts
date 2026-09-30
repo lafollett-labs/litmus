@@ -37,7 +37,9 @@ test('run all settles every case, and the tree shows each verdict and its counts
   await expect(row(page, 'smoke/fails@fake')).toHaveAttribute('data-status', 'fail')
   await expect(row(page, 'smoke/flaky@fake')).toHaveAttribute('data-status', 'flaky')
   await expect(row(page, 'smoke')).toHaveAttribute('data-status', 'fail')
-  await expect(page.getByLabel('counts for smoke', { exact: true })).toHaveText(/✓ 1\s*✗ 1\s*~ 1\s*! 0\s*\? 0/)
+  await expect(page.locator('[data-counts="smoke"] > [aria-hidden]')).toHaveText(['✓ 1', '✗ 1', '~ 1', '! 0', '? 0'])
+  // A screen reader hears the counts in the row's name.
+  await expect(row(page, 'smoke')).toHaveAccessibleName(/1 pass, 1 fail, 1 flaky, 0 error, 0 inconclusive/)
   await expand(page, 'smoke/passes@fake')
   await expect(row(page, 'smoke/passes@fake#1')).toHaveAttribute('data-status', 'pass')
   await shot(page, 'run-all')
@@ -112,6 +114,8 @@ test('cancel stops a run: its trials end cancelled and nothing settles', async (
   await done(page, 'running')
   await page.getByRole('button', { name: 'Cancel' }).click()
   await done(page, 'cancelled')
+  // Cancel disabled itself; the focus it held lands on the run line, not the page.
+  await expect(page.locator('.runline')).toBeFocused()
   await expand(page, 'slow/waits', 'slow/waits@fake')
   await expect(row(page, 'slow/waits@fake#1')).toHaveAttribute('data-status', 'cancelled')
 })
@@ -129,6 +133,12 @@ test('compare: two configs in one run, with the grid, the comparison and its fli
   await expect(page.locator('td[data-cell="smoke/fails@fake-b"]')).toContainText('FAIL')
   await expect(page.locator('td[data-cell="smoke/passes@fake"]')).toContainText('PASS')
   await shot(page, 'compare')
+})
+
+test('the page keeps one main landmark, holding the view\'s tab panel', async ({ page }) => {
+  await open(page)
+  await expect(page.getByRole('main')).toHaveCount(1)
+  await expect(page.getByRole('main').getByRole('tabpanel', { name: 'Runner' })).toBeVisible()
 })
 
 test('the dark theme applies and survives a reload', async ({ page }) => {
@@ -178,7 +188,7 @@ test('the tree works from the keyboard: arrows move, Right and Left open and clo
   const trial = await focused(page).getAttribute('data-id')
   await page.keyboard.press('Enter')
   await expect(page.locator('.detail h2')).toHaveText(trial!)
-  await expect(focused(page)).toHaveAttribute('aria-selected', 'true')
+  await expect(focused(page)).toHaveAttribute('aria-current', 'true')
 
   await page.keyboard.press('Home')
   await expect(focused(page)).toHaveAttribute('aria-posinset', '1')

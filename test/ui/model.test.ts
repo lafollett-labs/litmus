@@ -90,6 +90,11 @@ test('a selection that would run something unasked is refused with the reason', 
   assert.match(problem(['s/a', 's/b@other#1'], ['fake']) ?? '', /would run on other too/)
   // (b) case rows with no config chosen
   assert.match(problem(['s/a'], []) ?? '', /choose the configs/)
+  // (a') a config row under a checked case, on a config the toolbar has not chosen, would silently not run
+  assert.match(problem(['s/b', 's/b@other'], ['fake']) ?? '', /^s\/b@other is checked under a checked case or suite, which runs only on the toolbar's configs; choose other/)
+  assert.match(problem(['s', 's/b@other#1'], ['fake']) ?? '', /^s\/b@other#1 is checked under/)
+  // ...and on a chosen config it is already covered: the case row runs it
+  assert.deepEqual(selection(tree, new Set(['s/b', 's/b@other']), ['fake', 'other']), { select: ['s/b'], configs: ['fake', 'other'] })
   // (c) nothing that can run: a trial beyond the case's own count cannot be named
   assert.equal(find(tree, 's/b@other#3')!.selectable, false)
   assert.match(problem(['s/b@other#3'], ['fake']) ?? '', /check the rows/)

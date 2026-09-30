@@ -77,8 +77,8 @@ function key(e: KeyboardEvent, r: Row) {
         <StatusIcon :status="s" /> {{ s }}
       </button>
     </div>
-    <!-- Space checks a row and Enter opens it; the checkbox is the mouse's way to the same aria-checked. -->
-    <ul ref="list" role="tree" class="rows" aria-label="Case tree">
+    <!-- Space checks a row and Enter opens it; the checkbox is the mouse's way to the same aria-checked. The open trial is aria-current: aria-selected would mean checked in a multi-select tree. -->
+    <ul ref="list" role="tree" class="rows" aria-label="Case tree" aria-multiselectable="true">
       <li
         v-for="r in rows"
         :key="r.node.id"
@@ -92,8 +92,7 @@ function key(e: KeyboardEvent, r: Row) {
         :aria-posinset="r.pos"
         :aria-expanded="r.node.children.length ? r.open : undefined"
         :aria-checked="r.node.selectable ? state.checked.has(r.node.id) : undefined"
-        :aria-selected="r.node.kind === 'trial' ? state.detail?.key === r.node.id : undefined"
-        :aria-disabled="r.node.selectable ? undefined : true"
+        :aria-current="r.node.kind === 'trial' && state.detail?.key === r.node.id ? 'true' : undefined"
         :data-id="r.node.id"
         :data-status="r.node.status"
         @click="(current = r.node.id), activate(r.node)"
@@ -103,8 +102,9 @@ function key(e: KeyboardEvent, r: Row) {
         <input type="checkbox" tabindex="-1" aria-hidden="true" :checked="state.checked.has(r.node.id)" :disabled="!r.node.selectable" :title="r.node.selectable ? undefined : 'beyond the case\'s own trial count: rerun it from its config row'" @click.stop @change="check(r.node)" />
         <StatusIcon :status="r.node.status" />
         <span class="label" :class="{ mono: r.node.kind !== 'suite' }">{{ r.node.label }}</span>
-        <span v-if="r.node.kind !== 'trial'" class="badge" :aria-label="`counts for ${r.node.id}`">
-          <span v-for="[k, glyph] in BADGE" :key="k" :class="[k, { zero: !r.node.counts[k] }]">{{ glyph }} {{ r.node.counts[k] }}</span>
+        <span v-if="r.node.kind !== 'trial'" class="badge" :data-counts="r.node.id">
+          <span class="sr-only">{{ BADGE.map(([k]) => `${r.node.counts[k]} ${k}`).join(', ') }}</span>
+          <span v-for="[k, glyph] in BADGE" :key="k" aria-hidden="true" :class="[k, { zero: !r.node.counts[k] }]">{{ glyph }} {{ r.node.counts[k] }}</span>
         </span>
       </li>
       <li v-if="!rows.length" class="empty muted" role="none">No cases match.</li>

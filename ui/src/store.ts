@@ -65,10 +65,15 @@ async function settled(id: string): Promise<void> {
     if (state.run.done === 'running') state.run.done = stored.manifest.status === 'running' ? 'elsewhere' : stored.manifest.status
     state.comparisons = stored.comparisons
     state.suites = suites
+    // A trial still waiting will get no trial.finished now: look for its record once.
+    const d = state.detail
+    if (d?.waiting && d.run === id) void fetchTrial(id, d.key)
   } catch (e) {
     if (state.run?.id !== id) return
     if (state.run.done === 'running') state.run.done = 'lost'
     state.message = `lost touch with litmus: ${(e as Error).message}`
+    const d = state.detail
+    if (d?.waiting && d.run === id) Object.assign(d, { waiting: false, error: 'lost touch with litmus before this trial finished' })
   }
 }
 

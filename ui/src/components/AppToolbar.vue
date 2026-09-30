@@ -7,7 +7,7 @@ const pick = (name: string, on: boolean) => {
 </script>
 
 <template>
-  <div class="toolbar" role="toolbar" aria-label="Run">
+  <div class="toolbar" role="group" aria-label="Run">
     <button class="primary" :disabled="running || state.busy || !state.chosen.length" @click="runAll">Run all</button>
     <button :disabled="running || state.busy || !state.checked.size" @click="runSelected">Run selected</button>
     <span class="sep" />

@@ -59,14 +59,32 @@ test('a stream that ends while its stored run is still running shows the run as 
   assert.equal(state.run?.done, 'elsewhere')
 })
 
-test('a stream that ends with the server gone shows the run as lost, and says so', async () => {
+test('a stream that ends with the server gone shows the run as lost, and says so, in the detail pane too', async () => {
   routes = {}
   state.message = null
   watchRun('r')
+  last().send({ type: 'trial.started', key: 's/a@fake#1' })
+  openTrial('s/a@fake#1')
   last().fail()
   await tick()
   assert.equal(state.run?.done, 'lost')
   assert.match(state.message ?? '', /lost touch with litmus/)
+  assert.equal(state.detail?.waiting, false)
+  assert.match(state.detail?.error ?? '', /lost touch with litmus before this trial finished/)
+})
+
+test('a trial waiting on a run that turns out to be live elsewhere is looked up once', async () => {
+  let fetched = 0
+  routes = { 'GET /api/runs/r5': stored('running'), 'GET /api/suites': () => suites, 'GET /api/runs/r5/trial?key=s%2Fa%40fake%231': () => (fetched++, { record: { status: 'fail' }, transcript: [], artifacts: [] }) }
+  watchRun('r5')
+  last().send({ type: 'trial.started', key: 's/a@fake#1' })
+  openTrial('s/a@fake#1')
+  last().fail()
+  await tick()
+  await tick()
+  assert.equal(state.run?.done, 'elsewhere')
+  assert.equal(fetched, 1)
+  assert.equal(state.detail?.data?.record.status, 'fail')
 })
 
 test('a trial opened while it runs waits, is fetched when it finishes, and closes when another run is shown', async () => {
