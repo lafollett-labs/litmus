@@ -41,6 +41,14 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      # docs/PLAN.md M10: every example case is valid, and each seeded bug's
+      # proof fails on the change and passes with its fix. The Go case's
+      # proof needs the Go its fixture's go.mod names.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: suites/examples/code-review/cases/go-token-expiry/fixture/go.mod
+          cache: false
+      - run: node src/cli/main.ts validate
 
   # The UI end to end: the built UI against `litmus serve` over the fake
   # suites in Chromium. Named by its id for the ruleset, like `check`.
