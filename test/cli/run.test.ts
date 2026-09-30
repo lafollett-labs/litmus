@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { Ajv } from 'ajv'
 import { tree } from '../helpers/tmp.ts'
 
@@ -16,7 +16,7 @@ const SCHEMA = join(import.meta.dirname, '../../src/report/vendor/ctrf.schema.js
 function project(): string {
   const files: Record<string, string> = {
     // fake-b's model holds a planted key: every reporter must print it redacted.
-    'litmus.config.yaml': `suites: [./suites]\nresults: ./.litmus/runs\nconcurrency: 4\nretries: 1\nconfigs:\n  fake: { provider: fake }\n  fake-b: { provider: fake, model: "m-${PLANTED}" }\n`,
+    'litmus.config.yaml': `suites: [./suites]\nresults: ./.litmus/runs\nconcurrency: 4\nretries: 1\nredact: [MY_TOKEN]\nconfigs:\n  fake: { provider: fake }\n  fake-b: { provider: fake, model: "m-${PLANTED}" }\n`,
     'suites/e2e/suite.yaml': 'name: e2e\ndefaults: { trials: 3 }\n',
     // Outside every case, so editing it changes the answer without changing a
     // case hash: what a new subject version looks like to a comparison.
@@ -35,6 +35,7 @@ function project(): string {
   add('few', 'trials: 4\n', '[{ text: LGTM }, { fatal: gone }, { fatal: gone }, { fatal: gone }]')
   add('drift', 'trials: 10\n', '[{ text_file: ../../../../answer.txt }]')
   add('slow', 'trials: 2\n', '[{ text: LGTM, delay_ms: 20000 }]')
+  add('slowish', 'trials: 1\n', '[{ text: LGTM, delay_ms: 1500 }]')
   return tree(files)
 }
 
@@ -42,6 +43,24 @@ const ROOT = project()
 const ENV = { ...process.env, NO_COLOR: '1', ANTHROPIC_API_KEY: PLANTED }
 const litmus = (...args: string[]) => spawnSync(process.execPath, [MAIN, ...args], { cwd: ROOT, encoding: 'utf8', env: ENV })
 const runId = (stdout: string) => /litmus run (\S+)/.exec(stdout)![1]!
+
+// Starts `litmus run ...` and acts once, the first time stdout matches: a
+// second signal during teardown would kill the child before it can exit.
+function runUntil(args: string[], when: RegExp | string, act: (child: ReturnType<typeof spawn>) => void, env: NodeJS.ProcessEnv = ENV) {
+  const child = spawn(process.execPath, [MAIN, 'run', ...args], { cwd: ROOT, env })
+  let stdout = ''
+  let stderr = ''
+  let done = false
+  child.stderr!.on('data', d => (stderr += d))
+  child.stdout!.on('data', d => {
+    stdout += d
+    if (!done && (typeof when === 'string' ? stdout.includes(when) : when.test(stdout))) {
+      done = true
+      act(child)
+    }
+  })
+  return new Promise<{ code: number | null; stdout: string; stderr: string }>(ok => child.on('close', code => ok({ code, stdout, stderr })))
+}
 
 test('exit 0 when every verdict passes, with the verdict and the exit on stdout', () => {
   const r = litmus('run', 'e2e/passes', '--config', 'fake')
@@ -85,6 +104,8 @@ test('exit 2 on every usage or config error, with the reason on stderr', () => {
     ['baseline', 'set', 'Bad:Name', '2026-01-01T00-00-00Z-ffff'],
     ['run', 'e2e/passes', '--config', 'fake', '--out', '/nonexistent/dir/x.xml'],
     ['run', 'e2e/passes', '--config', 'fake', '--out', '.'],
+    ['run', 'e2e/passes', '--config', 'fake', '--out', 'newthing/'],
+    ['run', 'e2e/passes', '--config', 'fake', '--out', 'litmus.config.yaml/x.xml'],
     ['compare', 'config:fake', 'config:fake', '--out', '/nonexistent/c.json'],
     ['baseline', 'frob'],
   ]) {
@@ -189,13 +210,7 @@ test('a trial key runs that one trial', () => {
 })
 
 test('SIGINT cancels the run: it is written as cancelled and exits 130', async () => {
-  const child = spawn(process.execPath, [MAIN, 'run', 'e2e/slow', '--config', 'fake'], { cwd: ROOT, env: ENV })
-  let stdout = ''
-  child.stdout.on('data', d => {
-    stdout += d
-    if (stdout.includes('litmus run ')) child.kill('SIGINT')
-  })
-  const code = await new Promise<number | null>(ok => child.on('close', ok))
+  const { code, stdout } = await runUntil(['e2e/slow', '--config', 'fake'], 'litmus run ', c => c.kill('SIGINT'))
   assert.equal(code, 130, stdout)
   const id = runId(stdout)
   assert.equal(JSON.parse(readFileSync(join(ROOT, '.litmus/runs', id, 'run.json'), 'utf8')).status, 'cancelled')
@@ -218,9 +233,7 @@ test('a side naming a run with two configs must name one; config:<name> never pi
   assert.match(r.stderr, /holds configs fake, fake-b; name one/)
 
   const done = runId(litmus('run', 'e2e/passes', '--config', 'fake').stdout)
-  const child = spawn(process.execPath, [MAIN, 'run', 'e2e/slow', '--config', 'fake'], { cwd: ROOT, env: ENV })
-  child.stdout.on('data', d => String(d).includes('litmus run ') && child.kill('SIGINT'))
-  await new Promise(ok => child.on('close', ok))
+  await runUntil(['e2e/slow', '--config', 'fake'], 'litmus run ', c => c.kill('SIGINT'))
   const out = join(ROOT, 'resolved.json')
   assert.equal(litmus('compare', 'config:fake', done, '--allow-inconclusive', '--out', out).status, 0)
   assert.equal(JSON.parse(readFileSync(out, 'utf8')).cases, 1) // the cancelled run settled nothing: it was skipped
@@ -239,19 +252,19 @@ test('list shows the newest verdict, and never one from a run that did not finis
   writeFileSync(join(dir, 'run.json'), JSON.stringify({ id, status: 'running', started_at: '2099-01-01T00:00:00.000Z', litmus_version: '0', selection: [], configs: { fake: {} }, cases: [], judges: {}, plugins: {} }))
   writeFileSync(join(dir, 'verdicts.json'), JSON.stringify([{ case: 'e2e/drift', config: 'fake', verdict: 'PASS' }]))
   assert.match(litmus('list', 'e2e/drift').stdout, /fake: FAIL$/m)
-  writeFileSync(join(dir, 'run.json'), '{"torn')
-  assert.equal(litmus('list', 'e2e/drift').status, 0)
+  // A finished run whose verdicts are torn is skipped by list, and refused by compare (exit 2, not a verdict).
+  writeFileSync(join(dir, 'run.json'), JSON.stringify({ id, status: 'finished', started_at: '2099-01-01T00:00:00.000Z', litmus_version: '0', selection: [], configs: { fake: {} }, cases: [], judges: {}, plugins: {} }))
+  writeFileSync(join(dir, 'verdicts.json'), '[{"case": ')
+  assert.match(litmus('list', 'e2e/drift').stdout, /fake: FAIL$/m)
+  const torn = litmus('compare', id, id)
+  assert.equal(torn.status, 2)
+  assert.match(torn.stderr, /verdicts\.json does not parse/)
 })
 
 test('SIGTERM cancels with 143, and a cancelled run\'s JUnit lists what it stopped as skipped', async () => {
   const out = join(ROOT, 'cancelled.xml')
-  const child = spawn(process.execPath, [MAIN, 'run', 'e2e/slow', 'e2e/passes', '--config', 'fake', '--reporter', 'junit', '--out', out], { cwd: ROOT, env: ENV })
-  let stdout = ''
-  child.stdout.on('data', d => {
-    stdout += d
-    if (/^PASS/m.test(stdout)) child.kill('SIGTERM')
-  })
-  assert.equal(await new Promise(ok => child.on('close', ok)), 143)
+  const { code } = await runUntil(['e2e/slow', 'e2e/passes', '--config', 'fake', '--reporter', 'junit', '--out', out], /^PASS/m, c => c.kill('SIGTERM'))
+  assert.equal(code, 143)
   const xml = readFileSync(out, 'utf8')
   assert.match(xml, /<testcase classname="e2e" name="e2e\/slow@fake" time="0.000">\n {6}<skipped message="cancelled before it settled"\/>/)
   assert.match(xml, /skipped="1"/)
@@ -274,3 +287,39 @@ test('a rerun with nothing to do keeps a machine-readable stdout empty', () => {
   const r = litmus('run', '--rerun', id, '--only', 'fail', '--reporter', 'json')
   assert.deepEqual([r.status, r.stdout, r.stderr.trim()], [0, '', `nothing to rerun: run ${id} has no FAIL verdict`])
 })
+
+test('an --out that goes away during the run: the run is kept, and a passing run exits 3, as its live view says', async () => {
+  const dir = join(ROOT, 'vanishing')
+  mkdirSync(dir, { recursive: true })
+  const { code, stdout } = await runUntil(['e2e/slowish', '--config', 'fake', '--out', join(dir, 'x.txt')], 'litmus run ', () => rmSync(dir, { recursive: true }))
+  assert.equal(code, 3)
+  assert.match(stdout, /exit 3\n$/)
+  assert.equal(JSON.parse(readFileSync(join(ROOT, '.litmus/runs', runId(stdout), 'run.json'), 'utf8')).status, 'finished')
+})
+
+test('when the store fails mid-run, the live view says so and exits 3, and the reason is redacted', async () => {
+  // MY_TOKEN is the project directory's name, so any path in the reason must come out redacted.
+  const env = { ...ENV, MY_TOKEN: basename(ROOT) }
+  let runDir = ''
+  // Every directory and file read-only, events.jsonl included: the run.failed
+  // event cannot be stored, and the live view must hear it anyway.
+  const { code, stdout, stderr } = await runUntil(['e2e/slowish', '--config', 'fake'], 'litmus run ', () => {
+    runDir = readdirSync(join(ROOT, '.litmus/runs')).map(d => join(ROOT, '.litmus/runs', d)).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0]!
+    chmodRecursive(runDir, 0o500, 0o400)
+  }, env)
+  chmodRecursive(runDir, 0o700, 0o600)
+  assert.equal(code, 3, stdout)
+  assert.match(stdout, /^litmus failed: .*\[REDACTED\]/m)
+  assert.match(stdout, /exit 3\n$/)
+  assert.match(stderr, /^litmus: the run failed: .*\[REDACTED\]/m)
+  assert.ok(!stdout.includes(basename(ROOT)) && !stderr.includes(basename(ROOT)), `${stdout}\n${stderr}`)
+  assert.ok(!readFileSync(join(runDir, 'events.jsonl'), 'utf8').includes('run.failed'), 'the store could not have written it')
+})
+
+function chmodRecursive(dir: string, dirs: number, files: number): void {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) chmodRecursive(join(dir, e.name), dirs, files)
+    else chmodSync(join(dir, e.name), files)
+  }
+  chmodSync(dir, dirs)
+}

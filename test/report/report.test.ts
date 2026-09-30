@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { Ajv } from 'ajv'
 import type { Comparison, Verdict } from '../../src/core/types.ts'
 import { render } from '../../src/report/documents.ts'
 import { colour, plain, type RunReport } from '../../src/report/format.ts'
@@ -29,7 +32,7 @@ const verdict = (over: Partial<Verdict>): Verdict => ({
 })
 const comparison = (over: Partial<Comparison>): Comparison => ({ a: 'a', b: 'b', cases: 1, excluded: [], notes: [], flips: [], delta: 0, interval: { lo: -0.3, hi: 0.3 }, tolerance: 0.05, verdict: 'INCONCLUSIVE', warns: [], ...over })
 const manifest: RunManifest = { id: '2026-09-30T01-02-03Z-a1b2', status: 'finished', started_at: '2026-09-30T01:02:03.000Z', finished_at: '2026-09-30T01:02:05.000Z', litmus_version: '0', selection: [], configs: {}, cases: [], judges: {}, plugins: {} }
-const report = (over: Partial<RunReport>): RunReport => ({ manifest, verdicts: [], comparisons: [], notes: [], trials: [], gate: { allowFlaky: false, allowInconclusive: false }, exit: 0, ...over })
+const report = (over: Partial<RunReport>): RunReport => ({ manifest, verdicts: [], comparisons: [], notes: [], trials: [], scheduled: [], gate: { allowFlaky: false, allowInconclusive: false }, exit: 0, ...over })
 
 test('the gate: which verdicts block, which are infrastructure, and what the flags let through', () => {
   const strict = { allowFlaky: false, allowInconclusive: false }
@@ -83,4 +86,21 @@ test('JUnit escapes what XML cannot hold, so an odd label never breaks the file'
   assert.ok(xml.includes('name="baseline:&lt;a&amp;&quot;b&quot;&gt; → x&apos;�"'), xml)
   assert.ok(!/[\u0000-\u0008]/.test(xml))
   assert.match(xml, /<testsuites name="litmus" tests="2" failures="1" errors="0" skipped="0">/)
+})
+
+test('a cancelled run lists every pair it stopped as skipped, trial or no trial, in schema-valid CTRF and in JUnit', () => {
+  const cancelled = report({
+    manifest: { ...manifest, status: 'cancelled' },
+    verdicts: [verdict({})],
+    scheduled: ['s/c@fake', 's/d@fake', 't/e@fake'], // d had a trial in flight; e never started one
+    exit: 130,
+  })
+  const ctrf = JSON.parse(render('ctrf', cancelled)) as { results: { tests: { name: string; status: string }[]; summary: Record<string, number> } }
+  const validate = new Ajv({ allErrors: true, validateFormats: false }).compile(JSON.parse(readFileSync(join(import.meta.dirname, '../../src/report/vendor/ctrf.schema.json'), 'utf8')))
+  assert.ok(validate(ctrf), JSON.stringify(validate.errors))
+  assert.deepEqual(ctrf.results.tests.map(t => [t.name, t.status]), [['s/c@fake', 'passed'], ['s/d@fake', 'skipped'], ['t/e@fake', 'skipped']])
+  assert.deepEqual([ctrf.results.summary.tests, ctrf.results.summary.skipped, ctrf.results.summary.suites], [3, 2, 2])
+  const xml = render('junit', cancelled)
+  assert.match(xml, /<testsuites name="litmus" tests="3" failures="0" errors="0" skipped="2">/)
+  assert.match(xml, /<testsuite name="t" tests="1" failures="0" errors="0" skipped="1"/)
 })
