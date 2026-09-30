@@ -73,6 +73,17 @@ test('every workdir is removed after its trial, including one whose executor thr
   assert.deepEqual(workLeft(root, r.id), [])
 })
 
+test('a trial whose workdir will not build, or whose executor throws before writing, keeps the real reason', async () => {
+  const root = project({ ...harness('c', 1), 'suites/e2e/cases/c/change.patch': 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-not what is there\n+y\n' })
+  const r = await run(options(root, { executors: { harness: async job => done(job) } }))
+  const [t] = readTrials(runs(root), r.id)
+  assert.equal(t?.status, 'error')
+  assert.match(t?.reason ?? '', /^case error: .*change\.patch does not apply/)
+  const early = project(harness('d', 1))
+  const e = await run(options(early, { executors: { harness: async () => { throw new ConfigError('bedrock config "b" has no region') } } }))
+  assert.match(readTrials(runs(early), e.id)[0]?.reason ?? '', /^case error: bedrock config "b" has no region$/)
+})
+
 test('an infra error is never graded', async () => {
   const root = project(harness('c', 1))
   const r = await run(options(root, { executors: { harness: async job => ({ ...done(job), exit: 'infra_error', retryable: false, reason: 'auth' }) } }))
