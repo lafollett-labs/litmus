@@ -981,7 +981,7 @@ the cases both of them scored.
 | `<run id>` | That run. It must hold exactly one config |
 | `<run id>:<config>` | That config within that run |
 | `baseline:<name>[:<config>]` | The run stored under that baseline name. Baseline names use the NAME grammar |
-| `config:<name>` | The latest finished run that includes that config (a cancelled or failed run holds only part of its cases; name it by id instead) |
+| `config:<name>` | The latest finished run that includes that config (a cancelled or failed run holds only part of its cases; name it by id instead). "Latest" is by start time to the millisecond, since a run id resolves only to the second |
 
 - `litmus run --config a,b` compares every later config against the first.
 - `litmus run --baseline <name>` compares each config against the config of
@@ -1140,7 +1140,10 @@ Every command takes `--config-file <path>` (default `./litmus.config.yaml`).
 `--config` may be left out only when the config file defines exactly one
 config. `--rerun` runs the configs of the run it reruns, so it takes neither
 `--config` nor selectors, and `--only` needs `--rerun`. A rerun whose `--only`
-set matches no verdict prints so and exits 0.
+set matches no verdict prints so (to stderr, under a machine-readable
+reporter) and exits 0. `baseline set` takes only a finished run: a cancelled
+or failed one holds some of its cases, and would quietly shrink every
+comparison against it.
 
 **Reporters.** `--reporter` picks the document and `--out` picks where it goes
 (stdout by default). stdout shows the live `pretty` view unless a JSON, CTRF
@@ -1156,6 +1159,14 @@ verdict or comparison that decided the exit code, and `exit <n>`.
 | `json` | (none: the manifest, verdicts, comparisons, notes and exit) | |
 | `ctrf` (spec 0.0.0, validated against `src/report/vendor/ctrf.schema.json`) | (case, config) verdict | the gate below decides it: blocking is `failed`, infra is `other`, and anything let through is `passed`, with `flaky: true` for an allowed FLAKY |
 | `junit` | (case, config) verdict, plus one per comparison | blocking is a `<failure>`, infra an `<error>`, and a comparison's REGRESSION a `<failure>` |
+
+A cancelled run's CTRF and JUnit also list each (case, config) it stopped
+before it settled, as skipped, so a cancelled run never reads as a clean one.
+`--out` is checked before anything runs: a directory that does not exist, or
+a path that cannot be written, is exit 2. If the write still fails after the
+run (a full disk), the run is already recorded and `run` exits 3. A reader
+that closes early (`litmus run | head`) stops the output, not the run: it
+finishes, is written, and exits with its real code.
 
 A selector is one of:
 
@@ -1183,7 +1194,7 @@ else exit 0
 ```
 
 A run cancelled by SIGINT exits 130, and by SIGTERM 143; a second signal
-leaves at once. If litmus itself fails mid-run (the store cannot be written),
+leaves at once. Only `run` takes the signals this way. If litmus itself fails mid-run (the store cannot be written),
 the run is marked `failed` and `run` exits 3.
 
 Inside `run`, only a comparison's REGRESSION blocks. Its INCONCLUSIVE and NO
