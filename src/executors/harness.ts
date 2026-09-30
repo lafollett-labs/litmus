@@ -334,9 +334,12 @@ export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | 
   // The walk lstats everything below the root; the root itself is checked here.
   if (lstatSync(dir).isSymbolicLink()) return blocks(`plugin ${dir} is a symlink`, 'name the directory it points at')
   if (!allowHooks) for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return runs(`plugin ${dir} has ${f}`)
+  // Read before the walk refuses links and special files, so every part of
+  // the path is checked the same way: O_NOFOLLOW guards only the last one.
+  const holder = lstatSync(join(dir, '.claude-plugin'), { throwIfNoEntry: false })
+  if (holder && !holder.isDirectory()) return blocks(`plugin ${dir}'s .claude-plugin is not a directory`, 'replace it with the directory itself')
   const manifest = join(dir, '.claude-plugin/plugin.json')
-  if (lstatSync(manifest, { throwIfNoEntry: false })) {
-    // Read before the walk refuses links and special files, so it is read the same way.
+  if (holder && lstatSync(manifest, { throwIfNoEntry: false })) {
     const data = readRegular(manifest)
     if (!data) return blocks(`plugin ${dir}'s plugin.json is not a regular file`, 'replace it with the file itself')
     let m: unknown
@@ -385,12 +388,16 @@ function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => 
       const rel = relative(root, path).split(sep).join('/')
       const st = lstatSync(path)
       if (st.isSymbolicLink()) return blocks(`${who}: ${rel} is a symlink, which could point a component at a file this check never reads`, 'replace the link with the files it points at')
-      // A FIFO or socket named like a component would block whatever reads it.
+      // A FIFO or device named like a component would block whatever reads it.
+      // A socket cannot block (open fails at once), so one is refused only where
+      // a component would be read: git's fsmonitor keeps one in a plugin's .git.
+      const component = /\.md$/i.test(name) && inScope(rel)
+      if (st.isSocket() && !component) continue
       if (!st.isDirectory() && !st.isFile()) return blocks(`${who}: ${rel} is neither a regular file nor a directory`, 'remove it')
       if (st.isDirectory()) {
         const found = visit(path)
         if (found) return found
-      } else if (/\.md$/i.test(name) && inScope(rel)) {
+      } else if (component) {
         const found = frontmatterRunsProcesses(readFileSync(path, 'utf8'), allowHooks)
         if (found) return { ...found, reason: `${who}: ${rel} ${found.reason}` }
       }

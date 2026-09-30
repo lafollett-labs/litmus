@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createServer, type Server } from 'node:net'
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -387,6 +388,35 @@ test('a FIFO in a plugin, as its manifest or as a component, is refused without 
   const asSkill = pluginTree({ 'skills/x/.keep': '' })
   spawnSync('mkfifo', [join(asSkill, 'skills/x/SKILL.md')])
   assert.match((await run(asSkill)).reason ?? '', /skills\/x\/SKILL\.md is neither a regular file nor a directory/)
+  // .claude-plugin itself: a link to a manifest elsewhere, or a plain file, is refused, never read or thrown.
+  const outside = pluginTree({ 'plugin.json': 'not json, and not the plugin\'s' })
+  const viaLink = pluginTree({ 'skills/r/SKILL.md': '---\nname: r\n---\nx' })
+  symlinkSync(outside, join(viaLink, '.claude-plugin'))
+  const asFile = pluginTree({ '.claude-plugin': 'x' })
+  for (const p of [viaLink, asFile]) {
+    const r = await run(p)
+    assert.match(r.reason ?? '', /\.claude-plugin is not a directory/)
+    assert.doesNotMatch(r.reason ?? '', /not the plugin/)
+  }
+})
+
+test('a socket that is not a component (git fsmonitor keeps one in .git) is not refused; one named as a component is', async () => {
+  const plugin = pluginTree({ 'skills/r/SKILL.md': '---\nname: r\n---\nx', '.git/.keep': '' })
+  const listen = (path: string) => new Promise<Server>(ok => { const srv = createServer().listen(path, () => ok(srv)) })
+  const daemon = await listen(join(plugin, '.git/fsmonitor--daemon.ipc'))
+  try {
+    const r = await runHarness(job(HARNESS(`  plugins: [${plugin}]\n`)), scripted([result()]).query)
+    assert.equal(r.exit, 'ok', r.reason ?? '')
+    const named = await listen(join(plugin, 'skills/r/EXTRA.md'))
+    try {
+      const refused = await runHarness(job(HARNESS(`  plugins: [${plugin}]\n`)), scripted([result()]).query)
+      assert.match(refused.reason ?? '', /skills\/r\/EXTRA\.md is neither a regular file nor a directory/)
+    } finally {
+      named.close()
+    }
+  } finally {
+    daemon.close()
+  }
 })
 
 test('a stream that ends quietly after the clock stops is classified by the clock', async () => {

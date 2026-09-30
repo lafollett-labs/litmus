@@ -77,8 +77,8 @@ export async function runModel(job: ExecJob, provider: Provider = createProvider
     }
     return done('ok', { artifacts, usage, ...(r.stop_reason ? { reason: `stop_reason: ${r.stop_reason}` } : {}) })
   } catch (e) {
-    const stopped = byClock()
-    if (stopped) return stopped
+    const byTime = byClock()
+    if (byTime) return byTime
     if (e instanceof InfraError) return done('infra_error', { reason: e.message, retryable: e.retryable })
     throw e
   } finally {

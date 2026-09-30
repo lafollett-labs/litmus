@@ -585,8 +585,9 @@ scrubbed environment and these settings:
     other key is refused either way.
   - `commands`, `agents` and `skills` are a path or a list of paths, and each
     must resolve inside the plugin.
-  - `plugin.json` must be a regular file, and anything in the tree that is
-    neither a regular file nor a directory (a FIFO, a socket) is refused.
+  - `.claude-plugin` must be a directory and `plugin.json` a regular file.
+    A FIFO or device anywhere in the tree is refused, and so is a socket
+    where a component would be read.
   - The plugin may not ship `hooks/hooks.json`, `.mcp.json`, `.lsp.json` or
     `monitors/monitors.json`.
   - It may not be a symlink, or contain one anywhere.
