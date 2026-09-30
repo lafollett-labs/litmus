@@ -7,7 +7,7 @@ type Metrics = Partial<Record<Warn['metric'], number>>
 export type CompareSide = {
   label: string
   verdicts: Verdict[] // one per case: a side is a single config
-  metrics?: Metrics // per-case medians for this side
+  metrics?: Metrics // the per-trial median of each metric over this side's trials: one number per metric
   // Per-case hash of everything that decides scoring: case.yaml, truth,
   // fixture, change, proof, fix, and the grader and extractor hashes. A case
   // whose hash differs between sides is excluded, never compared.
@@ -46,24 +46,31 @@ export function compare(a: CompareSide, b: CompareSide, opts: CompareOptions = {
     // A case whose ground truth, fixture or graders changed measures a
     // different thing on each side; pairing it would blame the model for the
     // edit. It is excluded, and so is its flip.
+    // A hash on one side only is a gap in the record, not proof the case is
+    // unchanged, so it is excluded too rather than trusted.
     const ha = a.hashes?.[id]
     const hb = b.hashes?.[id]
-    if (ha !== undefined && hb !== undefined && ha !== hb) {
-      excluded.push({ case: id, reason: 'the case changed between the two sides' })
+    if (ha !== hb) {
+      excluded.push({ case: id, reason: ha === undefined || hb === undefined ? `the case hash is missing on ${ha === undefined ? a.label : b.label}` : 'the case changed between the two sides' })
       continue
     }
     // A flip into or out of ERROR is still listed: a case that stopped
     // scoring is news, even though it cannot move the suite verdict.
     if (va.verdict !== vb.verdict) flips.push({ case: id, from: va.verdict, to: vb.verdict })
-    if (va.scored === 0 || vb.scored === 0) excluded.push({ case: id, reason: `${va.scored === 0 ? a.label : b.label} scored no trials` })
+    if (va.scored === 0 && vb.scored === 0) excluded.push({ case: id, reason: 'neither side scored any trials' })
+    else if (va.scored === 0 || vb.scored === 0) excluded.push({ case: id, reason: `${va.scored === 0 ? a.label : b.label} scored no trials` })
     else pairs.push([va, vb])
   }
   for (const id of byB.keys()) if (!byA.has(id)) excluded.push({ case: id, reason: `only ${b.label} ran it` })
   excluded.sort((x, y) => (x.case < y.case ? -1 : x.case > y.case ? 1 : 0))
 
+  // By case id, so the interval depends on the seed alone and not on the order
+  // a store happened to write verdicts in. Flips keep A's order.
+  pairs.sort(([x], [y]) => (x.case < y.case ? -1 : x.case > y.case ? 1 : 0))
   const n = pairs.length
   // The observed difference, which is also where the bootstrap centres each
-  // case, so delta always sits inside its own interval.
+  // case. Each draw is clamped to [-1, 1], so at the extremes (every case at
+  // -1) the interval sits just inside delta rather than around it.
   const delta = n === 0 ? null : pairs.reduce((s, [va, vb]) => s + rate(vb) - rate(va), 0) / n
   const interval = n === 0 ? null : bootstrap(pairs, resamples, seed)
   return {
@@ -138,7 +145,7 @@ function smoothedVariance(v: Verdict): number {
   return (p * (1 - p)) / v.scored
 }
 
-function suiteVerdict(ci: Interval | null, tolerance: number): SuiteVerdictKind {
+export function suiteVerdict(ci: Interval | null, tolerance: number): SuiteVerdictKind {
   if (ci === null) return 'INCONCLUSIVE'
   if (ci.hi < -tolerance) return 'REGRESSION'
   if (ci.lo > tolerance) return 'IMPROVEMENT'

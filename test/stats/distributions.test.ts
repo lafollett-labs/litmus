@@ -23,3 +23,13 @@ test('normal draws have mean zero and unit variance', () => {
   near(m.mean, 0, 0.03, 'mean')
   near(m.variance, 1, 0.04, 'variance')
 })
+
+test('normal draws are normal in shape, not just in mean and variance', () => {
+  const { xs, mean, variance } = moments(normal)
+  const sd = Math.sqrt(variance)
+  const skew = xs.reduce((s, x) => s + ((x - mean) / sd) ** 3, 0) / N
+  const kurt = xs.reduce((s, x) => s + ((x - mean) / sd) ** 4, 0) / N
+  near(skew, 0, 0.07, 'skew')
+  near(kurt, 3, 0.14, 'kurtosis')
+  near(xs.filter(x => Math.abs(x) < 1.959963984540054).length / N, 0.95, 0.007, 'P(|Z| < 1.96)')
+})

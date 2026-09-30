@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Verdict } from '../../src/core/types.ts'
-import { compare, type CompareOptions, type CompareSide } from '../../src/stats/compare.ts'
+import { compare, suiteVerdict, type CompareOptions, type CompareSide } from '../../src/stats/compare.ts'
 import { settle, type TrialOutcome } from '../../src/stats/verdict.ts'
 
 const OUTCOME: Record<string, TrialOutcome> = {
@@ -204,4 +204,65 @@ test('a case whose content changed between the sides is excluded with its reason
   assert.deepEqual(c.flips, [])
   assert.equal(c.cases, 1)
   assert.deepEqual(c.notes, ['subject changed'])
+})
+
+// Golden: any change to the draw order, the smoothing, the clamp or the
+// percentile rounding moves these digits.
+test('a seeded mixed comparison reproduces its interval to the last digit', () => {
+  const mixed = (label: string, pat: string) => side(label, Array.from({ length: 6 }, (_, i): [string, string] => [`s/m${i}`, pat.slice(0, 3 + i)]))
+  const c = compare(mixed('a', 'pppppfp'), mixed('b', 'ppfpfpp'))
+  assert.deepEqual(c.interval, { lo: -0.46184214701818194, hi: -0.012881663017730832 })
+})
+
+test('case resampling widens a suite whose cases disagree: three collapses among ten are INCONCLUSIVE, not REGRESSION', () => {
+  const b: [string, string][] = cases(10, p(30)).map(([id], i) => [id, i < 3 ? f(30) : p(30)])
+  const c = compare(side('a', cases(10, p(30))), side('b', b))
+  assert.deepEqual(c.interval, { lo: -0.5946581617154699, hi: -0.010283376438439098 })
+  assert.equal(c.verdict, 'INCONCLUSIVE')
+})
+
+test('each draw is clamped to [-1, 1], so an all-to-nothing collapse sits just inside delta', () => {
+  const c = compare(side('a', cases(30, p(5))), side('b', cases(30, f(5))))
+  assert.equal(c.delta, -1)
+  assert.deepEqual(c.interval, { lo: -0.9638754809971749, hi: -0.8912289887252397 })
+  assert.equal(c.verdict, 'REGRESSION')
+})
+
+test('the NO CHANGE boundary for identical all-pass suites is where the spec says', () => {
+  const at = (n: number, t: number) => compare(side('a', cases(n, p(t))), side('b', cases(n, p(t)))).verdict
+  assert.deepEqual([at(1, 30), at(2, 30)], ['INCONCLUSIVE', 'NO CHANGE'])
+  assert.deepEqual([at(13, 10), at(14, 10)], ['INCONCLUSIVE', 'NO CHANGE'])
+})
+
+test('the interval depends on the seed, not on the order verdicts arrive in', () => {
+  const rows: [string, string][] = cases(12, 'ppppf').map(([id], i) => [id, i % 3 ? p(5) : 'ppfff'])
+  const a = side('a', rows)
+  const b = side('b', cases(12, 'ppppf'))
+  const reversed = { ...a, verdicts: [...a.verdicts].reverse() }
+  assert.deepEqual(compare(reversed, { ...b, verdicts: [...b.verdicts].reverse() }).interval, compare(a, b).interval)
+})
+
+test('a hash on only one side excludes the case rather than trusting it', () => {
+  const a = { ...side('a', [['s/x', p(5)]]), hashes: { 's/x': 'h1' } }
+  const c = compare(a, side('b', [['s/x', f(5)]]))
+  assert.deepEqual(c.excluded, [{ case: 's/x', reason: 'the case hash is missing on b' }])
+  assert.deepEqual(c.flips, [])
+  assert.equal(c.verdict, 'INCONCLUSIVE')
+})
+
+test('a case neither side scored says so', () => {
+  const c = compare(side('a', [['s/x', 'e']]), side('b', [['s/x', 'e']]))
+  assert.deepEqual(c.excluded, [{ case: 's/x', reason: 'neither side scored any trials' }])
+})
+
+test('the suite verdict boundaries are inclusive exactly as the rules say', () => {
+  assert.equal(suiteVerdict({ lo: -0.2, hi: -0.05 }, 0.05), 'INCONCLUSIVE') // hi == -δ is not below it
+  assert.equal(suiteVerdict({ lo: -0.2, hi: -0.0500001 }, 0.05), 'REGRESSION')
+  assert.equal(suiteVerdict({ lo: 0.05, hi: 0.2 }, 0.05), 'INCONCLUSIVE')
+  assert.equal(suiteVerdict({ lo: -0.05, hi: 0.05 }, 0.05), 'NO CHANGE') // both ends inclusive
+})
+
+test('a WARN needs the ratio strictly outside the band', () => {
+  const at = (bTokens: number) => compare(side('a', cases(1, p(5)), { tokens: 100 }), side('b', cases(1, p(5)), { tokens: bTokens })).warns.length
+  assert.deepEqual([at(150), at(100 / 1.5), at(150.01), at(66)], [0, 0, 1, 1])
 })
