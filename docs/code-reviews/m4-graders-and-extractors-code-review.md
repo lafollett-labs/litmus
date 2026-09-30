@@ -1,6 +1,6 @@
 # Code Review: m4-graders-and-extractors
 
-**Verdict:** 🚫 BLOCKED (round 1, locked to `a8b2c30`)
+**Verdict:** ✅ APPROVED (round 2, locked to `e5c5df3`)
 
 | | |
 | - | - |
@@ -56,6 +56,37 @@ PE-Vue probed every claim in a scratch copy. It fuzzed the matching against brut
 | INFO-002 | Matching runs on the event loop and is bugs × findings | Fixed in `cb4db37`: more than 1,000 findings fail the grade |
 
 At `f0c861a`, `npm run check` is clean, and 328 tests pass with 4 (live) skipped.
+
+
+## Review Round 2
+
+| | |
+| - | - |
+| **Review Round** | 2 |
+| **Reviewed SHA** | `e5c5df3` (round-1 fixes: `a8b2c30..e5c5df3`) |
+| **Reviewer** | PE-Vue |
+
+PE-Vue verified all 16 round-1 findings as RESOLVED, with probes. Two of them it checked in depth:
+
+- The load-time bound rule is exact. The truth schema forces a seeded case to have bugs and a clean case to have none, so the only bounds that are always n/a are `min_recall` and `min_claims_correct` on a clean case. Those are the two the rule excludes.
+- 5 MB of command output kept its last line, and 500 MB cost 831 ms.
+
+**✅ APPROVED:** no finding at MEDIUM or above. All four LOWs and INFO-003 were fixed after approval, so Gate 2 reviews them:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-008 | The prompt pins did not cover `MATERIAL_CHARS`, so the cap could change without a version bump | Fixed in `4edcb25`: both pins hash the cap and a clip at the cut. Mutation check: 300,000 with no bump fails both pins |
+| LOW-009 | After a cancel or timeout, the SIGKILLed shell's exit armed a 2 s grace timer that held the process | Fixed in `4a51ed1`: the timer is armed only while the grade is unsettled. The test asserts no Timeout is left, and fails on the old code |
+| LOW-010 | An artifact over the cap, or one that is not a regular file, was reported as "was not produced" | Fixed in `4edcb25`: `unread()` names the cause, and every caller uses it |
+| LOW-011 | A fixed 300 s judge deadline could time out a long, legitimate extraction on every attempt | Fixed in `4a51ed1`: `max(300, max_tokens / 20)` seconds, so an extraction gets 800 s |
+| INFO-003 | The size cap was checked on the path, then read through a separate fd | Fixed in `4edcb25`: `readRegular(path, maxBytes)` checks it with `fstat` on the open file |
+| INFO-004 | Judge and extract usage is returned unpriced | Deferred to M6: the runner prices grader and extract usage with the judge's model |
+
+At `4edcb25`, `npm run check` is clean, and 330 tests pass with 4 (live) skipped.
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `e5c5df3`. The PR opens with the post-approval commits `4a51ed1` and `4edcb25` (LOW and INFO fixes only), and Gate 2 reviews them.
 
 ---
 

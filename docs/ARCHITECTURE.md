@@ -717,8 +717,9 @@ type Grader = (spec: GraderSpec, trial: TrialResult, ctx: GradeContext) => Promi
 }>                                         // throws InfraError when a judge's provider fails
 ```
 
-Every judge, confirm and extract call has its own deadline of 300 s, raced
-against the call as the model executor's is. A call that gives no answer in
+Every judge, confirm and extract call has its own deadline, raced against the
+call as the model executor's is: 300 s, or 1 s per 20 tokens the call may
+write when that is longer. A call that gives no answer in
 time is a retryable `InfraError`. The material sent to a judge or extractor is
 capped at 400,000 characters: past that the head and tail are kept, with a
 marker saying how much of the middle was cut. The cap is part of the prompt
