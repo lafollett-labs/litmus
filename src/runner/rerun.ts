@@ -10,14 +10,30 @@ export function rerunPairs(stored: StoredRun, only: readonly VerdictKind[]): Set
   return new Set(stored.verdicts.filter(v => want.has(v.verdict)).map(v => `${v.case}@${v.config}`))
 }
 
-// A stored run as the baseline side of a comparison: its verdicts, its trial
-// records (for WARN medians) and its case hashes (so a changed case is excluded).
-export function baselineSide(resultsDir: string, id: string, label: string = id): { label: string; verdicts: Verdict[]; records: TrialRecord[]; hashes: Record<string, string> } {
+// What a comparison needs from one side of it: verdicts, the trial records
+// WARN takes medians over, the case hashes that exclude a changed case, and
+// the subject and plugin hashes whose differences become notes.
+export type RunSide = {
+  label: string
+  configs: string[]
+  verdicts: Verdict[]
+  records: TrialRecord[]
+  hashes: Record<string, string>
+  subjects: Record<string, string>
+  plugins: Record<string, string>
+}
+
+// A stored run as the baseline side of a comparison.
+export function baselineSide(resultsDir: string, id: string, label: string = id): RunSide {
   const stored = readRun(resultsDir, id)
+  const { manifest } = stored
   return {
     label,
+    configs: Object.keys(manifest.configs),
     verdicts: stored.verdicts,
     records: readTrials(resultsDir, id),
-    hashes: Object.fromEntries(stored.manifest.cases.map(c => [c.id, c.case_hash])),
+    hashes: Object.fromEntries(manifest.cases.map(c => [c.id, c.case_hash])),
+    subjects: Object.fromEntries(manifest.cases.flatMap(c => (c.subject_hash ? [[c.id, c.subject_hash]] : []))),
+    plugins: manifest.plugins,
   }
 }
