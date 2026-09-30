@@ -140,9 +140,15 @@ At `88845a7`:
 - `npm test` passes 510 of 514, with 4 (live) skipped.
 - `npm run test:ui` passes 13 of 13.
 
+### Found after round 3 (unreviewed; in scope for round 4)
+
+| ID | Finding | Disposition |
+| - | - | - |
+| SELF-001 | `npm ci && npm run check` in a fresh clone exited 127: `check:vue` needs `tools/vue-tsc`, which only a second, separate install provided. Found while running M11's done-criterion | Fixed in `e3d2d9a`. A root `postinstall` runs `npm ci --prefix tools/vue-tsc`, and CI and CONTRIBUTING drop the extra step. In a fresh clone of `m9-ui`, `npm ci` exits 0, `npm run check` exits 0, `npm test` passes 510 with 4 (live) skipped, and `npm run test:ui` passes 13 of 13 |
+
 ## Merge Eligibility (latest)
 
-**Not eligible.** Round 3, the cap, found one MEDIUM. It and every LOW are fixed at `88845a7`, but no reviewer has seen those fixes. Per the workflow, the round cap halts this branch to the operator: a round 4 on `88845a7` needs Cali's go-ahead.
+**Not eligible.** Round 3, the cap, found one MEDIUM. It and every LOW are fixed at `88845a7` (since rebased), as is SELF-001, but no reviewer has seen those fixes. Per the workflow, the round cap halts this branch to the operator: a round 4 on `88845a7` needs Cali's go-ahead.
 
 ---
 
