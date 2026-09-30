@@ -1,8 +1,11 @@
 import { ConfigError } from '../core/errors.ts'
 import type { VerdictKind } from '../core/types.ts'
 import { baselineRun, readRun } from '../store/store.ts'
-import { loadProject, type Config, type LoadedCase } from '../suite/load.ts'
-import { select } from '../suite/select.ts'
+import { bedrockRegion } from '../providers/index.ts'
+import { loadProject, type Config } from '../suite/load.ts'
+import type { ConfigDef, JudgeDef } from '../suite/schema.ts'
+import { select, type Selection } from '../suite/select.ts'
+import { judgesOf } from './case-hash.ts'
 import { baselineSide, rerunPairs } from './rerun.ts'
 import type { RunOptions } from './run.ts'
 
@@ -44,7 +47,7 @@ export function planRun(configFile: string, req: RunRequest, wording: { configs:
   if (req.trials !== undefined && !(Number.isSafeInteger(req.trials) && req.trials > 0)) throw new ConfigError(`trials must be a positive whole number, got ${req.trials}`)
   const baseline = req.baseline === undefined ? undefined : baselineSide(config.resultsDir, baselineRun(config.resultsDir, req.baseline), `baseline:${req.baseline}`)
   const selection = select(suites, selectors, new Set(Object.keys(config.configs)))
-  runnable(config, configs, selection.map(s => s.case), env)
+  runnable(config, configs, selection, only, env)
   return {
     kind: 'run',
     options: {
@@ -60,21 +63,31 @@ export function planRun(configFile: string, req: RunRequest, wording: { configs:
   }
 }
 
-// What would make every trial on a config an error is a config error now,
-// before anything is spent: a bedrock config with no region, and a harness
-// case on a provider the harness cannot use.
+// What would make every trial of a (case, config) pair an error is a config
+// error now, before anything is spent: a bedrock config, or a bedrock judge a
+// case calls, with no region; and a harness case on a provider the harness
+// cannot use. Only the pairs the run would run are checked, as expand() makes
+// them: a trial key pins its own config, and a rerun runs only its pairs.
 const HARNESS_PROVIDERS = ['anthropic', 'bedrock']
-function runnable(config: Config, configs: string[], cases: LoadedCase[], env: NodeJS.ProcessEnv): void {
-  for (const name of configs) {
+function runnable(config: Config, configs: string[], selection: Selection, only: ReadonlySet<string> | undefined, env: NodeJS.ProcessEnv): void {
+  const pairs = selection.flatMap(s => {
+    const names = s.trials ? [...new Set(s.trials.map(t => t.config))] : configs
+    return names.filter(n => !only || only.has(`${s.case.id}@${n}`)).map(name => ({ c: s.case, name }))
+  })
+  const regionless = (def: ConfigDef | JudgeDef) => def.provider === 'bedrock' && bedrockRegion(def, env) === undefined
+  for (const name of new Set(pairs.map(p => p.name))) {
     const def = config.configs[name]
-    if (!def) continue // an unknown name is refused where the run starts
-    if (def.provider === 'bedrock' && !(('region' in def && def.region) || env['AWS_REGION'] || env['AWS_DEFAULT_REGION'])) {
-      throw new ConfigError(`config "${name}" is on bedrock with no region: set region on the config, or AWS_REGION`)
+    if (def && regionless(def)) throw new ConfigError(`config "${name}" is on bedrock with no region: set region on the config, or AWS_REGION`)
+  }
+  for (const { c, name } of pairs) {
+    const def = config.configs[name] // an unknown name is refused where the run starts
+    if (def && c.spec.executor.kind === 'harness' && !HARNESS_PROVIDERS.includes(def.provider)) {
+      throw new ConfigError(`${c.id} is a harness case, which cannot run on config "${name}" (provider ${def.provider}); the harness runs on ${HARNESS_PROVIDERS.join(' or ')}`)
     }
-    const harness = cases.find(c => c.spec.executor.kind === 'harness')
-    if (harness && !HARNESS_PROVIDERS.includes(def.provider)) {
-      throw new ConfigError(`${harness.id} is a harness case, which cannot run on config "${name}" (provider ${def.provider}); the harness runs on ${HARNESS_PROVIDERS.join(' or ')}`)
-    }
+  }
+  for (const j of new Set(pairs.flatMap(p => judgesOf(p.c)))) {
+    const def = config.judges[j]
+    if (def && regionless(def)) throw new ConfigError(`judge "${j}" is on bedrock with no region: set region on the judge, or AWS_REGION`)
   }
 }
 

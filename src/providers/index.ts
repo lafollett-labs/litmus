@@ -10,6 +10,13 @@ import type { Provider } from './types.ts'
 
 export type { CompleteRequest, CompleteResponse, Effort, Provider } from './types.ts'
 
+// A bedrock config's or judge's region: its own, then AWS_REGION, then
+// AWS_DEFAULT_REGION. An empty value counts as unset. One rule for the model
+// executor, the harness and the check made before a run.
+export function bedrockRegion(def: ConfigDef | JudgeDef, env: NodeJS.ProcessEnv): string | undefined {
+  return ('region' in def && def.region) || env['AWS_REGION'] || env['AWS_DEFAULT_REGION'] || undefined
+}
+
 // maxRetries: 0 on every SDK client. The runner owns retries, so it can count
 // attempts, back off, and record each retry as an event; SDK retries hidden
 // underneath would make a flaky provider look like a slow one.
@@ -28,7 +35,7 @@ export function createProvider(def: ConfigDef | JudgeDef, env: NodeJS.ProcessEnv
     case 'bedrock': {
       // Resolved here so a missing region is a config error before any trial,
       // not an SDK error thrown from inside one.
-      const awsRegion = ('region' in def && def.region) || env['AWS_REGION'] || env['AWS_DEFAULT_REGION']
+      const awsRegion = bedrockRegion(def, env)
       if (!awsRegion) throw new ConfigError(`bedrock ${def.model} has no region: set region on the config, or AWS_REGION`)
       return messagesProvider('bedrock', streamingSend(new AnthropicBedrockMantle({ maxRetries: 0, awsRegion, ...transport })))
     }
