@@ -6,6 +6,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 const row = (page: Page, id: string) => page.locator(`li[data-id="${id}"]`)
 const done = (page: Page, state: string) => expect(page.locator('.runline')).toHaveAttribute('data-done', state, { timeout: 15_000 })
+// Kept for the PR and the README: docs/images/ui-<name>.png is copied from here by hand.
 const shot = (page: Page, name: string) => page.screenshot({ path: `test-results/screenshots/${name}.png` })
 
 async function open(page: Page) {
@@ -132,5 +133,6 @@ test('the dark theme applies and survives a reload', async ({ page }) => {
   await done(page, 'finished')
   await expand(page, 'smoke/passes', 'smoke/passes@fake')
   await row(page, 'smoke/passes@fake#1').click()
+  await expect(page.getByLabel('Transcript')).toContainText('LGTM, ship it')
   await shot(page, 'dark')
 })

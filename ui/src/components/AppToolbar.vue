@@ -25,7 +25,7 @@ const pick = (name: string, on: boolean) => {
     </fieldset>
     <label class="trials">
       <span class="muted">trials</span>
-      <input v-model="state.trials" inputmode="numeric" placeholder="case's own" aria-label="trials" size="8" />
+      <input v-model="state.trials" inputmode="numeric" placeholder="per case" aria-label="trials" size="7" />
     </label>
   </div>
 </template>
