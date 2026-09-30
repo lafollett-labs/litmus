@@ -1,0 +1,12 @@
+name: ts-range-merge
+description: A merge helper whose change to overlaps() makes inclusive ranges that touch read as disjoint
+executor:
+  kind: model
+  prompt_file: prompt.md
+graders:
+  - kind: json-schema
+    artifact: findings.json
+    schema: litmus:findings
+  - kind: review-match
+    pass: { min_recall: 1.0, max_false_positives: 1 }
+tags: [typescript]

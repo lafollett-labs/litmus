@@ -1,0 +1,1 @@
+responses: [{ text: "5", usage: { input_tokens: 20, output_tokens: 1 } }]

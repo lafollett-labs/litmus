@@ -1,0 +1,23 @@
+kind: seeded
+bugs:
+  - id: expiry-off-by-one
+    file: internal/auth/token.go
+    lines: [23, 25]
+    severity: high
+    category: correctness
+    summary: A token is still accepted during its expiry second (<= where < belongs)
+    proof: go test ./internal/auth -run TestExpiryBoundary
+    fix: fix/expiry-off-by-one.patch
+  - id: scope-prefix
+    file: internal/auth/token.go
+    lines: [29, 33]
+    severity: critical
+    category: security
+    summary: HasPrefix has its arguments reversed, so a narrower grant ("repo:read") satisfies a broader check ("repo"), and so does any scope sharing a prefix ("repository")
+    proof: go test ./internal/auth -run TestScopeHierarchy
+    fix: fix/scope-prefix.patch
+decoys:
+  - id: length-check-first
+    file: internal/auth/token.go
+    lines: [48, 50]
+    summary: Rejecting a signature of the wrong length before the constant-time compare leaks nothing; the length of a hex SHA-256 is public

@@ -1,0 +1,12 @@
+name: go-token-expiry
+description: A refactor of token checks that lets a token live one second too long and lets a narrower scope pass a broader check. Flagging the early length check is a decoy hit
+executor:
+  kind: model
+  prompt_file: prompt.md
+graders:
+  - kind: json-schema
+    artifact: findings.json
+    schema: litmus:findings
+  - kind: review-match
+    pass: { min_recall: 1.0, max_false_positives: 1, max_decoy_hits: 0 }
+tags: [go, security]

@@ -1,0 +1,12 @@
+diff --git a/internal/auth/token.go b/internal/auth/token.go
+--- a/internal/auth/token.go
++++ b/internal/auth/token.go
+@@ -21,7 +21,7 @@ type Token struct {
+ 
+ // Valid reports whether the token is still live at now.
+ func (t Token) Valid(now time.Time) bool {
+-	return now.Unix() <= t.ExpiresAt
++	return now.Unix() < t.ExpiresAt
+ }
+ 
+ // HasScope reports whether the token grants want. Scopes are hierarchical:

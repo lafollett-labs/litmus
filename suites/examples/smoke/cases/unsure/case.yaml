@@ -1,0 +1,7 @@
+name: unsure
+description: Five passes cannot show a pass rate of at least 0.8 with 95% confidence. INCONCLUSIVE, and validate warns
+executor: { kind: model, prompt: "What is 2 + 2? Answer with the number only." }
+graders: [{ kind: regex, target: response.txt, pattern: "^\\s*4\\s*$" }]
+policy: rate
+threshold: 0.8
+trials: 5

@@ -1,0 +1,6 @@
+kind: clean
+decoys:
+  - id: single-hyphen-trim
+    file: src/slug.ts
+    lines: [7, 7]
+    summary: /^-|-$/ trims one hyphen per end, which is enough; the replace before it has already collapsed every run of hyphens into one

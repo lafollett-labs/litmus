@@ -1,0 +1,16 @@
+Review this change to a Go package. Report every bug the change introduces:
+correctness and security problems, not style.
+
+The package before the change:
+
+{{fixture}}
+
+The change:
+
+{{diff}}
+
+Answer with JSON only, in this shape, and nothing else:
+
+{"findings": [{"file": "<path>", "line": <first line, in the changed file>, "end_line": <last line>, "severity": "critical|high|medium|low|info", "title": "<one line>", "explanation": "<why it is wrong>"}]}
+
+An empty list means you found nothing wrong.

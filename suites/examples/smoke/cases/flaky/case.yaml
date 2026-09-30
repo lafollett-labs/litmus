@@ -1,0 +1,5 @@
+name: flaky
+description: Trials alternate between 4 and 5. FLAKY
+executor: { kind: model, prompt: "What is 2 + 2? Answer with the number only." }
+graders: [{ kind: regex, target: response.txt, pattern: "^\\s*4\\s*$" }]
+trials: 4

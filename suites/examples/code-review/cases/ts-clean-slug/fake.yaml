@@ -1,0 +1,4 @@
+# A review that finds nothing wrong with a correct change: PASS on the fake config.
+responses:
+  - text: '{"findings": []}'
+    usage: { input_tokens: 540, output_tokens: 10 }

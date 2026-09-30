@@ -1,0 +1,18 @@
+# This repository's own config: the example suites, the fake provider for $0
+# runs, and one real config for a live run (the key comes from the environment).
+suites:
+  - ./suites/examples
+results: ./.litmus/runs
+concurrency: 4
+retries: 2
+
+configs:
+  fake:
+    provider: fake
+  sonnet-5:
+    provider: anthropic
+    model: claude-sonnet-5
+    effort: medium
+
+pricing:
+  claude-sonnet-5: { input: 3, output: 15 }
