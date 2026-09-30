@@ -1,7 +1,7 @@
 import { ConfigError } from '../core/errors.ts'
 import type { VerdictKind } from '../core/types.ts'
 import { baselineRun, readRun } from '../store/store.ts'
-import { loadProject } from '../suite/load.ts'
+import { loadProject, type Config, type LoadedCase } from '../suite/load.ts'
 import { select } from '../suite/select.ts'
 import { baselineSide, rerunPairs } from './rerun.ts'
 import type { RunOptions } from './run.ts'
@@ -43,11 +43,13 @@ export function planRun(configFile: string, req: RunRequest, wording: { configs:
   }
   if (req.trials !== undefined && !(Number.isSafeInteger(req.trials) && req.trials > 0)) throw new ConfigError(`trials must be a positive whole number, got ${req.trials}`)
   const baseline = req.baseline === undefined ? undefined : baselineSide(config.resultsDir, baselineRun(config.resultsDir, req.baseline), `baseline:${req.baseline}`)
+  const selection = select(suites, selectors, new Set(Object.keys(config.configs)))
+  runnable(config, configs, selection.map(s => s.case), env)
   return {
     kind: 'run',
     options: {
       config,
-      selection: select(suites, selectors, new Set(Object.keys(config.configs))),
+      selection,
       configs,
       selectors,
       ...(req.trials === undefined ? {} : { trials: req.trials }),
@@ -55,6 +57,24 @@ export function planRun(configFile: string, req: RunRequest, wording: { configs:
       ...(parent ? { parent } : {}),
       ...(baseline ? { baseline } : {}),
     },
+  }
+}
+
+// What would make every trial on a config an error is a config error now,
+// before anything is spent: a bedrock config with no region, and a harness
+// case on a provider the harness cannot use.
+const HARNESS_PROVIDERS = ['anthropic', 'bedrock']
+function runnable(config: Config, configs: string[], cases: LoadedCase[], env: NodeJS.ProcessEnv): void {
+  for (const name of configs) {
+    const def = config.configs[name]
+    if (!def) continue // an unknown name is refused where the run starts
+    if (def.provider === 'bedrock' && !(('region' in def && def.region) || env['AWS_REGION'] || env['AWS_DEFAULT_REGION'])) {
+      throw new ConfigError(`config "${name}" is on bedrock with no region: set region on the config, or AWS_REGION`)
+    }
+    const harness = cases.find(c => c.spec.executor.kind === 'harness')
+    if (harness && !HARNESS_PROVIDERS.includes(def.provider)) {
+      throw new ConfigError(`${harness.id} is a harness case, which cannot run on config "${name}" (provider ${def.provider}); the harness runs on ${HARNESS_PROVIDERS.join(' or ')}`)
+    }
   }
 }
 
