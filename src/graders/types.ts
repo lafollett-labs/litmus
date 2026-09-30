@@ -1,4 +1,4 @@
-import type { ExecutorResult, GraderResult } from '../core/types.ts'
+import type { ExecutorResult, GraderResult, Usage } from '../core/types.ts'
 import type { Provider } from '../providers/index.ts'
 import type { LoadedCase } from '../suite/load.ts'
 import type { Grader as GraderSpec, JudgeDef } from '../suite/schema.ts'
@@ -30,5 +30,6 @@ export type Grader<K extends GraderSpec['kind'] = GraderSpec['kind']> = (
 export type GradeAll = (trial: TrialResult, ctx: GradeContext) => Promise<GraderResult[]>
 
 // Runs a case's `extract` step, if any: writes the target artifact and
-// returns the trial with it added, plus the extractor's hash for trial.json.
-export type RunExtract = (trial: TrialResult, ctx: GradeContext) => Promise<{ trial: TrialResult; extractor_hash?: string }>
+// returns the trial with it added, the extractor's hash for trial.json, and
+// what the extractor call spent.
+export type RunExtract = (trial: TrialResult, ctx: GradeContext) => Promise<{ trial: TrialResult; extractor_hash?: string; usage?: Usage }>

@@ -10,7 +10,7 @@ const ask = (target = 'final_message.txt') => spec({ kind: 'judge', judge: 'defa
 test('the judge sees the question and the target, and its yes is a pass', async () => {
   const p = stub([verdict(true, 'it names the >= comparison')])
   const r = await judge(ask(), trial({ artifacts: { 'final_message.txt': 'The expiry check uses >=.' } }), ctx(undefined, { default: judgeOf(p) }))
-  assert.deepEqual(r, { grader: 'judge', pass: true, rationale: 'it names the >= comparison' })
+  assert.deepEqual(r, { grader: 'judge', pass: true, rationale: 'it names the >= comparison', usage: { input_tokens: 1, output_tokens: 1 } })
   const sent = p.calls[0]?.messages[0]?.content ?? ''
   assert.match(sent, /Question: Does the review mention the expiry bug\?/)
   assert.match(sent, /<material source="final_message.txt">\nThe expiry check uses >=\.\n<\/material>/)

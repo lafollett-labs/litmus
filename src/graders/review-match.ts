@@ -1,8 +1,9 @@
 import { realpathSync } from 'node:fs'
 import { ConfigError } from '../core/errors.ts'
+import type { Usage } from '../core/types.ts'
 import { Findings, type Finding, type Grader as GraderSpec, type TruthFile } from '../suite/schema.ts'
 import { normPath, readArtifact } from './common.ts'
-import { askJudge } from './judges.ts'
+import { askJudge, sumUsage } from './judges.ts'
 import { optimalMatching, type Candidate } from './matching.ts'
 import { confirmRequest } from './prompts.ts'
 import type { Grader, TrialResult } from './types.ts'
@@ -155,11 +156,13 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
 
   let confirmed: number | undefined
   const unconfirmed: string[] = []
+  const spent: Usage[] = []
   if (judge) {
     confirmed = 0
     for (const p of s.pairs) {
       const bug = truth.bugs[p.bug]!
       const v = await askJudge(judge, confirmRequest(bug, findings[p.finding]!), ctx.signal)
+      spent.push(v.usage)
       if (v.pass) confirmed++
       else unconfirmed.push(`unconfirmed: ${bug.id}: ${v.rationale}`)
     }
@@ -179,7 +182,7 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
   lines.push(...unconfirmed)
   for (const f of failed) lines.push(`failed: ${f}`)
   lines.push(...na)
-  return { grader: 'review-match', pass: !('error' in read) && failed.length === 0, metrics: m, rationale: lines.join('\n') }
+  return { grader: 'review-match', pass: !('error' in read) && failed.length === 0, metrics: m, rationale: lines.join('\n'), ...(spent.length ? { usage: sumUsage(spent) } : {}) }
 }
 
 function readFindings(trial: TrialResult, name: string): { findings: Finding[] } | { error: string } {

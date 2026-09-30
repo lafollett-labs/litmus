@@ -18,5 +18,5 @@ export const judge: Grader<'judge'> = async (spec, trial, ctx) => {
     material = art.text
   }
   const v = await askJudge(j, judgeRequest(spec.question, spec.target, material), ctx.signal)
-  return { grader: 'judge', pass: v.pass, rationale: v.rationale }
+  return { grader: 'judge', pass: v.pass, rationale: v.rationale, usage: v.usage }
 }

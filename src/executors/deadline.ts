@@ -26,3 +26,15 @@ export function deadline(cancel: AbortSignal, timeoutMs: number): { signal: Abor
     },
   }
 }
+
+// The call, or the clock if it fires first: a provider that ignores its signal
+// and never settles would otherwise outlast every deadline. A call that loses
+// the race may still reject later, so its rejection is observed here.
+export function raced<T>(call: Promise<T>, signal: AbortSignal): Promise<T> {
+  call.catch(() => {})
+  const stopped = new Promise<never>((_ok, fail) => {
+    if (signal.aborted) fail(signal.reason)
+    else signal.addEventListener('abort', () => fail(signal.reason), { once: true })
+  })
+  return Promise.race([call, stopped])
+}

@@ -31,13 +31,14 @@ export const runExtract: RunExtract = async (trial, ctx) => {
   if (!source) return { trial: without, extractor_hash }
 
   const reply = await ask(judge, EXTRACT_SYSTEM, extractRequest(source.text), EXTRACT_MAX_TOKENS, ctx.signal)
-  const parsed = Findings.safeParse(extractJson(reply))
-  if (!parsed.success) return { trial: without, extractor_hash }
+  const usage = reply.usage
+  const parsed = Findings.safeParse(extractJson(reply.text))
+  if (!parsed.success) return { trial: without, extractor_hash, usage }
 
   const path = join(artifactsDir(trial), to)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, `${JSON.stringify(parsed.data, null, 2)}\n`)
-  return { trial: { ...trial, artifacts: { ...artifacts, [to]: path } }, extractor_hash }
+  return { trial: { ...trial, artifacts: { ...artifacts, [to]: path } }, extractor_hash, usage }
 }
 
 // The directory the executor wrote artifacts into, recovered from any

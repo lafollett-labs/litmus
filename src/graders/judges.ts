@@ -1,5 +1,7 @@
 import { z } from 'zod'
-import { ConfigError } from '../core/errors.ts'
+import { ConfigError, InfraError } from '../core/errors.ts'
+import type { Usage } from '../core/types.ts'
+import { deadline, raced } from '../executors/deadline.ts'
 import { hashJson } from '../core/hash.ts'
 import { extractJson } from '../executors/render.ts'
 import { createProvider, type Provider } from '../providers/index.ts'
@@ -34,22 +36,45 @@ export function makeJudges(defs: Record<string, JudgeDef>, providerFor: (def: Ju
 }
 
 // A provider failure is an InfraError and propagates: the runner retries the
-// grading. Only the model's answer is interpreted here.
-export async function ask(judge: Judge, system: string, user: string, maxTokens: number, signal: AbortSignal): Promise<string> {
-  const r = await judge.provider.complete({
-    model: judge.def.model,
-    system,
-    messages: [{ role: 'user', content: user }],
-    max_tokens: maxTokens,
-    ...('effort' in judge.def && judge.def.effort ? { effort: judge.def.effort } : {}),
-    ...('params' in judge.def && judge.def.params ? { params: judge.def.params } : {}),
-    signal,
-  })
-  return r.text
+// grading. Only the model's answer is interpreted here. Every call has its own
+// deadline, as the model executor's does: a judge whose provider never settles
+// would otherwise hold the trial in grading until the run is cancelled.
+export const JUDGE_TIMEOUT_S = 300
+
+export async function ask(judge: Judge, system: string, user: string, maxTokens: number, signal: AbortSignal): Promise<{ text: string; usage: Usage }> {
+  const clock = deadline(signal, JUDGE_TIMEOUT_S * 1000)
+  try {
+    const r = await raced(
+      judge.provider.complete({
+        model: judge.def.model,
+        system,
+        messages: [{ role: 'user', content: user }],
+        max_tokens: maxTokens,
+        ...('effort' in judge.def && judge.def.effort ? { effort: judge.def.effort } : {}),
+        ...('params' in judge.def && judge.def.params ? { params: judge.def.params } : {}),
+        signal: clock.signal,
+      }),
+      clock.signal,
+    )
+    if (clock.stopped()) throw new Error('answered after the clock stopped') // classified below, never accepted
+    return { text: r.text, usage: r.usage }
+  } catch (e) {
+    if (clock.stopped() === 'timeout') throw new InfraError(`judge "${judge.name}" gave no answer within ${JUDGE_TIMEOUT_S}s`, { retryable: true })
+    throw e // a cancel, or the provider's own InfraError
+  } finally {
+    clock.clear()
+  }
 }
 
-export async function askJudge(judge: Judge, user: string, signal: AbortSignal): Promise<{ pass: boolean; rationale: string }> {
-  return parseVerdict(await ask(judge, JUDGE_SYSTEM, user, JUDGE_MAX_TOKENS, signal))
+export async function askJudge(judge: Judge, user: string, signal: AbortSignal): Promise<{ pass: boolean; rationale: string; usage: Usage }> {
+  const r = await ask(judge, JUDGE_SYSTEM, user, JUDGE_MAX_TOKENS, signal)
+  return { ...parseVerdict(r.text), usage: r.usage }
+}
+
+// Tokens and cost across several judge calls; cost only when every call reported one.
+export function sumUsage(all: Usage[]): Usage {
+  const cost = all.every(u => u.cost_usd !== undefined) && all.length ? all.reduce((n, u) => n + u.cost_usd!, 0) : undefined
+  return { input_tokens: all.reduce((n, u) => n + u.input_tokens, 0), output_tokens: all.reduce((n, u) => n + u.output_tokens, 0), ...(cost === undefined ? {} : { cost_usd: cost }) }
 }
 
 const Verdict = z.object({ pass: z.boolean(), rationale: z.string() })

@@ -1,7 +1,8 @@
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
-import { askJudge, judgeHash, makeJudges, parseVerdict } from '../../src/graders/judges.ts'
+import { askJudge, JUDGE_TIMEOUT_S, judgeHash, makeJudges, parseVerdict } from '../../src/graders/judges.ts'
+import type { Provider } from '../../src/providers/index.ts'
 import type { JudgeDef } from '../../src/suite/schema.ts'
 import { judgeOf, stub, verdict } from '../helpers/grading.ts'
 
@@ -38,7 +39,7 @@ test('an unknown judge name is a config error, including names every object inhe
 test('the pinned model, effort and params go to the provider', async () => {
   const p = stub([verdict(true, 'yes')])
   const j = { ...judgeOf(p), def }
-  assert.deepEqual(await askJudge(j, 'Question: ok?', new AbortController().signal), { pass: true, rationale: 'yes' })
+  assert.deepEqual(await askJudge(j, 'Question: ok?', new AbortController().signal), { pass: true, rationale: 'yes', usage: { input_tokens: 1, output_tokens: 1 } })
   assert.equal(p.calls[0]?.model, 'claude-haiku-4-5')
   assert.equal(p.calls[0]?.effort, 'low')
   assert.deepEqual(p.calls[0]?.params, { temperature: 0, top_k: 5 })
@@ -60,4 +61,25 @@ test('canary: a garbage, half-formed or string-typed verdict is a no', () => {
 test('a provider failure propagates as the InfraError it is', async () => {
   const j = judgeOf(stub([new InfraError('529 overloaded')]))
   await assert.rejects(askJudge(j, 'Q', new AbortController().signal), InfraError)
+})
+
+test('a judge whose provider never settles times out as a retryable infra error, and a cancel is not a timeout', { timeout: 10_000 }, async () => {
+  const stuck: Provider = { id: 'fake', complete: () => new Promise(() => {}) }
+  const j = judgeOf(stuck)
+  const t0 = Date.now()
+  mock.timers.enable({ apis: ['setTimeout'] })
+  const pending = askJudge(j, 'q', new AbortController().signal)
+  mock.timers.tick(JUDGE_TIMEOUT_S * 1000)
+  await assert.rejects(pending, (e: Error) => e instanceof InfraError && e.retryable && /no answer within 300s/.test(e.message))
+  mock.timers.reset()
+  const ctl = new AbortController()
+  const cancelled = askJudge(j, 'q', ctl.signal)
+  ctl.abort(new Error('cancelled'))
+  await assert.rejects(cancelled, (e: Error) => !(e instanceof InfraError))
+  assert.ok(Date.now() - t0 < 2000)
+})
+
+test('a judge reports what its call spent', async () => {
+  const v = await askJudge(judgeOf(stub([verdict(true)])), 'q', new AbortController().signal)
+  assert.deepEqual(v.usage, { input_tokens: 1, output_tokens: 1 })
 })
