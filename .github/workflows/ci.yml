@@ -36,3 +36,28 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+
+  # The UI end to end: the built UI against `litmus serve` over the fake
+  # suites in Chromium. Named by its id for the ruleset, like `check`.
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
