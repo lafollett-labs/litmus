@@ -78,7 +78,9 @@ A scrubbed environment keeps keys out of reach of casual reads. **It does not
 contain a hostile process**, which can still read any file you can read. A
 shell command, hook or MCP server started by the harness is the harness's
 child, so it also holds the harness's credential: under `allow_shell`,
-`echo $ANTHROPIC_API_KEY` works. Until
+`echo $ANTHROPIC_API_KEY` works. A Bedrock harness run with `AWS_PROFILE`
+points at your real AWS config and credentials files, so under `allow_shell` a
+subject can read every profile in them. Until
 the container executor lands (see "After 0.1.0" in the plan), run the four
 uncontained paths only on a machine you are willing to lose, and only for
 suites whose authors you trust.

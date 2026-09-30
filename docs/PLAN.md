@@ -75,7 +75,7 @@ stay on the branch, and their messages go into the squash commit's body.
     run under `LITMUS_LIVE=1` wherever a key is present, and the PR says which
     ones ran.
 
-- [ ] **M3: Sandbox and executors**
+- [x] **M3: Sandbox and executors**
   - `src/sandbox`:
     - the workdir builder, under the OS temp directory, fresh on every attempt
     - symlinks refused before and after the change is applied
@@ -91,7 +91,7 @@ stay on the branch, and their messages go into the squash commit's body.
     - hooks refused without `allow_hooks`
     - the default-deny gate, confining paths by realpath
     - API-key or Bedrock credentials only
-    - transcript capture, and usage taken from the result message
+    - transcript capture, and usage summed over `modelUsage`, subagents included
     - timeout and cancel told apart by abort reason
   - Done when: tests prove each of the following.
     - Truth, proof, fix and fake files never reach a workdir.

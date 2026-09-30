@@ -2,10 +2,11 @@ import { lstatSync, readFileSync, readdirSync, realpathSync, statSync, type Stat
 import { basename, dirname, join, resolve } from 'node:path'
 import { parse } from 'yaml'
 import type { z } from 'zod'
-import { CREDENTIAL_KEY, CREDENTIAL_VARS } from '../core/credentials.ts'
+import { CREDENTIAL_KEY } from '../core/credentials.ts'
 import { ConfigError } from '../core/errors.ts'
 import { sha256 } from '../core/hash.ts'
 import { caseId } from '../core/ids.ts'
+import { secretValues } from '../core/redact.ts'
 import { BUILTIN_SCHEMAS, CaseFile, ConfigFile, SuiteFile, TruthFile } from './schema.ts'
 import { hashTree } from './tree.ts'
 
@@ -60,7 +61,7 @@ export function loadConfig(file: string, env: NodeJS.ProcessEnv = process.env): 
   const path = resolve(file)
   if (!stat(path)?.isFile()) throw new ConfigError(`no config at ${path} (pass --config-file, or create litmus.config.yaml)`)
   const spec = parseFile(path, ConfigFile)
-  const secrets = new Set([...CREDENTIAL_VARS, ...spec.redact].map(n => env[n]).filter(v => typeof v === 'string' && v !== ''))
+  const secrets = new Set(secretValues(spec.redact, env))
   for (const [section, defs] of Object.entries({ configs: spec.configs, judges: spec.judges })) {
     for (const [name, def] of Object.entries(defs)) {
       if ('params' in def && def.params) refuseCredentials(def.params, `${section}.${name}.params`, secrets, path)
