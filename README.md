@@ -20,6 +20,32 @@ cases flipped.
 > milestone — [docs/PLAN.md](docs/PLAN.md) says what exists and what is next.
 > Anything below that the plan has not reached yet is described as intent.
 
+## Quickstart
+
+You need Node 26 or later. `nvm use` reads it from `.nvmrc`. Go is needed only
+for `validate`, which runs the Go example's proofs. Nothing below calls a
+model or costs anything: the `fake` config plays back scripted responses.
+
+```bash
+git clone https://github.com/lafollett-labs/litmus.git
+cd litmus
+nvm use
+npm ci
+alias litmus="node $PWD/src/cli/main.ts"
+
+litmus list                            # the example suites: smoke, canaries, code-review
+litmus run smoke --config fake         # every verdict, from scripted replies; exits 1, since FAIL, FLAKY, ERROR and INCONCLUSIVE block
+litmus run code-review --config fake   # seeded-bug review; one case is FLAKY by design, so it exits 1 too
+litmus validate                        # each case is valid; each seeded bug's proof fails before its fix and passes after
+npm run ui:build
+litmus serve                           # the runner UI at http://127.0.0.1:4317; Ctrl-C stops it
+```
+
+Runs are written to `.litmus/runs/`. To try a real model, put
+`ANTHROPIC_API_KEY` in your environment and run with `--config sonnet-5`. That
+config is defined in `litmus.config.yaml`, and a run with it costs real tokens.
+Keys are read only from the environment, never from a file.
+
 ## What it does
 
 - **Runs everything, a selection or a single case.** A suite is a tree: suite →
