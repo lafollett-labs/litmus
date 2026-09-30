@@ -897,15 +897,25 @@ the cases both of them scored.
   unequal trial counts unbiased. A posterior mean pulls 1/1 to 0.75 and 5/5 to
   0.92, so two sides that never failed would read as a confident regression.
 
-  NO CHANGE takes real evidence. Two identical all-pass sides reach it at
-  δ = 0.05 with about 20 cases × 30 trials, or 200 cases × 10. Smaller suites
-  come out INCONCLUSIVE, which is why `run` treats a comparison's
-  INCONCLUSIVE as information rather than a failure (see CLI).
+  NO CHANGE takes evidence from trials. Both sides run the same cases, so when
+  every case agrees, the case level adds no spread and only trial noise is
+  left. At δ = 0.05 and seed 1, two identical all-pass sides reach NO CHANGE
+  from 2 cases × 30 trials, 14 × 10, 50 × 5 or 112 × 3. Smaller suites come out
+  INCONCLUSIVE, which is why `run` treats a comparison's INCONCLUSIVE as
+  information rather than a failure (see CLI). Each draw is clamped to
+  [-1, 1], so at the extremes the interval sits just inside `delta` rather than
+  around it.
+
+  Pairs are ordered by case id before resampling, so the interval depends on
+  the seed alone. A case is excluded, and never flips, when its hash differs
+  between the sides or is missing on one of them, or when only one side ran
+  it. A case one side could not score is excluded from the interval but still
+  flips, since a case that stopped scoring is news.
 
 - **WARN.** Raised for a metric when the ratio of B's per-trial median to A's
   falls outside [1/`warn_ratio`, `warn_ratio`]. The metrics are total tokens,
   cost, wall-clock time, tool calls, and findings. A metric is skipped when
-  A's median is 0 or missing. A WARN never changes an exit code.
+  A's median is 0 or missing, or B's is missing. A WARN never changes an exit code.
 
 ### Addressing runs and comparisons
 
