@@ -80,7 +80,7 @@ export const command: Grader<'command'> = (spec, trial, ctx) =>
     child.on('exit', (code, signal) => {
       exited = { code, signal }
       killGroup()
-      grace = setTimeout(() => finish(fromExit()), GRACE_MS)
+      if (!settled) grace = setTimeout(() => finish(fromExit()), GRACE_MS) // a cancel or timeout already settled it
     })
     child.on('close', () => exited && finish(fromExit()))
   })

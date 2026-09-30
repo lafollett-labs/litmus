@@ -39,10 +39,14 @@ export function makeJudges(defs: Record<string, JudgeDef>, providerFor: (def: Ju
 // grading. Only the model's answer is interpreted here. Every call has its own
 // deadline, as the model executor's does: a judge whose provider never settles
 // would otherwise hold the trial in grading until the run is cancelled.
+// The floor; a call that may write more is given 1 s per 20 tokens it may
+// write, so a long extraction on a slow model is not a timeout every attempt.
 export const JUDGE_TIMEOUT_S = 300
+export const judgeTimeoutS = (maxTokens: number): number => Math.max(JUDGE_TIMEOUT_S, Math.ceil(maxTokens / 20))
 
 export async function ask(judge: Judge, system: string, user: string, maxTokens: number, signal: AbortSignal): Promise<{ text: string; usage: Usage }> {
-  const clock = deadline(signal, JUDGE_TIMEOUT_S * 1000)
+  const limit = judgeTimeoutS(maxTokens)
+  const clock = deadline(signal, limit * 1000)
   try {
     const r = await raced(
       judge.provider.complete({
@@ -59,7 +63,7 @@ export async function ask(judge: Judge, system: string, user: string, maxTokens:
     if (clock.stopped()) throw new Error('answered after the clock stopped') // classified below, never accepted
     return { text: r.text, usage: r.usage }
   } catch (e) {
-    if (clock.stopped() === 'timeout') throw new InfraError(`judge "${judge.name}" gave no answer within ${JUDGE_TIMEOUT_S}s`, { retryable: true })
+    if (clock.stopped() === 'timeout') throw new InfraError(`judge "${judge.name}" gave no answer within ${limit}s`, { retryable: true })
     throw e // a cancel, or the provider's own InfraError
   } finally {
     clock.clear()

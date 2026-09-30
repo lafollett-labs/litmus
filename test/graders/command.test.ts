@@ -81,3 +81,12 @@ test('a process that escaped the group with setsid does not hold the grade to it
   assert.match(r.rationale ?? '', /started/)
   assert.ok(Date.now() - t0 < 6000, `took ${Date.now() - t0}ms`)
 })
+
+test('a cancelled grade leaves no grace timer holding the process', async () => {
+  const ctl = new AbortController()
+  const pending = command(spec({ kind: 'command', run: 'sleep 5' }), trial(), { ...ctx(), signal: ctl.signal })
+  setTimeout(() => ctl.abort(), 50)
+  assert.equal((await pending).rationale, 'cancelled')
+  await new Promise(ok => setTimeout(ok, 100)) // the SIGKILLed shell's exit arrives
+  assert.equal(process.getActiveResourcesInfo().filter(r => r === 'Timeout').length, 0)
+})

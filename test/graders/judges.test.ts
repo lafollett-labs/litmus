@@ -1,7 +1,7 @@
 import { mock, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
-import { askJudge, JUDGE_TIMEOUT_S, judgeHash, makeJudges, parseVerdict } from '../../src/graders/judges.ts'
+import { askJudge, JUDGE_TIMEOUT_S, judgeHash, judgeTimeoutS, makeJudges, parseVerdict } from '../../src/graders/judges.ts'
 import type { Provider } from '../../src/providers/index.ts'
 import type { JudgeDef } from '../../src/suite/schema.ts'
 import { judgeOf, stub, verdict } from '../helpers/grading.ts'
@@ -82,4 +82,9 @@ test('a judge whose provider never settles times out as a retryable infra error,
 test('a judge reports what its call spent', async () => {
   const v = await askJudge(judgeOf(stub([verdict(true)])), 'q', new AbortController().signal)
   assert.deepEqual(v.usage, { input_tokens: 1, output_tokens: 1 })
+})
+
+test('the judge deadline grows with what the call may write, never below the floor', () => {
+  assert.equal(judgeTimeoutS(4096), JUDGE_TIMEOUT_S)
+  assert.equal(judgeTimeoutS(16000), 800)
 })
