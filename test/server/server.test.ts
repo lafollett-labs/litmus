@@ -1,6 +1,7 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { request, type IncomingHttpHeaders } from 'node:http'
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { RunEvent } from '../../src/core/types.ts'
 import { serve } from '../../src/server/server.ts'
@@ -11,10 +12,11 @@ import { tree } from '../helpers/tmp.ts'
 // page on another site could make refused.
 
 const KEY = 'sk-ant-planted-0123456789abcdef'
+const TOKEN = 'tok-planted-9a8b7c6d'
 
 function project(): string {
   const files: Record<string, string> = {
-    'litmus.config.yaml': 'suites: [./suites]\nresults: ./.litmus/runs\nconcurrency: 2\nretries: 0\nredact: [MY_TOKEN]\nconfigs:\n  fake: { provider: fake }\n  fake-b: { provider: fake }\n',
+    'litmus.config.yaml': `suites: [./suites]\nresults: ./.litmus/runs\nconcurrency: 2\nretries: 0\nredact: [MY_TOKEN]\nconfigs:\n  fake: { provider: fake }\n  fake-b: { provider: fake, model: "m-${TOKEN}" }\n`,
     'suites/e2e/suite.yaml': 'name: e2e\ndefaults: { trials: 2 }\n',
     'ui/index.html': '<!doctype html><title>ui</title>',
     'ui/app.js': 'console.log(1)',
@@ -31,7 +33,7 @@ function project(): string {
 }
 
 const ROOT = project()
-const litmus = await serve({ configFile: join(ROOT, 'litmus.config.yaml'), port: 0, uiDir: join(ROOT, 'ui'), env: { ANTHROPIC_API_KEY: KEY, MY_TOKEN: 'fake-yaml' }, runSeams: { backoffMs: () => 0 } })
+const litmus = await serve({ configFile: join(ROOT, 'litmus.config.yaml'), port: 0, uiDir: join(ROOT, 'ui'), env: { ANTHROPIC_API_KEY: KEY, MY_TOKEN: TOKEN }, runSeams: { backoffMs: () => 0 } })
 after(() => litmus.close())
 const HOST = `127.0.0.1:${litmus.port}`
 const ORIGIN = `http://${HOST}`
@@ -41,7 +43,8 @@ function call(method: string, path: string, o: { headers?: Record<string, string
   return new Promise((ok, fail) => {
     const body = o.body === undefined ? undefined : JSON.stringify(o.body)
     const headers: Record<string, string> = { host: HOST, ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...o.headers }
-    const req = request({ host: '127.0.0.1', port: litmus.port, method, path, headers, setHost: false }, res => {
+    // A stream that never ends fails the test instead of hanging the suite.
+    const req = request({ host: '127.0.0.1', port: litmus.port, method, path, headers, setHost: false, signal: AbortSignal.timeout(10_000) }, res => {
       let text = ''
       res.setEncoding('utf8')
       res.on('data', d => (text += d))
@@ -52,8 +55,24 @@ function call(method: string, path: string, o: { headers?: Record<string, string
   })
 }
 const post = (path: string, body?: unknown, origin = ORIGIN) => call('POST', path, { headers: { origin }, ...(body === undefined ? {} : { body }) })
-const events = (id: string, headers: Record<string, string> = {}) =>
-  call('GET', `/api/runs/${id}/events`, { headers }).then(r => r.text.split('\n\n').filter(Boolean).map(block => ({ id: Number(/^id: (\d+)$/m.exec(block)![1]), event: JSON.parse(/^data: (.*)$/m.exec(block)![1]!) as RunEvent })))
+const parse = (text: string) => text.split('\n\n').filter(Boolean).map(block => ({ id: Number(/^id: (\d+)$/m.exec(block)![1]), event: JSON.parse(/^data: (.*)$/m.exec(block)![1]!) as RunEvent }))
+const events = (id: string, headers: Record<string, string> = {}) => call('GET', `/api/runs/${id}/events`, { headers }).then(r => parse(r.text))
+// The stream as it arrives: `first` fires on the first chunk.
+function subscribe(id: string, first: () => void): Promise<ReturnType<typeof parse>> {
+  return new Promise((ok, fail) => {
+    const req = request({ host: '127.0.0.1', port: litmus.port, path: `/api/runs/${id}/events`, headers: { host: HOST }, setHost: false, signal: AbortSignal.timeout(10_000) }, res => {
+      let text = ''
+      res.setEncoding('utf8')
+      res.on('data', d => {
+        text += d
+        first()
+      })
+      res.on('end', () => ok(parse(text)))
+    })
+    req.on('error', fail)
+    req.end()
+  })
+}
 
 test('a run started over the API streams its events in order, and its verdicts can be read', async () => {
   const started = await post('/api/runs', { select: ['e2e/passes', 'e2e/fails'], configs: ['fake'] })
@@ -81,8 +100,10 @@ test('a run started over the API streams its events in order, and its verdicts c
 
 test('a live subscriber gets the backlog first, and a cancel ends the run cancelled', async () => {
   const { id } = (await post('/api/runs', { select: ['e2e/slow'], configs: ['fake'] })).json()
-  const streaming = events(id)
-  await new Promise(r => setTimeout(r, 100))
+  const first = Promise.withResolvers<void>()
+  const streaming = subscribe(id, first.resolve)
+  await first.promise // subscribed, and the backlog has arrived: this is the live path
+  assert.equal(litmus.stats().subscribers, 1)
   const cancel = await post(`/api/runs/${id}/cancel`)
   assert.equal(cancel.status, 202, cancel.text)
   const stream = await streaming
@@ -155,7 +176,8 @@ test('compare, baselines, suites and configs answer as the CLI would', async () 
   assert.deepEqual(suites[0].cases.find((c: { id: string }) => c.id === 'e2e/passes').latest, { fake: 'PASS' })
   const configs = await call('GET', '/api/configs')
   assert.deepEqual(Object.keys(configs.json().configs), ['fake', 'fake-b'])
-  assert.ok(!configs.text.includes(KEY))
+  assert.equal(configs.json().configs['fake-b'].model, 'm-[REDACTED]')
+  assert.ok(!configs.text.includes(KEY) && !configs.text.includes(TOKEN))
 })
 
 test('a bad request body is a 400 or 415, and a rerun with nothing to do says so', async () => {
@@ -184,4 +206,63 @@ test('the UI is served from its directory, any other path gets index.html, and n
   assert.equal((await call('GET', '/..%2f..%2flitmus.config.yaml')).status, 400)
   assert.equal((await post('/index.html')).status, 405)
   assert.match((await call('GET', '/')).headers['content-security-policy'] as string, /frame-ancestors 'none'/)
+})
+
+test('a finished run\'s stream answers 204 once nothing is left, so an EventSource stops reconnecting', async () => {
+  const { id } = (await post('/api/runs', { select: ['e2e/passes'], configs: ['fake'] })).json()
+  const all = await events(id)
+  const again = await call('GET', `/api/runs/${id}/events`, { headers: { 'last-event-id': String(all.length - 1) } })
+  assert.equal(again.status, 204)
+  // A Last-Event-ID that is not a plain number is ignored, never read as one.
+  for (const bad of ['', ' ', '0x2', '1e1', '-1']) assert.equal((await events(id, { 'last-event-id': bad })).length, all.length, JSON.stringify(bad))
+})
+
+test('a client that goes away is dropped from its run\'s stream', async () => {
+  const { id } = (await post('/api/runs', { select: ['e2e/slow'], configs: ['fake'] })).json()
+  await new Promise<void>((ok, fail) => {
+    const req = request({ host: '127.0.0.1', port: litmus.port, path: `/api/runs/${id}/events`, headers: { host: HOST }, setHost: false }, res => {
+      res.once('data', () => {
+        req.destroy()
+        ok()
+      })
+    })
+    req.on('error', e => (e as NodeJS.ErrnoException).code === 'ECONNRESET' || fail(e))
+    req.end()
+  })
+  for (let i = 0; i < 50 && litmus.stats().subscribers > 0; i++) await new Promise(r => setTimeout(r, 10))
+  assert.equal(litmus.stats().subscribers, 0)
+  assert.equal((await post(`/api/runs/${id}/cancel`)).status, 202)
+  assert.equal((await events(id)).at(-1)!.event.type, 'run.cancelled')
+})
+
+test('an artifact outside the trial, even through a linked directory, is missing; one too big is only its size', async () => {
+  const { id } = (await post('/api/runs', { select: ['e2e/passes'], configs: ['fake'] })).json()
+  await events(id)
+  const key = 'e2e/passes@fake#1'
+  const dir = join(ROOT, '.litmus/runs', id, 'trials/e2e/passes/fake/1')
+  mkdirSync(join(ROOT, 'elsewhere'), { recursive: true })
+  writeFileSync(join(ROOT, 'elsewhere/leak.txt'), 'OUTSIDE')
+  symlinkSync(join(ROOT, 'elsewhere'), join(dir, 'artifacts/sub'))
+  writeFileSync(join(dir, 'artifacts/big.bin'), Buffer.alloc(9 << 20))
+  const record = JSON.parse(readFileSync(join(dir, 'trial.json'), 'utf8'))
+  writeFileSync(join(dir, 'trial.json'), JSON.stringify({ ...record, artifacts: [...record.artifacts, '../trial.json', 'sub/leak.txt', 'big.bin'] }))
+  const r = await call('GET', `/api/runs/${id}/trial?key=${encodeURIComponent(key)}`)
+  const by = Object.fromEntries(r.json().artifacts.map((a: { name: string }) => [a.name, a]))
+  assert.deepEqual(by['../trial.json'], { name: '../trial.json', missing: true })
+  assert.deepEqual(by['sub/leak.txt'], { name: 'sub/leak.txt', missing: true })
+  assert.deepEqual(by['big.bin'], { name: 'big.bin', size: 9 << 20, truncated: true })
+  assert.ok(!r.text.includes('OUTSIDE'))
+})
+
+test('close() returns even with a client stuck mid-request', async () => {
+  const other = await serve({ configFile: join(ROOT, 'litmus.config.yaml'), port: 0, uiDir: join(ROOT, 'ui'), env: {} })
+  const req = request({ host: '127.0.0.1', port: other.port, method: 'POST', path: '/api/runs', headers: { host: `127.0.0.1:${other.port}`, origin: `http://127.0.0.1:${other.port}`, 'content-type': 'application/json', 'content-length': '200000' }, setHost: false })
+  req.on('error', () => undefined) // the server drops it: that is the point
+  req.write(Buffer.alloc(100_000, 0x20)) // half the body it promised, then nothing
+  await new Promise(r => setTimeout(r, 100))
+  try {
+    await Promise.race([other.close(), new Promise((_, no) => setTimeout(() => no(new Error('close() hung on a stuck client')), 3000))])
+  } finally {
+    req.destroy()
+  }
 })
