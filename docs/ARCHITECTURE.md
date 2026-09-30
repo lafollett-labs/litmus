@@ -312,8 +312,9 @@ It fails a case in any of these situations:
 
 - the tree contains a symlink after the change is applied
 - the fixture contains a `.git` entry
-- a `proof/` path also exists under `fixture/`, runs through a fixture file,
-  or is (or contains) a symlink
+- `proof` is not a directory, or a `proof/` path also exists under
+  `fixture/`, runs through a fixture file, or is (or contains) a symlink or a
+  `.git` entry
 - a bug's `fix` resolves outside the case, links followed
 - `min_trials` exceeds `trials`, or a `rate` threshold is outside (0, 1)
 - a harness case's plugins or fixture declare hooks or MCP servers without
@@ -330,9 +331,10 @@ It warns in two situations:
 - a pass bound is set on a metric that can never be defined for the case, such
   as `min_recall` on a clean case
 
-The same checks run when a suite is loaded for `run`, except the `proof/` and
-`fix` ones: `run` never reads either, so `validate` adds those checks and the
-proof runs. A proof is a suite author's command, run as the command grader
+`run` makes the same error checks when it loads a suite, except the `proof/`,
+`fix` and subject-root ones, which are `validate`'s alone, as are both
+warnings and the proof runs. (In a run, the harness gate simply denies reads
+under a suite root.) A proof is a suite author's command, run as the command grader
 runs one: in its own process group, with a scrubbed env and the case's
 `timeout_s`. Ctrl-C or SIGTERM kills that group, removes the copy, and exits
 130 or 143 with nothing reported, since a cut-short validate vouches for no

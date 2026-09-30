@@ -1,6 +1,6 @@
 # Code Review: m10-examples-and-validate
 
-**Verdict:** 🔄 CHANGES REQUESTED (round 2; round 3 pending on `97cabf4`)
+**Verdict:** ✅ APPROVED (round 3, locked to `7ada74d`)
 
 | | |
 | - | - |
@@ -94,6 +94,34 @@ At `97cabf4`:
 - `npm run check` exits 0.
 - `npm test` passes 525 of 529, with 4 (live) skipped.
 - `validate` over the examples reports 11 cases, 0 invalid, 1 warning, and exits 0.
+
+## Review Round 3
+
+| | |
+| - | - |
+| **Review Round** | 3 |
+| **Reviewed SHA** | `7ada74d` |
+| **Reviewer** | PE-Vue |
+
+PE-Vue marked MEDIUM-001, MEDIUM-002, LOW-001, INFO-001 and INFO-002 RESOLVED and verified every disposition claim. It re-ran all four mutants in an archived copy, and each was killed. LOW-002 was PARTIAL.
+
+At the reviewed SHA:
+
+- `npm run check` exits 0.
+- `npm test` passes 525 of 529, with 4 (live) skipped.
+- `validate` exits 0.
+
+**✅ APPROVED:** no finding at MEDIUM or above. The one new LOW was fixed after approval:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | ARCHITECTURE still said `run` makes every check except the `proof/` and `fix` ones. The subject-root check and both warnings are `validate`'s alone, and the list lacked the non-directory and `.git` cases | Fixed. The sentence names every check that is `validate`'s alone, and the `proof/` bullet covers a non-directory and a `.git` entry. Documentation only |
+
+## Merge Eligibility (latest)
+
+**Locked to SHA:** `7ada74d`. The PR opens once M5 through M9 merge. It carries one post-approval commit, a documentation-only LOW fix, and Gate 2 reviews it.
+
+PLAN M10 stays unticked until CI runs `validate` on the PR and a live run with a key is recorded.
 
 ---
 
