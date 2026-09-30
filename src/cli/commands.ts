@@ -1,5 +1,5 @@
-import { accessSync, constants, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, resolve, sep } from 'node:path'
+import { accessSync, constants, lstatSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, sep } from 'node:path'
 import { ConfigError } from '../core/errors.ts'
 import { redactor, secretValues } from '../core/redact.ts'
 import type { VerdictKind } from '../core/types.ts'
@@ -131,18 +131,41 @@ export async function runCommand(f: RunFlags, io: Io): Promise<number> {
 // --out is checked before anything is spent: a typo in a path must be a usage
 // error (exit 2), not a finished run whose result could not be kept. Links are
 // followed, as the write will follow them.
-function writable(out: string): void {
+// Returns the path to write, which is the path checked: the kernel walks every
+// segment (`gone/../x` needs gone), so the raw spelling is kept, never resolve()d.
+function writable(out: string): string {
   if (out === '' || out.endsWith('/') || out.endsWith(sep)) throw new ConfigError(`--out ${JSON.stringify(out)} names a directory; name a file`)
-  const path = resolve(out)
-  const st = statSync(path, { throwIfNoEntry: false })
-  if (st?.isDirectory()) throw new ConfigError(`--out ${out} is a directory; name a file`)
-  const dir = dirname(st ? realpathSync(path) : path)
-  if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new ConfigError(`--out ${out}: ${dir} is not a directory that exists`)
+  const fail = (why: string) => new ConfigError(`--out ${out}: ${why}`)
+  const errno = (e: unknown) => fail((e as NodeJS.ErrnoException).code ?? (e as Error).message)
+  let st
   try {
-    accessSync(st ? path : dir, constants.W_OK)
-  } catch {
-    throw new ConfigError(`--out ${out}: ${st ? 'the file' : `the directory ${dir}`} is not writable`)
+    st = statSync(out, { throwIfNoEntry: false })
+  } catch (e) {
+    throw errno(e) // EACCES on the way, a name too long, a link loop
   }
+  if (st?.isDirectory()) throw new ConfigError(`--out ${out} is a directory; name a file`)
+  // A link whose target does not exist would be created through; refuse it.
+  const link = (() => {
+    try {
+      return lstatSync(out, { throwIfNoEntry: false })?.isSymbolicLink() === true
+    } catch {
+      return false // ENOTDIR and the like: the parent check below says what is wrong
+    }
+  })()
+  if (!st && link) throw fail('is a link to nothing')
+  let dir: string
+  try {
+    dir = st ? dirname(realpathSync.native(out)) : realpathSync.native(dirname(out)) // native: the OS walks every segment, as the write will
+  } catch {
+    throw fail(`the directory ${dirname(out)} does not exist`)
+  }
+  if (!statSync(dir).isDirectory()) throw fail(`${dirname(out)} is not a directory`)
+  try {
+    accessSync(st ? out : dir, constants.W_OK)
+  } catch {
+    throw fail(`${st ? 'the file' : `the directory ${dir}`} is not writable`)
+  }
+  return out
 }
 
 function configNames(flag: string | undefined, defined: string[]): string[] {
@@ -173,17 +196,19 @@ export function compareCommand(f: { configFile: string; sides: string[]; allowIn
   const c = pair(a.side, a.config, b.side, b.config, { tolerance: config.compare.tolerance, warnRatio: config.compare.warn_ratio })
   const exit = compareExit(c, f.allowInconclusive)
   io.out(comparisonLines(c, paintFor(io)).join('\n'))
-  io.out(`exit ${exit}`)
+  // As for run: the verdict stands; a failed write only turns a pass into 3,
+  // and the exit printed is the one returned.
+  let final = exit
   if (f.out !== undefined) {
-    // As for run: the verdict stands; a failed write only turns a pass into 3.
     try {
       writeFileSync(f.out, `${JSON.stringify(c, null, 2)}\n`)
     } catch (e) {
       io.err(`litmus: could not write ${f.out}: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`)
-      return exit === 0 ? 3 : exit
+      final = exit === 0 ? 3 : exit
     }
   }
-  return exit
+  io.out(`exit ${final}`)
+  return final
 }
 
 export function baselineCommand(f: { configFile: string; args: string[] }, io: Io): number {

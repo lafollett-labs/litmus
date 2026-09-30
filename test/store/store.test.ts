@@ -87,4 +87,9 @@ test('runs list newest first by start time, even two started in the same second'
   RunStore.create(results, { ...manifest('2026-09-30T01-02-03Z-ffff'), started_at: '2026-09-30T01:02:03.100Z' }, redactor([]))
   RunStore.create(results, { ...manifest('2026-09-30T01-02-03Z-0000'), started_at: '2026-09-30T01:02:03.900Z' }, redactor([]))
   assert.deepEqual(listRuns(results).map(m => m.id), ['2026-09-30T01-02-03Z-0000', '2026-09-30T01-02-03Z-ffff'])
+  // By time, not by spelling: +02:00 is two hours earlier than it reads.
+  const zoned = join(tree({ '.keep': '' }), 'runs')
+  RunStore.create(zoned, { ...manifest('2026-09-30T00-30-00Z-aaaa'), started_at: '2026-09-30T00:30:00.000Z' }, redactor([]))
+  RunStore.create(zoned, { ...manifest('2026-09-29T23-00-00Z-bbbb'), started_at: '2026-09-30T01:00:00.000+02:00' }, redactor([]))
+  assert.deepEqual(listRuns(zoned).map(m => m.id), ['2026-09-30T00-30-00Z-aaaa', '2026-09-29T23-00-00Z-bbbb'])
 })

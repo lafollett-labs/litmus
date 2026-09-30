@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { Ajv } from 'ajv'
 import { tree } from '../helpers/tmp.ts'
@@ -46,7 +46,7 @@ const runId = (stdout: string) => /litmus run (\S+)/.exec(stdout)![1]!
 
 // Starts `litmus run ...` and acts once, the first time stdout matches: a
 // second signal during teardown would kill the child before it can exit.
-function runUntil(args: string[], when: RegExp | string, act: (child: ReturnType<typeof spawn>) => void, env: NodeJS.ProcessEnv = ENV) {
+function runUntil(args: string[], when: RegExp | string, act: (child: ReturnType<typeof spawn>, stdout: string) => void, env: NodeJS.ProcessEnv = ENV) {
   const child = spawn(process.execPath, [MAIN, 'run', ...args], { cwd: ROOT, env })
   let stdout = ''
   let stderr = ''
@@ -56,7 +56,7 @@ function runUntil(args: string[], when: RegExp | string, act: (child: ReturnType
     stdout += d
     if (!done && (typeof when === 'string' ? stdout.includes(when) : when.test(stdout))) {
       done = true
-      act(child)
+      act(child, stdout)
     }
   })
   return new Promise<{ code: number | null; stdout: string; stderr: string }>(ok => child.on('close', code => ok({ code, stdout, stderr })))
@@ -88,7 +88,11 @@ test('exit 3 on infrastructure trouble alone, and 1 when a blocking verdict come
   assert.equal(litmus('run', 'e2e/errors', 'e2e/fails', '--config', 'fake').status, 1)
 })
 
-test('exit 2 on every usage or config error, with the reason on stderr', () => {
+test('exit 2 on every usage or config error, with the reason on stderr', t => {
+  // For the --out pre-check: a directory no one may enter, and a link to nothing.
+  mkdirSync(join(ROOT, 'locked'), { mode: 0o000 })
+  symlinkSync(join(ROOT, 'nowhere/x.xml'), join(ROOT, 'dangling.xml'))
+  t.after(() => chmodSync(join(ROOT, 'locked'), 0o700))
   for (const args of [
     ['run', 'e2e/passes'], // two configs defined, none named
     ['run', 'e2e/passes', '--config', 'nope'],
@@ -106,6 +110,11 @@ test('exit 2 on every usage or config error, with the reason on stderr', () => {
     ['run', 'e2e/passes', '--config', 'fake', '--out', '.'],
     ['run', 'e2e/passes', '--config', 'fake', '--out', 'newthing/'],
     ['run', 'e2e/passes', '--config', 'fake', '--out', 'litmus.config.yaml/x.xml'],
+    ['run', 'e2e/passes', '--config', 'fake', '--out', 'nothere/../x.xml'],
+    ['run', 'e2e/passes', '--config', 'fake', '--out', `${'x'.repeat(300)}.xml`],
+    ['run', 'e2e/passes', '--config', 'fake', '--out', 'locked/x.xml'],
+    ['run', 'e2e/passes', '--config', 'fake', '--out', 'dangling.xml'],
+    ['compare', 'config:fake', 'config:fake', '--out', 'dangling.xml'],
     ['compare', 'config:fake', 'config:fake', '--out', '/nonexistent/c.json'],
     ['baseline', 'frob'],
   ]) {
@@ -303,8 +312,8 @@ test('when the store fails mid-run, the live view says so and exits 3, and the r
   let runDir = ''
   // Every directory and file read-only, events.jsonl included: the run.failed
   // event cannot be stored, and the live view must hear it anyway.
-  const { code, stdout, stderr } = await runUntil(['e2e/slowish', '--config', 'fake'], 'litmus run ', () => {
-    runDir = readdirSync(join(ROOT, '.litmus/runs')).map(d => join(ROOT, '.litmus/runs', d)).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0]!
+  const { code, stdout, stderr } = await runUntil(['e2e/slowish', '--config', 'fake'], /litmus run \S+ /, (_, out) => {
+    runDir = join(ROOT, '.litmus/runs', runId(out))
     chmodRecursive(runDir, 0o500, 0o400)
   }, env)
   chmodRecursive(runDir, 0o700, 0o600)
