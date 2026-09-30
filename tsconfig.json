@@ -24,9 +24,12 @@
   "include": [
     "src/**/*.ts",
     "test/**/*.ts",
-    "scripts/**/*.ts"
+    "scripts/**/*.ts",
+    "playwright.config.ts",
+    "vite.config.ts"
   ],
   "exclude": [
-    "test/fixtures/**"
+    "test/fixtures/**",
+    "test/ui/e2e/project/**"
   ]
 }

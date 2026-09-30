@@ -16,13 +16,20 @@
     "litmus": "src/cli/main.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p ui",
     "typecheck": "npm run check",
-    "test": "node scripts/test.ts"
+    "test": "node scripts/test.ts",
+    "ui:dev": "vite",
+    "ui:build": "vite build",
+    "test:ui": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.2",
-    "typescript": "^7.0.2"
+    "@vitejs/plugin-vue": "^6.0.9",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vue": "^3.5.43"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.33.8",
