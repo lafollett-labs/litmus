@@ -118,7 +118,6 @@ test('a harness case gets the checks a run makes before the SDK loads: hooks nee
   const hooked = await check(project({ h: harness(outside) }))
   assert.match(only(hooked, 's/h').join('\n'), /^error: .*has hooks\/hooks\.json; set allow_hooks: true/)
   assert.deepEqual(await check(project({ h: harness(outside, '  allow_hooks: true\n') })), [])
-  // The plugin holds the whole project, suites and all.
   // The plugin holds the whole project, suites and all: one fault, one error.
   const configFile = project({ h: harness('../../../..') }, { '.claude-plugin/plugin.json': '{"name":"p"}' })
   const held = only(await check(configFile), 's/h')
@@ -166,6 +165,9 @@ test('litmus validate prints each case, exits 1 when any is invalid and 0 when o
 test('a bad proof/ tree is an error for its case alone, reported even with proofs: false', async () => {
   const configFile = project({
     linked: seeded('linked', {}, { 'proof/ok.sh': 'true\n' }),
+    plain: seeded('plain', {}, { proof: 'not a directory\n' }),
+    dangling: seeded('dangling'),
+    dotgit: seeded('dotgit', {}, { 'proof/.git/HEAD': 'ref: refs/heads/main\n' }),
     through: seeded('through', {}, { 'proof/a.txt/x': 'y\n' }),
     rooted: seeded('rooted'),
     fine: seeded('fine'),
@@ -173,13 +175,28 @@ test('a bad proof/ tree is an error for its case alone, reported even with proof
   const cases = join(configFile, '../suites/s/cases')
   symlinkSync('/etc/hosts', join(cases, 'linked/proof/hosts'))
   symlinkSync(join(cases, 'fine/fix'), join(cases, 'rooted/proof'))
+  symlinkSync('/nonexistent/litmus-proof', join(cases, 'dangling/proof'))
   for (const o of [{}, { proofs: false }]) {
     const ps = await check(configFile, o)
     assert.match(only(ps, 's/linked').join('\n'), /^error: s\/linked: proof\/ contains a symlink at .*hosts$/)
     assert.deepEqual(only(ps, 's/through'), ['error: proof/a.txt/x runs through a.txt, a file in the fixture (after change.patch); a proof may only add files'])
     assert.deepEqual(only(ps, 's/rooted'), ['error: proof/ is a symlink; a proof may not be or contain a link'])
+    assert.deepEqual(only(ps, 's/dangling'), ['error: proof/ is a symlink; a proof may not be or contain a link'])
+    assert.deepEqual(only(ps, 's/plain'), ['error: proof is not a directory; a proof is a tree of files laid over the fixture'])
+    assert.match(only(ps, 's/dotgit').join('\n'), /^error: s\/dotgit: proof\/ contains a \.git directory at /)
     assert.deepEqual(only(ps, 's/fine'), [])
   }
+})
+
+test('a harness case\'s proof/ may add what a harness would refuse in a fixture: the harness never sees proof/', async () => {
+  const harness = (extra: Record<string, string>) => ({
+    ...seeded('hp', {}, extra),
+    'case.yaml': `name: hp\nexecutor:\n  kind: harness\n  harness: claude-code\n  prompt: /review\n  setting_sources: [project]\ngraders: [{ kind: review-match, pass: { min_recall: 1 } }]\n`,
+  })
+  assert.deepEqual(await check(project({ hp: harness({ 'proof/.mcp.json': '{}', 'proof/.claude/settings.json': '{"permissions":{}}' }) }), { proofs: false }), [])
+  // The same files in the fixture are refused.
+  const refused = only(await check(project({ hp: harness({ 'fixture/.mcp.json': '{}' }) }), { proofs: false }), 's/hp')
+  assert.match(refused.join('\n'), /the fixture has \.mcp\.json/)
 })
 
 test('a fix/ that links out of the case resolves outside it', async () => {

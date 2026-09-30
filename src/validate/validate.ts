@@ -64,13 +64,16 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
     const proofDir = join(c.dir, 'proof')
     let proofBad = false
     try {
-      if (existsSync(proofDir)) {
+      // On the tree the harness would get, before proof/ is laid over it: a
+      // run never shows the subject proof/.
+      const refused = harnessPreflight(c, wd.dir, config.roots)
+      if (refused) say('error', refused)
+      // lstat: a dangling proof link is still a link, and refused as one.
+      if (lstatSync(proofDir, { throwIfNoEntry: false })) {
         const bad = proofTree(c, proofDir, wd.dir)
         for (const m of bad) say('error', m)
         proofBad = bad.length > 0
       }
-      const refused = harnessPreflight(c, wd.dir, config.roots)
-      if (refused) say('error', refused)
     } finally {
       wd.cleanup()
     }
@@ -123,7 +126,7 @@ async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: strin
   try {
     const proofDir = join(c.dir, 'proof')
     try {
-      if (existsSync(proofDir)) copyTree(proofDir, wd.dir, c.id, 'proof/')
+      if (lstatSync(proofDir, { throwIfNoEntry: false })) copyTree(proofDir, wd.dir, c.id, 'proof/')
     } catch (e) {
       return (e as Error).message
     }
@@ -162,7 +165,9 @@ function sh(run: string, wd: { dir: string; home: string }, c: LoadedCase, redac
 // What is wrong with a case's proof/ tree, overlaid on a post-change copy: a
 // proof may only add regular files, and only where the fixture has none.
 function proofTree(c: LoadedCase, proofDir: string, work: string): string[] {
-  if (lstatSync(proofDir).isSymbolicLink()) return [`proof/ is a symlink; a proof may not be or contain a link`]
+  const root = lstatSync(proofDir)
+  if (root.isSymbolicLink()) return [`proof/ is a symlink; a proof may not be or contain a link`]
+  if (!root.isDirectory()) return [`proof is not a directory; a proof is a tree of files laid over the fixture`]
   const out: string[] = []
   for (const rel of files(proofDir)) {
     const parts = rel.split('/')
@@ -183,11 +188,14 @@ function proofTree(c: LoadedCase, proofDir: string, work: string): string[] {
   return []
 }
 
-// Every regular file under dir, as a path relative to it.
+// Every regular file under dir, as a path relative to it. A .git entry is
+// left out: the copy is a git repository, so it would read as a shadowed file,
+// and the overlay refuses it by name instead.
 function files(dir: string): string[] {
   const out: string[] = []
   const walk = (d: string) => {
     for (const name of readdirSync(d).sort()) {
+      if (name.toLowerCase() === '.git') continue
       const path = join(d, name)
       const st = lstatSync(path)
       if (st.isDirectory()) walk(path)

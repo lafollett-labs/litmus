@@ -330,7 +330,8 @@ It warns in two situations:
 - a pass bound is set on a metric that can never be defined for the case, such
   as `min_recall` on a clean case
 
-The same checks run when a suite is loaded for `run`. `validate` adds only the
+The same checks run when a suite is loaded for `run`, except the `proof/` and
+`fix` ones: `run` never reads either, so `validate` adds those checks and the
 proof runs. A proof is a suite author's command, run as the command grader
 runs one: in its own process group, with a scrubbed env and the case's
 `timeout_s`. Ctrl-C or SIGTERM kills that group, removes the copy, and exits
