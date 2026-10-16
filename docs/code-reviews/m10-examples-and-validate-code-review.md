@@ -124,6 +124,7 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | Round | Reviewed SHA | Found | Outcome |
 | - | - | - | - |
 | 1 | `98064a9` | 2 MEDIUM, 2 LOW, 2 INFO | Fixed, as below |
+| 2 | `b82685d` | 1 MEDIUM, 3 LOW, 1 INFO | All round-1 findings RESOLVED (CI: Go 1.26.9, `GOTOOLCHAIN=local` reaches proofs and credentials do not). New findings fixed, as below |
 
 PE-Vue checked the ground truth independently:
 - Each truth range matches the post-change file.
@@ -139,6 +140,16 @@ PE-Vue checked the ground truth independently:
 | LOW-002 | ARCHITECTURE: `run` makes its checks "when it loads a suite"; `proof/` is compared to "the fixture"; the exit codes for an unloadable suite and for cancellation were missing | Fixed: "at load or before each trial"; "the post-change tree"; `validate` exits 1 when a suite will not load, and 130 or 143 on cancel. The new checks are listed |
 | INFO-001 | CI's Go came from the fixture's `go 1.22` (EOL 1.22.12), and proofs dropped `GOTOOLCHAIN` | Adopted: CI pins Go `1.26`, and `GOTOOLCHAIN` is in the env allowlist, so setup-go's `local` reaches the proofs. Tested in the allowlist test |
 | INFO-002 | `setup-go` is pinned by tag, as every action here is | No change: it matches the workflow's convention |
+
+Round 2:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | The proof snapshot was taken before the first run, so a proof that chmods or rewrites its own file was blamed on an honest fix | Fixed. The snapshot is taken after the first run, just before the fix is applied, and holds a mode and sha256 per file. Tested: a proof that chmods its script, and one that appends to its own log, both with honest fixes. Moving the snapshot back before the first run, as a mutant, fails the test |
+| LOW-001 | A `file` of `a.txt/` or `a.txt/x` threw ENOTDIR out of `validate` | Fixed. Each segment is looked up with `readdirSync`, and any failure means "not a file". Tested for both |
+| LOW-002 | `B.TXT` passed on a case-insensitive volume; `.git/HEAD` passed; an empty file counted as 1 line | Fixed. Each segment must match its directory entry exactly, a `.git` segment is refused, and an empty file has 0 lines. Each is tested; the case-folding, `.git`, empty-file and directory mutants are killed |
+| LOW-003 | A fix could neuter its proof without editing a proof file: by adding to a directory only the proof made, or with a Go `TestMain` | Fixed in two ways. A file added under a directory that only `proof/` made counts as a change to the proof (an error). A fix that leaves the bug's own `file` unchanged gets a warning. Both are tested, and both mutants are killed |
+| INFO-001 | The snapshot kept every proof file body in memory | Fixed: a mode and sha256 per file |
 
 ## Merge Eligibility (latest)
 

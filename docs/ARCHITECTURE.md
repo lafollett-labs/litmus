@@ -315,11 +315,13 @@ It fails a case in any of these situations:
 - `proof` is not a directory, cannot be read, or a `proof/` path already
   exists in the post-change tree, runs through a file there, or is (or
   contains) a symlink or a `.git` entry
-- a bug's or decoy's `file` is not a regular file in the post-change tree, or
-  its `lines` run past the end of it
+- a bug's or decoy's `file` is not a regular file in the post-change tree,
+  spelled exactly as on disk (review-match compares paths case-sensitively),
+  or its `lines` run past the end of it
 - a bug's `fix` resolves outside the case, links followed, or changes a
-  `proof/` file (a fix that rewrote its proof would pass it without touching
-  the bug)
+  `proof/` file or adds to a directory only `proof/` made. A fix that rewrote
+  its proof would pass it without touching the bug. What the proof itself
+  changes on its first run is not counted
 - `min_trials` exceeds `trials`, or a `rate` threshold is outside (0, 1)
 - a harness case's plugins or fixture declare hooks or MCP servers without
   `allow_hooks: true`
@@ -328,16 +330,18 @@ It fails a case in any of these situations:
   than `$schema`
 - a suite root lies inside one of a harness case's plugin or subject roots
 
-It warns in two situations:
+It warns in three situations:
 
 - a `rate`-policy case has fewer trials than the policy needs to return PASS
   (see Verdicts)
 - a pass bound is set on a metric that can never be defined for the case, such
   as `min_recall` on a clean case
+- a bug's fix leaves the bug's own `file` unchanged, so its proof may be cured
+  some other way (a Go `TestMain` that exits 0, say)
 
 `run` makes the same error checks, at load or before each trial, except the
 `proof/`, `fix`, ground-truth and subject-root ones, which are `validate`'s
-alone, as are both warnings and the proof runs. (In a run, the harness gate simply denies reads
+alone, as are the warnings and the proof runs. (In a run, the harness gate simply denies reads
 under a suite root.) A proof is a suite author's command, run as the command grader
 runs one: in its own process group, with a scrubbed env and the case's
 `timeout_s`. Ctrl-C or SIGTERM kills that group, removes the copy, and exits

@@ -200,10 +200,21 @@ test('ground truth must name a file in the post-change tree, and lines inside it
       'change.patch': 'diff --git a/b.txt b/b.txt\nnew file mode 100644\n--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n',
       'truth.yaml': truth('file: a.txt, lines: [1, 1]', 'decoys:\n  - { id: d1, file: b.txt, lines: [2, 2] }\n'.replace(' }', ', summary: s }')),
     }),
+    slash: seeded('slash', {}, { 'truth.yaml': truth('file: a.txt/, lines: [1, 1]') }),
+    through: seeded('through', {}, { 'truth.yaml': truth('file: a.txt/x, lines: [1, 1]') }),
+    upper: seeded('upper', {}, { 'truth.yaml': truth('file: A.TXT, lines: [1, 1]') }),
+    git: seeded('git', {}, { 'truth.yaml': truth('file: .git/HEAD, lines: [1, 1]') }),
+    empty: seeded('empty', {}, { 'fixture/e.txt': '', 'truth.yaml': truth('file: a.txt, lines: [1, 1]', 'decoys:\n  - { id: d1, file: e.txt, lines: [1, 1], summary: s }\n') }),
+    dotted: seeded('dotted', {}, { 'truth.yaml': truth('file: ./a.txt, lines: [1, 1]') }),
     fine: seeded('fine'),
   })
   for (const o of [{}, { proofs: false }]) {
     const ps = await check(configFile, o)
+    for (const [c, file] of [['slash', 'a.txt/'], ['through', 'a.txt/x'], ['upper', 'A.TXT'], ['git', '.git/HEAD']] as const) {
+      assert.deepEqual(only(ps, `s/${c}`), [`error: bug b1: ${file} is not a file in the fixture (after change.patch)`], c)
+    }
+    assert.deepEqual(only(ps, 's/empty'), ['error: decoy d1: lines [1, 1] run past the end of e.txt, which has 0 lines (after change.patch)'])
+    assert.deepEqual(only(ps, 's/dotted'), [])
     assert.deepEqual(only(ps, 's/missing'), ['error: bug b1: a.go is not a file in the fixture (after change.patch)'])
     assert.deepEqual(only(ps, 's/past'), ['error: bug b1: lines [1, 2] run past the end of a.txt, which has 1 lines (after change.patch)'])
     assert.deepEqual(only(ps, 's/dir'), ['error: bug b1: d is not a file in the fixture (after change.patch)'])
@@ -228,6 +239,31 @@ test('a fix that edits the proof, rather than the bug, is an error', async () =>
   )
   for (const c of ['cheat', 'mode', 'both']) assert.deepEqual(only(ps, `s/${c}`), ["error: bug b1: fix fix/b1.patch changes proof/check.sh; a fix may change only the subject's tree, never its proof"], c)
   assert.deepEqual(only(ps, 's/fine'), [])
+})
+
+test('a proof that changes its own files during its first run does not blame an honest fix', async () => {
+  const ps = await check(
+    project({
+      chmods: seeded('chmods', { proof: 'chmod +x run.sh && ./run.sh' }, { 'proof/run.sh': 'grep -qx fixed a.txt\n' }),
+      logs: seeded('logs', { proof: 'sh run.sh' }, { 'proof/run.sh': 'echo ran >> log.txt\ngrep -qx fixed a.txt\n', 'proof/log.txt': '' }),
+    }),
+  )
+  assert.deepEqual(ps, [])
+})
+
+test('a fix that adds to a directory only the proof made changes the proof; one that leaves the bug\'s file alone is warned of', async () => {
+  const skip = 'diff --git a/t/00-skip.sh b/t/00-skip.sh\nnew file mode 100644\n--- /dev/null\n+++ b/t/00-skip.sh\n@@ -0,0 +1 @@\n+exit 0\n'
+  const elsewhere = FIX.replaceAll('a.txt', 'b.txt')
+  const ps = await check(
+    project({
+      adds: seeded('adds', { proof: 'sh t/run.sh' }, { 'proof/t/run.sh': 'for f in t/0*.sh; do [ -f "$f" ] && . "./$f"; done\ngrep -qx fixed a.txt\n', 'fix/b1.patch': skip }),
+      elsewhere: seeded('elsewhere', { proof: 'grep -qx fixed b.txt' }, { 'fixture/b.txt': 'broken\n', 'fix/b1.patch': elsewhere }),
+    }),
+  )
+  assert.deepEqual(only(ps, 's/adds'), [
+    "error: bug b1: fix fix/b1.patch changes proof/t/00-skip.sh; a fix may change only the subject's tree, never its proof",
+  ])
+  assert.deepEqual(only(ps, 's/elsewhere'), ["warn: bug b1: its fix leaves a.txt unchanged; a proof cured without touching the bug's file may be cured some other way"])
 })
 
 test('an unreadable proof/ directory is an error for its case alone', { skip: process.getuid?.() === 0 && 'root reads anything' }, async () => {

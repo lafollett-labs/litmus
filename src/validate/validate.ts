@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
+import { sha256 } from '../core/hash.ts'
 import { runId, trialKey } from '../core/ids.ts'
 import { inside } from '../core/paths.ts'
 import { redactor, secretValues, type Redactor } from '../core/redact.ts'
@@ -107,7 +108,7 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
     if (o.proofs !== false && !proofBad && c.truth?.kind === 'seeded') {
       for (const bug of c.truth.bugs) {
         if (o.signal?.aborted) break
-        const why = await proof(c, bug, copy, redact, o.proofTimeoutS ?? s.timeout_s, o.signal)
+        const why = await proof(c, bug, copy, redact, o.proofTimeoutS ?? s.timeout_s, o.signal, m => say('warn', `bug ${bug.id}: ${m}`))
         if (why) say('error', `bug ${bug.id}: ${why}`)
       }
     }
@@ -117,7 +118,7 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
 
 // One bug's proof on its own copy: the change plus proof/ must fail it, and
 // the change plus proof/ plus the bug's fix must pass it.
-async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: string }, copy: () => ReturnType<typeof buildWorkdir>, redact: Redactor, timeoutS: number, signal?: AbortSignal): Promise<string | undefined> {
+async function proof(c: LoadedCase, bug: { id: string; file: string; proof: string; fix: string }, copy: () => ReturnType<typeof buildWorkdir>, redact: Redactor, timeoutS: number, signal: AbortSignal | undefined, warn: (m: string) => void): Promise<string | undefined> {
   let wd: ReturnType<typeof buildWorkdir>
   try {
     wd = copy()
@@ -126,12 +127,15 @@ async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: strin
   }
   try {
     const proofDir = join(c.dir, 'proof')
-    // The proof as laid over the copy, so a fix that edits it is caught.
-    let shown: { rel: string; body: Buffer; mode: number }[] = []
+    // What the proof owns in the copy: its files, and every directory that
+    // exists only because of it.
+    let owned: { files: string[]; dirs: string[] } = { files: [], dirs: [] }
     try {
       if (lstatSync(proofDir, { throwIfNoEntry: false })) {
+        const rels = files(proofDir)
+        const dirs = [...new Set(rels.flatMap(rel => rel.split('/').slice(0, -1).map((_, i, ps) => ps.slice(0, i + 1).join('/'))))]
+        owned = { files: rels, dirs: dirs.filter(d => !existsSync(join(wd.dir, d))) }
         copyTree(proofDir, wd.dir, c.id, 'proof/')
-        shown = files(proofDir).map(rel => ({ rel, body: readFileSync(join(wd.dir, rel)), mode: lstatSync(join(wd.dir, rel)).mode }))
       }
     } catch (e) {
       return (e as Error).message
@@ -146,17 +150,22 @@ async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: strin
     if (signal?.aborted) return undefined
     if (before.pass) return `its proof passes before the fix, so it proves nothing: ${bug.proof}${before.rationale.replace(/^exit 0/, '')}`
     if (/^timeout after/.test(before.rationale)) return `its proof timed out before the fix (${timeoutS}s): ${bug.proof}`
+    // A fix that rewrote the proof would pass it without touching the bug.
+    // Taken after the first run, so what the proof does to its own files is
+    // not laid at the fix's door.
+    const proofBefore = ownedState(wd.dir, owned)
+    // A bug whose file is not in the tree is reported as such, not here.
+    const bugFile = truthFile(wd.dir, bug.file)
+    const bugBefore = bugFile === undefined ? undefined : state(bugFile)
     try {
       git(wd.dir, ['apply', fix], `${c.id}: fix ${bug.fix} does not apply after change.patch`)
     } catch (e) {
       return (e as Error).message
     }
-    // A fix that rewrote the proof would pass it without touching the bug.
-    const edited = shown.find(f => {
-      const st = lstatSync(join(wd.dir, f.rel), { throwIfNoEntry: false })
-      return !st?.isFile() || st.mode !== f.mode || !readFileSync(join(wd.dir, f.rel)).equals(f.body)
-    })
-    if (edited) return `fix ${bug.fix} changes proof/${edited.rel}; a fix may change only the subject's tree, never its proof`
+    const proofAfter = ownedState(wd.dir, owned)
+    const edited = [...new Set([...proofBefore.keys(), ...proofAfter.keys()])].sort().find(rel => proofBefore.get(rel) !== proofAfter.get(rel))
+    if (edited !== undefined) return `fix ${bug.fix} changes proof/${edited}; a fix may change only the subject's tree, never its proof`
+    if (bugFile !== undefined && state(bugFile) === bugBefore) warn(`its fix leaves ${bug.file} unchanged; a proof cured without touching the bug's file may be cured some other way`)
     const after = await sh(bug.proof, wd, c, redact, timeoutS, signal)
     if (signal?.aborted) return undefined
     if (!after.pass) return `its proof still fails with the fix applied: ${bug.proof}\n${after.rationale}`
@@ -206,6 +215,39 @@ function proofTree(c: LoadedCase, proofDir: string, work: string): string[] {
   return []
 }
 
+// A file's or directory's state, compared before and after a fix is applied.
+function state(path: string): string {
+  const st = lstatSync(path, { throwIfNoEntry: false })
+  if (!st) return 'none'
+  if (!st.isFile()) return st.isDirectory() ? 'dir' : 'other'
+  return `${st.mode}:${sha256(readFileSync(path))}`
+}
+
+// The state of everything the proof owns: its own files, and whatever is now
+// in a directory only the proof made.
+function ownedState(work: string, owned: { files: string[]; dirs: string[] }): Map<string, string> {
+  const rels = new Set(owned.files)
+  for (const d of owned.dirs) if (existsSync(join(work, d))) for (const rel of files(join(work, d))) rels.add(`${d}/${rel}`)
+  return new Map([...rels].map(rel => [rel, state(join(work, rel))]))
+}
+
+// The regular file a ground-truth `file` names in the tree, spelled exactly as
+// it is on disk (review-match compares paths case-sensitively), or undefined.
+function truthFile(work: string, file: string): string | undefined {
+  const parts = file.split('/').filter(p => p !== '.')
+  if (parts.some(p => p === '' || p === '..' || p.toLowerCase() === '.git')) return undefined
+  let path = work
+  for (const p of parts) {
+    try {
+      if (!readdirSync(path).includes(p)) return undefined
+    } catch {
+      return undefined
+    }
+    path = join(path, p)
+  }
+  return lstatSync(path).isFile() ? path : undefined
+}
+
 // Ground truth names lines in the post-change tree, so each bug's and decoy's
 // file must be a regular file there, and its lines must fall inside it.
 function truthRefs(c: LoadedCase, work: string): string[] {
@@ -213,14 +255,13 @@ function truthRefs(c: LoadedCase, work: string): string[] {
   const out: string[] = []
   const items = [...c.truth.bugs.map(x => ({ what: 'bug', x })), ...c.truth.decoys.map(x => ({ what: 'decoy', x }))]
   for (const { what, x } of items) {
-    const path = join(work, x.file)
-    const st = inside(path, work) ? lstatSync(path, { throwIfNoEntry: false }) : undefined
-    if (!st?.isFile()) {
+    const path = truthFile(work, x.file)
+    if (path === undefined) {
       out.push(`${what} ${x.id}: ${x.file} is not a file in the fixture (after change.patch)`)
       continue
     }
     const text = readFileSync(path, 'utf8')
-    const count = text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
+    const count = text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
     const [start, end] = x.lines
     if (end > count) out.push(`${what} ${x.id}: lines [${start}, ${end}] run past the end of ${x.file}, which has ${count} lines (after change.patch)`)
   }
