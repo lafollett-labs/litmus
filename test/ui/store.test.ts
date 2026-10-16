@@ -151,6 +151,43 @@ test('a trial opened while it runs waits, is fetched when it finishes, and close
   assert.equal(state.detail, null)
 })
 
+test('a trial opened after its run ended is settled at once, never left waiting', async () => {
+  const key = 's/a@fake#1'
+  const open = async (id: string, end: () => void) => {
+    watchRun(id)
+    last().send({ type: 'trial.started', key })
+    end()
+    await tick()
+    openTrial(key)
+    await tick()
+    return state.detail!
+  }
+  // Server gone: lost, and the pane says so.
+  routes = {}
+  let d = await open('o1', () => last().fail())
+  assert.equal(state.run?.done, 'lost')
+  assert.equal(d.waiting, false)
+  assert.equal(d.error, 'lost touch with litmus before this trial finished')
+  // Live elsewhere, no record yet: the neutral note, not the 404.
+  routes = { 'GET /api/runs/o2': stored('running'), 'GET /api/suites': () => suites }
+  d = await open('o2', () => last().fail())
+  assert.equal(state.run?.done, 'elsewhere')
+  assert.equal(d.waiting, false)
+  assert.equal(d.error, null)
+  assert.match(d.note ?? '', /still running in another process/)
+  // Live elsewhere, record written meanwhile: shown.
+  routes = { 'GET /api/runs/o3': stored('running'), 'GET /api/suites': () => suites, 'GET /api/runs/o3/trial?key=s%2Fa%40fake%231': () => ({ record: { status: 'pass' }, transcript: [], artifacts: [] }) }
+  d = await open('o3', () => last().fail())
+  assert.equal(d.data?.record.status, 'pass')
+  // A failed run that never recorded it: the error, not the note.
+  routes = { 'GET /api/runs/o4': () => ({}), 'GET /api/suites': () => suites }
+  d = await open('o4', () => last().send({ type: 'run.failed', run: 'o4', error: 'boom' }))
+  assert.equal(state.run?.done, 'failed')
+  assert.equal(d.waiting, false)
+  assert.equal(d.note, null)
+  assert.match(d.error ?? '', /no route/)
+})
+
 test('a bad trial count or a refused selection starts nothing and says why', async () => {
   routes = { 'GET /api/suites': () => suites }
   state.suites = suites as typeof state.suites
