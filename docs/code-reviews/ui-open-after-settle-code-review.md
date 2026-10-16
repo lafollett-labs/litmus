@@ -44,6 +44,32 @@ PE-Vue's probes covered four timings: a trial opened while `settled()` still awa
 
 The tests also cover a run switched mid-fetch, a trial reopened on a lost run and on a run live elsewhere, and a queued trial of a cancelled run.
 
+## Gate 2 (PR #15)
+
+Copilot is out of quota, so a fresh PE-Vue with no prior context stood in for it.
+
+The branch was rebased onto `35488a6`, giving `13421e5` (the Gate 1 tree) and `9859d87` (the test follow-ups). `ui/src` is unchanged from the reviewed `386e83e`.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `9859d87` | 1 LOW, 3 INFO | ✅ APPROVED |
+
+PE-Vue's evidence:
+
+- Its own 15 mutants were all killed.
+- The store tests pass under 20 random seeds, and each test passes when run alone.
+- In a real browser (Playwright against `litmus serve`), it checked three endings:
+  - **Lost:** the pane and the live region both say so, and focus stays on the tree row.
+  - **Live elsewhere:** the note is shown, and the record is shown once the CLI finishes.
+  - **Cancelled:** a trial that ran shows its record.
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | A queued trial of a cancelled run shows the server's 404 as a red error, though it simply never ran | Carried into M11 (a neutral "not run" note), so the code merged here is the code approved |
+| INFO-001 | The header icon falls back to "queued" for a running trial with no record | Carried into M11 |
+| INFO-002 | Opening a second trial with the same message announces nothing | Accepted: focus stays on the row, and the pane's heading names the new trial |
+| INFO-003 | The Gate 1 lock SHA is one rebase behind | Recorded above |
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
