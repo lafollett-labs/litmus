@@ -278,7 +278,7 @@ test('an unreadable proof/ directory is an error for its case alone', { skip: pr
   chmodSync(sub, 0o000)
   try {
     const ps = await check(configFile)
-    assert.match(only(ps, 's/locked').join('\n'), /^error: EACCES: permission denied, scandir '.*proof\/sub'$/)
+    assert.match(only(ps, 's/locked').join('\n'), /^error: EACCES: permission denied, scandir '.*proof\/sub'; a run that selects this case cannot read it either$/)
     assert.deepEqual(only(ps, 's/fine'), [])
   } finally {
     chmodSync(sub, 0o755)

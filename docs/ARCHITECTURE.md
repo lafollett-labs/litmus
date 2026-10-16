@@ -1400,8 +1400,7 @@ on a usage or config error.
 `validate` exits 0 when every case is valid and 1 otherwise, including when a
 suite or case fails to load (an unknown judge name among them). It exits 2
 only on a usage error, a config file that will not load, or a bad selector.
-Warnings don't affect its exit code. Ctrl-C or SIGTERM cancels it with 130
-or 143.
+Warnings don't affect its exit code.
 
 Any command exits 3 on any other failure (a results directory litmus cannot
 read, say), with one redacted line on stderr and no stack trace, so

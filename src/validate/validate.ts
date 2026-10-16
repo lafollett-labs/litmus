@@ -56,8 +56,11 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
     try {
       hashTree(c.dir)
     } catch (e) {
-      if (!(e instanceof ConfigError)) throw e
-      say('error', `${e.message}; a run that selects this case is refused`)
+      // A case it cannot read (EACCES, say) stops a run with exit 3: an error
+      // for this case alone here.
+      if (e instanceof ConfigError) say('error', `${e.message}; a run that selects this case is refused`)
+      else if ((e as NodeJS.ErrnoException).code !== undefined) say('error', `${(e as Error).message}; a run that selects this case cannot read it either`)
+      else throw e
       continue
     }
     let attempt = 0
