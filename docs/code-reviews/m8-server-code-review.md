@@ -96,6 +96,12 @@ PE-Vue marked all 14 round-1 findings RESOLVED:
 
 At `85fbb24`, `npm run check` exits 0 and 495 tests pass with 4 (live) skipped.
 
+### Found after approval
+
+| ID | Finding | Disposition |
+| - | - | - |
+| SELF-001 | The 413 test failed about one full run in five with `write EPIPE`. Its client was still writing the 1.1 MB body when the server answered 413 and closed, so the write raced the close; a reset can also drop the 413 itself | Fixed. The test now writes the headers and one byte past the limit over a raw socket, then stops, so nothing is unread when the server closes. It reads the 413 and `connection: close` before the server's FIN. 30 of 30 isolated runs pass, and a server that keeps the connection open fails it. The server is unchanged: a client that keeps writing a body over 1 MiB can still see a reset instead of the 413, which is the usual cost of closing on an oversized request |
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `bd93180`, which is now carried by the rebase onto M7's approved tip. The PR opens once M5, M6 and M7 merge. It carries the post-approval commits (LOW and INFO fixes only), and Gate 2 reviews them.

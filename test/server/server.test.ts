@@ -289,8 +289,22 @@ test('a pipelined request behind a live stream still gets its answer when the st
 })
 
 test('a body over the limit is a 413 that closes its connection', async () => {
-  const r = await call('POST', '/api/runs', { headers: { origin: ORIGIN }, body: { select: ['x'.repeat(1_100_000)] } })
-  assert.deepEqual([r.status, r.headers['connection']], [413, 'close'])
+  // One byte past the limit, then silence: a client still writing races the
+  // close (EPIPE, or a reset that can drop the 413), so nothing is left unsent.
+  const socket = connect(litmus.port, '127.0.0.1')
+  socket.setTimeout(10_000, () => socket.destroy(new Error('no 413, or the connection stayed open')))
+  const reply = new Promise<string>((ok, fail) => {
+    let text = ''
+    socket.on('data', d => (text += d))
+    socket.on('end', () => ok(text))
+    socket.on('error', fail)
+  })
+  socket.write(`POST /api/runs HTTP/1.1\r\nHost: ${HOST}\r\nOrigin: ${ORIGIN}\r\nContent-Type: application/json\r\nContent-Length: ${(1 << 20) + 2}\r\n\r\n`)
+  socket.write(Buffer.alloc((1 << 20) + 1, 0x20))
+  const text = await reply
+  socket.destroy()
+  assert.match(text, /^HTTP\/1\.1 413 /)
+  assert.match(text, /\r\nconnection: close\r\n/i)
 })
 
 test('a transcript over 64 MiB comes back empty and says so', async () => {
