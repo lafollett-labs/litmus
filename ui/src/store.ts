@@ -68,15 +68,18 @@ async function settled(id: string): Promise<void> {
     state.suites = suites
     // A trial still waiting will get no trial.finished now: look for its record once.
     const d = state.detail
-    if (d?.waiting && d.run === id) void fetchTrial(id, d.key, stored.manifest.status === 'running' ? 'still running in another process; reload to see it when it finishes' : undefined)
+    if (d?.waiting && d.run === id) void fetchTrial(id, d.key, stored.manifest.status === 'running' ? ELSEWHERE : undefined)
   } catch (e) {
     if (state.run?.id !== id) return
     if (state.run.done === 'running') state.run.done = 'lost'
     state.message = `lost touch with litmus: ${(e as Error).message}`
     const d = state.detail
-    if (d?.waiting && d.run === id) Object.assign(d, { waiting: false, error: 'lost touch with litmus before this trial finished' })
+    if (d?.waiting && d.run === id) Object.assign(d, { waiting: false, error: LOST })
   }
 }
+
+const ELSEWHERE = 'still running in another process; reload to see it when it finishes'
+const LOST = 'lost touch with litmus before this trial finished'
 
 async function start(body: Parameters<typeof api.start>[0]): Promise<void> {
   state.busy = true
@@ -145,9 +148,15 @@ export async function cancel(): Promise<void> {
 export function openTrial(key: string): void {
   if (!state.run) return
   const run = state.run.id
+  const done = state.run.done
   const finished = !['queued', 'running'].includes(state.run.trials[key] ?? '')
-  state.detail = { run, key, data: null, error: null, note: null, waiting: !finished }
-  if (finished) void fetchTrial(run, key)
+  // Once the stream has ended, no trial.finished will come: an unfinished
+  // trial is settled now, as settled() settles one already open.
+  const waiting = !finished && done === 'running'
+  state.detail = { run, key, data: null, error: null, note: null, waiting }
+  if (waiting) return
+  if (!finished && done === 'lost') state.detail.error = LOST
+  else void fetchTrial(run, key, !finished && done === 'elsewhere' ? ELSEWHERE : undefined)
 }
 
 // `absent`: what to say, instead of the server's 404, when the record may
