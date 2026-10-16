@@ -1,5 +1,4 @@
-import type { Verdict, VerdictKind } from '../core/types.ts'
-import { listRuns, readRun } from '../store/store.ts'
+import { latestVerdicts } from '../store/store.ts'
 import { loadProject } from '../suite/load.ts'
 import { select } from '../suite/select.ts'
 import type { Io } from './main.ts'
@@ -24,26 +23,4 @@ export function list(configPath: string, selectors: string[], io: Io): number {
     io.out(`  ${c.name.padEnd(width)}  ${c.spec.executor.kind.padEnd(7)}  ${runs}${tags}${expect}${last}`)
   }
   return 0
-}
-
-// case id -> config -> the verdict from the newest run that settled it. A
-// cancelled run's settled verdicts count: those cases did finish. A run whose
-// verdicts cannot be read is skipped, so one bad run cannot hide the others.
-function latestVerdicts(resultsDir: string): Map<string, Map<string, VerdictKind>> {
-  const out = new Map<string, Map<string, VerdictKind>>()
-  for (const m of listRuns(resultsDir)) {
-    if (m.status !== 'finished' && m.status !== 'cancelled') continue
-    let verdicts: Verdict[]
-    try {
-      verdicts = readRun(resultsDir, m.id).verdicts
-    } catch {
-      continue
-    }
-    for (const v of verdicts) {
-      const byConfig = out.get(v.case) ?? new Map<string, VerdictKind>()
-      if (!byConfig.has(v.config)) byConfig.set(v.config, v.verdict)
-      out.set(v.case, byConfig)
-    }
-  }
-  return out
 }

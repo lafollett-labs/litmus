@@ -1,6 +1,6 @@
 import { ConfigError } from '../core/errors.ts'
 import { NAME } from '../core/ids.ts'
-import { baselineSide, type RunSide } from '../runner/rerun.ts'
+import { baselineSide, type RunSide } from './rerun.ts'
 import { baselineRun, listRuns } from '../store/store.ts'
 
 // docs/ARCHITECTURE.md § Addressing runs and comparisons:

@@ -174,7 +174,7 @@ stay on the branch, and their messages go into the squash commit's body.
     suites with the `fake` config and check its output and every exit code.
     CTRF output validates against a vendored copy of the CTRF schema.
 
-- [ ] **M8: Server**
+- [x] **M8: Server**
   - `node:http` routes as specified, with trial keys passed as a query
     parameter.
   - Server-sent events with the backlog replayed first.

@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util'
 import { ConfigError } from '../core/errors.ts'
 import { redactor, secretValues } from '../core/redact.ts'
 import { loadConfig } from '../suite/load.ts'
-import { baselineCommand, compareCommand, runCommand } from './commands.ts'
+import { baselineCommand, compareCommand, runCommand, serveCommand } from './commands.ts'
 import { list } from './list.ts'
 
 const USAGE = `usage: litmus <command> [options]
@@ -16,6 +16,7 @@ commands:
   run --rerun <run> --only fail,flaky,error,inconclusive
   compare <side> <side> [--allow-inconclusive] [--out path]
   baseline set <name> <run> | baseline list
+  serve [--port 4317]                  the API and UI on 127.0.0.1 until Ctrl-C
 
 a side is <run id>, <run id>:<config>, baseline:<name>[:<config>] or config:<name>
 a selector is <suite>, <suite>/<case>, a glob, tag:<tag>, or a trial key
@@ -48,6 +49,8 @@ const RUN = {
   rerun: { type: 'string' },
   only: { type: 'string' },
 } as const
+
+const SERVE = { ...COMMON, port: { type: 'string', default: '4317' } } as const
 
 const COMPARE = { ...COMMON, 'allow-inconclusive': { type: 'boolean', default: false }, out: { type: 'string' } } as const
 
@@ -112,6 +115,12 @@ export async function main(argv: string[], io: Io): Promise<number> {
         if (v.help) return help(io)
         return baselineCommand({ configFile: v['config-file'], args: positionals }, io)
       }
+      case 'serve': {
+        const { values: v, positionals } = parseArgs({ args: rest, allowPositionals: true, options: SERVE })
+        if (v.help) return help(io)
+        if (positionals.length) throw new ConfigError(`serve takes no arguments, got ${positionals.join(' ')}`)
+        return await serveCommand({ configFile: v['config-file'], port: v.port }, io)
+      }
       default:
         io.err(`unknown command "${command}"\n\n${USAGE}`)
         return 2
@@ -163,14 +172,15 @@ if (import.meta.main) {
   const write = (text: string) => void (closed || process.stdout.write(text))
   // A log reader that has gone (`2>&1 | head`) is not the run's failure either.
   process.stderr.on('error', () => undefined)
-  // Only a run is worth cancelling: the first Ctrl-C (or SIGTERM) cancels,
-  // trials in flight end cancelled and the run is written; a second one
-  // leaves at once. Every other command finishes in moments.
+  // Only a run (or a server, with its live runs) is worth cancelling: the
+  // first Ctrl-C (or SIGTERM) cancels, trials in flight end cancelled and each
+  // run is written; a second one leaves at once. Every other command finishes
+  // in moments.
   const ctl = new AbortController()
   let code = 130
   // main() takes the first argument as the command; were options ever allowed
   // before it, this gate would have to follow.
-  if (process.argv[2] === 'run') {
+  if (process.argv[2] === 'run' || process.argv[2] === 'serve') {
     const cancel = (signal: 'SIGINT' | 'SIGTERM', exit: number) => () => {
       if (ctl.signal.aborted) process.exit(exit)
       code = exit
