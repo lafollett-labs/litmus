@@ -1,0 +1,5 @@
+name: smoke
+description: One case per verdict on the fake provider, so every path through the runner shows up in a $0 run
+defaults:
+  trials: 3
+  tags: [smoke]

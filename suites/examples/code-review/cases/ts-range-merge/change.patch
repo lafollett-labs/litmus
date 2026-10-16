@@ -1,0 +1,23 @@
+diff --git a/src/range.ts b/src/range.ts
+--- a/src/range.ts
++++ b/src/range.ts
+@@ -3,5 +3,18 @@ export type Range = { start: number; end: number }
+ 
+ // True when the two ranges share at least one integer.
+ export function overlaps(a: Range, b: Range): boolean {
+-  return a.start <= b.end && b.start <= a.end
++  return a.start < b.end && b.start < a.end
++}
++
++// The given ranges sorted by start, with every pair that shares an integer
++// joined into one.
++export function merge(ranges: Range[]): Range[] {
++  const sorted = [...ranges].sort((x, y) => x.start - y.start)
++  const out: Range[] = []
++  for (const r of sorted) {
++    const last = out.at(-1)
++    if (last && overlaps(last, r)) last.end = Math.max(last.end, r.end)
++    else out.push({ ...r })
++  }
++  return out
+ }

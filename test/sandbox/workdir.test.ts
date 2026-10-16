@@ -189,7 +189,7 @@ test('what the subject wrote is found by snapshot, and a planted .git hook never
 test('child environments keep the allowlist, redirect HOME, and drop every key', () => {
   const env = scrubbedEnv(
     { home: '/tmp/h', extra: { CLAUDE_CONFIG_DIR: '/tmp/c' } },
-    { PATH: '/bin', LANG: 'C', LC_ALL: 'C', HOME: '/Users/me', ANTHROPIC_API_KEY: 'sk-ant', AWS_SECRET_ACCESS_KEY: 's', GITHUB_TOKEN: 'ghp', SOMETHING_NEW: 'x' },
+    { PATH: '/bin', LANG: 'C', LC_ALL: 'C', GOTOOLCHAIN: 'local', HOME: '/Users/me', ANTHROPIC_API_KEY: 'sk-ant', AWS_SECRET_ACCESS_KEY: 's', GITHUB_TOKEN: 'ghp', SOMETHING_NEW: 'x' },
   )
-  assert.deepEqual(env, { PATH: '/bin', LANG: 'C', LC_ALL: 'C', HOME: '/tmp/h', CLAUDE_CONFIG_DIR: '/tmp/c' })
+  assert.deepEqual(env, { PATH: '/bin', LANG: 'C', LC_ALL: 'C', GOTOOLCHAIN: 'local', HOME: '/tmp/h', CLAUDE_CONFIG_DIR: '/tmp/c' })
 })

@@ -1,0 +1,5 @@
+name: canaries
+description: Cases marked expect fail, which check that the graders still catch a wrong answer. Each is a success when its graders reject the output
+defaults:
+  trials: 3
+  tags: [canary]

@@ -41,6 +41,16 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      # docs/PLAN.md M10: every example case is valid, and each seeded bug's
+      # proof fails on the change and passes with its fix. The Go case's
+      # proof needs the Go its fixture's go.mod names.
+      - uses: actions/setup-go@v7
+        with:
+          # A supported release at least every example's `go` line; GOTOOLCHAIN
+          # stays local, so a case needing newer fails instead of downloading.
+          go-version: '1.26'
+          cache: false
+      - run: node src/cli/main.ts validate
 
   # The UI end to end: the built UI against `litmus serve` over the fake
   # suites in Chromium. Named by its id for the ruleset, like `check`.

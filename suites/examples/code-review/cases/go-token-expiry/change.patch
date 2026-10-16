@@ -1,0 +1,35 @@
+diff --git a/internal/auth/token.go b/internal/auth/token.go
+--- a/internal/auth/token.go
++++ b/internal/auth/token.go
+@@ -21,13 +21,14 @@ type Token struct {
+ 
+ // Valid reports whether the token is still live at now.
+ func (t Token) Valid(now time.Time) bool {
+-	return now.Unix() < t.ExpiresAt
++	return now.Unix() <= t.ExpiresAt
+ }
+ 
+-// HasScope reports whether the token grants exactly the scope want.
++// HasScope reports whether the token grants want. Scopes are hierarchical:
++// a token granted "repo" also satisfies a check for "repo:read".
+ func (t Token) HasScope(want string) bool {
+ 	for _, s := range t.Scopes {
+-		if s == want {
++		if strings.HasPrefix(s, want) {
+ 			return true
+ 		}
+ 	}
+@@ -41,8 +42,12 @@ func Sign(t Token, key []byte) string {
+ 	return hex.EncodeToString(mac.Sum(nil))
+ }
+ 
+-// Verify checks the token's signature in constant time.
++// Verify checks the token's signature in constant time. A signature of the
++// wrong length is rejected first: the length of a hex SHA-256 is public.
+ func Verify(t Token, key []byte) bool {
++	if len(t.Signature) != hex.EncodedLen(sha256.Size) {
++		return false
++	}
+ 	want := Sign(t, key)
+ 	return subtle.ConstantTimeCompare([]byte(want), []byte(t.Signature)) == 1
+ }

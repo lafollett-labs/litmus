@@ -1,0 +1,12 @@
+name: ts-clean-slug
+description: A behaviour-preserving rewrite of slugify as two regex replaces. There is nothing to find; flagging the one-hyphen trim is a decoy hit
+executor:
+  kind: model
+  prompt_file: prompt.md
+graders:
+  - kind: json-schema
+    artifact: findings.json
+    schema: litmus:findings
+  - kind: review-match
+    pass: { max_false_positives: 0, max_decoy_hits: 0 }
+tags: [typescript, clean]

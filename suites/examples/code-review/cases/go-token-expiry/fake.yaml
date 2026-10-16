@@ -1,0 +1,8 @@
+# A review that finds both bugs and leaves the length check alone: PASS on the fake config.
+responses:
+  - text: |
+      {"findings": [
+        {"file": "internal/auth/token.go", "line": 24, "severity": "high", "title": "Token accepted during its expiry second", "explanation": "<= makes the token valid at ExpiresAt, which the field's comment says is already invalid."},
+        {"file": "internal/auth/token.go", "line": 31, "severity": "critical", "title": "HasPrefix arguments reversed", "explanation": "A grant of repo:read satisfies a check for repo, and repository satisfies repo: privilege escalation."}
+      ]}
+    usage: { input_tokens: 1450, output_tokens: 160 }

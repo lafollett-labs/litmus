@@ -11,7 +11,9 @@ import { serve } from '../server/server.ts'
 import { planRun } from '../runner/plan.ts'
 import { pair, run } from '../runner/run.ts'
 import { baselines, readTrials, setBaseline } from '../store/store.ts'
-import { loadConfig } from '../suite/load.ts'
+import { loadConfig, loadProject } from '../suite/load.ts'
+import { select } from '../suite/select.ts'
+import { validate } from '../validate/validate.ts'
 import { resolveSide } from '../runner/address.ts'
 import type { Io } from './main.ts'
 
@@ -230,4 +232,40 @@ export async function serveCommand(f: { configFile: string; port: string }, io: 
   if (signal) await new Promise(ok => (signal.aborted ? ok(undefined) : signal.addEventListener('abort', ok, { once: true })))
   await litmus.close()
   return 0
+}
+
+// Exit 0 when every case is valid, 1 when any is not (a suite that will not
+// load included), 2 for a usage error or a config file that will not load, and
+// 130 or 143 when cancelled. Warnings never change the exit code.
+export async function validateCommand(f: { configFile: string; selectors: string[] }, io: Io): Promise<number> {
+  const paint = paintFor(io)
+  const config = loadConfig(f.configFile)
+  let project
+  try {
+    project = loadProject(f.configFile)
+  } catch (e) {
+    if (!(e instanceof ConfigError)) throw e
+    // A YAML error quotes the line it failed on, so redacted as main's would be.
+    io.out(`${paint('fail', '✗')} ${redactor(secretValues(config.redact)).text(e.message)}`)
+    io.out('invalid: the suites do not load')
+    return 1
+  }
+  const cases = select(project.suites, f.selectors, new Set(Object.keys(config.configs))).map(s => s.case)
+  const problems = await validate(config, cases, io.signal ? { signal: io.signal } : {})
+  // A cut-short validate has not checked every case, so it vouches for none.
+  if (io.signal?.aborted) {
+    io.err('validate cancelled before every case was checked; nothing is reported')
+    return io.cancelCode?.() ?? 130
+  }
+  const width = Math.max(...cases.map(c => c.id.length))
+  for (const c of cases) {
+    const mine = problems.filter(p => p.case === c.id)
+    const bad = mine.some(p => p.level === 'error')
+    io.out(`${bad ? paint('fail', '✗') : paint('pass', '✓')} ${mine.length ? c.id : `${c.id.padEnd(width)}  ok`}`)
+    for (const p of mine) io.out(`    ${p.level === 'error' ? paint('fail', 'error') : paint('flaky', 'warn ')}  ${p.message.replace(/\n/g, '\n           ')}`)
+  }
+  const invalid = new Set(problems.filter(p => p.level === 'error').map(p => p.case)).size
+  const warnings = problems.filter(p => p.level === 'warn').length
+  io.out(`${cases.length} case${cases.length === 1 ? '' : 's'}: ${invalid} invalid, ${warnings} warning${warnings === 1 ? '' : 's'}`)
+  return invalid ? 1 : 0
 }

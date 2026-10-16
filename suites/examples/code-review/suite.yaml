@@ -1,0 +1,5 @@
+name: code-review
+description: Seeded-bug review of small codebases, in Go and TypeScript, plus a clean change
+defaults:
+  trials: 3
+  tags: [review]

@@ -1,0 +1,5 @@
+name: not-findings
+description: The reply is prose, not litmus:findings, so the json-schema grader must reject it. PASS while the grader works
+expect: fail
+executor: { kind: model, prompt: "Review the change." }
+graders: [{ kind: json-schema, artifact: response.txt, schema: litmus:findings }]

@@ -1,0 +1,4 @@
+name: retried
+description: The first attempt of every trial is throttled and retried; the retry answers 4. PASS
+executor: { kind: model, prompt: "What is 2 + 2? Answer with the number only." }
+graders: [{ kind: regex, target: response.txt, pattern: "^\\s*4\\s*$" }]

@@ -1,0 +1,12 @@
+diff --git a/internal/auth/token.go b/internal/auth/token.go
+--- a/internal/auth/token.go
++++ b/internal/auth/token.go
+@@ -28,7 +28,7 @@ func (t Token) Valid(now time.Time) bool {
+ // a token granted "repo" also satisfies a check for "repo:read".
+ func (t Token) HasScope(want string) bool {
+ 	for _, s := range t.Scopes {
+-		if strings.HasPrefix(s, want) {
++		if s == want || strings.HasPrefix(want, s+":") {
+ 			return true
+ 		}
+ 	}
