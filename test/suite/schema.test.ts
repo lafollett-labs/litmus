@@ -31,10 +31,10 @@ test('a config is rejected for a missing model, an unknown provider, a typo, or 
 test('compare gets its documented defaults, and out-of-range values are refused', () => {
   const base = { suites: ['./s'], configs: { fake: { provider: 'fake' } } }
   const c = ConfigFile.parse(base)
-  assert.deepEqual(c.compare, { tolerance: 0.05, resamples: 2000, seed: 1, warn_ratio: 1.5 })
+  assert.deepEqual(c.compare, { tolerance: 0.05, warn_ratio: 1.5 })
   assert.deepEqual(c.redact, [])
   assert.equal(ConfigFile.parse({ ...base, compare: { tolerance: 0 } }).compare.tolerance, 0)
-  const bad = [{ tolerance: 1 }, { tolerance: -0.1 }, { resamples: 99 }, { resamples: 150.5 }, { seed: 1.5 }, { warn_ratio: 1 }, { tolerence: 0.1 }]
+  const bad = [{ tolerance: 1 }, { tolerance: -0.1 }, { resamples: 2000 }, { seed: 1 }, { warn_ratio: 1 }, { tolerence: 0.1 }]
   for (const compare of bad) assert.equal(ConfigFile.safeParse({ ...base, compare }).success, false, JSON.stringify(compare))
   assert.equal(ConfigFile.safeParse({ ...base, redact: ['not a var'] }).success, false)
 })

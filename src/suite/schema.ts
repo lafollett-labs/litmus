@@ -64,8 +64,6 @@ export const ConfigFile = z.strictObject({
   compare: z
     .strictObject({
       tolerance: z.number().min(0).lt(1).default(0.05), // δ
-      resamples: z.int().min(100).default(2000),
-      seed: z.int().default(1),
       warn_ratio: z.number().gt(1).default(1.5),
     })
     .prefault({}),
