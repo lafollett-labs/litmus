@@ -11,7 +11,7 @@ import type { Executor, ExecJob } from '../executors/types.ts'
 import { gradeAll, judgeHash, makeJudges, runExtract, type GradeContext, type Judge, type TrialResult } from '../graders/index.ts'
 import { sumUsage } from '../graders/judges.ts'
 import { createProvider, priced, type Provider } from '../providers/index.ts'
-import { buildWorkdir } from '../sandbox/workdir.ts'
+import { buildWorkdir, type Workdir } from '../sandbox/workdir.ts'
 import { compare, type CompareOptions, type CompareSide } from '../stats/compare.ts'
 import { settle } from '../stats/verdict.ts'
 import { RunStore, type RunManifest } from '../store/store.ts'
@@ -58,7 +58,7 @@ const total = (parts: Usage[]): Usage => sumUsage(parts.filter(u => u.input_toke
 
 // Exponential with jitter: 1 s, 2 s, 4 s ... capped at 30 s, so a throttled
 // provider is not hammered by every concurrent trial at once.
-const defaultBackoff = (attempt: number) => Math.min(30_000, 1000 * 2 ** (attempt - 1)) * (0.5 + Math.random() / 2)
+export const defaultBackoff = (attempt: number) => Math.min(30_000, 1000 * 2 ** (attempt - 1)) * (0.5 + Math.random() / 2)
 
 // docs/ARCHITECTURE.md § Flow of a run.
 export async function run(o: RunOptions): Promise<RunOutcome> {
@@ -70,7 +70,10 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
   const signal = o.signal ? AbortSignal.any([o.signal, fault.signal]) : fault.signal
   const now = o.now ?? (() => new Date())
   const backoff = o.backoffMs ?? defaultBackoff
-  const redact: Redactor = redactor(secretValues(config.redact, env))
+  // The harness reads its credentials from process.env whatever `env` says,
+  // so both are scrubbed.
+  const redact: Redactor = redactor(secretValues(config.redact, o.env ? { ...process.env, ...o.env } : process.env))
+  if (new Set(o.configs).size !== o.configs.length) throw new ConfigError(`config named twice in ${o.configs.join(',')}`)
   for (const name of o.configs) if (!Object.hasOwn(config.configs, name)) throw new ConfigError(`no config named "${name}" (defined: ${Object.keys(config.configs).join(', ')})`)
 
   const jobs = expand(o)
@@ -103,12 +106,17 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
   }, redact)
   // A subscriber that throws (a closed SSE socket) is its own problem; it
   // never takes the run down with it.
+  // The listener hears every event even when the store cannot record it, so a
+  // live view still sees run.failed when the store is what failed.
   const emit = (e: RunEvent) => {
-    store.event(e)
     try {
-      o.listener?.(redact.json(e))
-    } catch {
-      // the listener's failure is not the run's
+      store.event(e)
+    } finally {
+      try {
+        o.listener?.(redact.json(e))
+      } catch {
+        // the listener's failure is not the run's
+      }
     }
   }
 
@@ -169,7 +177,8 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
       emit({ type: 'case.settled', case: v.case, config: v.config, verdict: v })
     }
 
-    const ctx = { o, config, signal, redact, store, emit, judge, backoff, env }
+    const leaks: string[] = []
+    const ctx = { o, config, signal, redact, store, emit, judge, backoff, env, leaks }
     let next = 0
     let broke: { error: unknown } | undefined
     // A trial that throws becomes an error trial and the run goes on. Only when
@@ -215,7 +224,17 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
     const summary = Object.fromEntries((['PASS', 'FAIL', 'FLAKY', 'ERROR', 'INCONCLUSIVE'] as VerdictKind[]).map(k => [k, verdicts.filter(v => v.verdict === k).length])) as Record<VerdictKind, number>
     emit({ type: cancelled ? 'run.cancelled' : 'run.finished', run: id, summary })
     const manifest = store.finish(cancelled ? 'cancelled' : 'finished', now())
-    return { id, dir: store.dir, manifest, verdicts, comparisons, notes }
+    return { id, dir: store.dir, manifest, verdicts, comparisons, notes: [...notes, ...leaks] }
+  }
+}
+
+// A workdir that will not go is reported, never thrown: by then the trial's
+// record may be written, and its outcome is not the cleanup's to decide.
+function release(w: Workdir | undefined, x: Ctx): void {
+  try {
+    w?.cleanup()
+  } catch (e) {
+    x.leaks.push(`workdir ${w!.root} was not removed: ${(e as Error).message}`)
   }
 }
 
@@ -249,6 +268,7 @@ type Ctx = {
   judge: (name: string) => Judge
   backoff: (attempt: number) => number
   env: NodeJS.ProcessEnv
+  leaks: string[] // workdirs that would not go; a note, never the trial's outcome
 }
 
 // A trial: attempts until one is not a retryable infra error, then extraction
@@ -280,13 +300,13 @@ async function trial(job: Job, x: Ctx): Promise<TrialRecord> {
     // What the trial spent is known here and nowhere else.
     throw new TrialCrash(e, attempts, total(spent), gradingSpent.length ? total(gradingSpent) : undefined)
   } finally {
-    workdir?.cleanup()
+    release(workdir, x)
   }
 
   async function attemptAndGrade(): Promise<TrialRecord> {
       for (let attempt = 1; attempt <= 1 + config.retries && !signal.aborted; attempt++) {
         attempts = attempt
-        workdir?.cleanup()
+        release(workdir, x)
         workdir = undefined
         try {
           workdir = buildWorkdir(job.case, { run: x.store.manifest.id, key: job.key, attempt }, x.o.workBase ?? tmpdir(), [config.resultsDir, ...config.roots])
@@ -367,13 +387,15 @@ async function trial(job: Job, x: Ctx): Promise<TrialRecord> {
     const status: TrialStatus =
       signal.aborted || result?.exit === 'cancelled'
         ? 'cancelled'
-        : !result || result.exit === 'infra_error' || gradeError !== undefined
+        : !result || result.exit === 'infra_error'
           ? 'error'
-          : result.exit === 'model_failure'
+          : result.exit === 'model_failure' // graded for metrics only, so a grading error cannot hide it
             ? 'fail'
-            : graders.every(r => r.pass)
-              ? 'pass'
-              : 'fail'
+            : gradeError !== undefined
+              ? 'error'
+              : graders.every(r => r.pass)
+                ? 'pass'
+                : 'fail'
     const reason = [failure ?? result?.reason, gradeError, extractError && `extraction: ${extractError}`].filter(Boolean).join('; ')
     const detail = readTrial(x.store.trialDir(job.ref), artifacts)
     const record: TrialRecord = {

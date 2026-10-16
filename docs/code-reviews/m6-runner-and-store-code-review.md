@@ -99,6 +99,29 @@ One more LOW, found while testing M10's `validate`, was fixed after approval in 
 | - | - | - |
 | LOW-006 (self) | Every workdir removed itself, but the run's `litmus/<run>/` above them stayed, one empty directory in TMPDIR per run | Fixed: the run removes that directory when it ends, however it ends, and only if it is empty. The end-to-end test asserts nothing is left under the work base; the mutant fails it. At `20be21c`, `npm run check` exits 0 and 450 of 454 tests pass, with 4 (live) skipped |
 
+## Gate 2 (PR #9)
+
+Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for it.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `df46fab` | 1 HIGH, 3 MEDIUM, 5 LOW, 1 INFO | All fixed, as below |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| HIGH-001 | A workdir that would not delete (a Go module cache is 0555) threw from the trial's `finally`. The trial was rewritten as an error with no spend, `trial.finished` was emitted twice, and the workdir leaked | Fixed. Removal makes every directory writable (links are not followed) and tries again, and a workdir that still will not go is a note in `RunOutcome.notes`, never the trial's outcome. Two tests: a 0555 module cache is removed and the trial stays `pass` with its $2; a read-only parent leaves a note and a `pass` |
+| MEDIUM-001 | `run.failed` never reached the listener when the store was what failed | Fixed. `emit` calls the listener in a `finally`, so the listener hears every event whether or not the store recorded it. Tested with `events.jsonl` made read-only mid-run |
+| MEDIUM-002 | Retry classification was under-tested: six mutants survived | Tested: the exact budget (3 attempts at `retries: 2`); a thrown bug, a case error and an unmarked infra result are each attempted once; a non-retryable judge error is called once and a throttling one `1 + retries` times; `defaultBackoff` is exported and its schedule pinned |
+| MEDIUM-003 | The case hash's prompt and judge components, and "a cancelled run compares nothing", were untested | Tested: a prompt file outside the case and a judge model change each exclude the case, a suite tag change does not, and a cancelled two-config run has no comparisons and no `comparison.json` |
+| LOW-001 | A `model_failure` trial whose grading errored was `error`, which hid a timeout as ERROR | Fixed. `model_failure` is `fail` before a grading error is considered, and the grading error stays in the reason. The Flow pseudocode matches. Tested |
+| LOW-002 | `run()` accepted a config named twice | Fixed: a ConfigError before anything runs. Tested |
+| LOW-003 | The redactor read `env`, but the harness reads its credentials from `process.env` | Fixed. The redactor takes values from both. Tested with a key only in `process.env` |
+| LOW-004 | Listener redaction, `writeTrial` redaction, the final stale-findings removal, and the grading catch's abort check were untested | Tested. The abort check needed an extraction case: `gradeAll` already turns any error after a cancel into the cancel, but extraction calls its judge directly |
+| LOW-005 | The Flow pseudocode said `run.json` records suite and extractor hashes | Fixed: "case, subject, judge and plugin hashes" |
+| INFO-001 | The pool, cancel and fault paths, store atomicity and redaction to disk were verified sound | None needed |
+
+21 mutants, one for each fix and each survivor the review named, are all killed.
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `bdbca9e`. The PR opens once M5 (#7) merges and this branch is rebased onto main. It carries the post-approval commits `404134c`, `72ce24c` and `20be21c` (LOW and INFO fixes only), and Gate 2 reviews them.

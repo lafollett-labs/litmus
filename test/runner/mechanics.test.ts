@@ -1,13 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
 import type { ExecutorResult, RunEvent } from '../../src/core/types.ts'
 import type { Executor } from '../../src/executors/types.ts'
 import type { Provider } from '../../src/providers/types.ts'
 import { baselineSide } from '../../src/runner/rerun.ts'
-import { run, type RunOptions } from '../../src/runner/run.ts'
+import { defaultBackoff, run, type RunOptions } from '../../src/runner/run.ts'
 import { listRuns, readRun, readTrials } from '../../src/store/store.ts'
 import { loadProject } from '../../src/suite/load.ts'
 import { select } from '../../src/suite/select.ts'
@@ -278,4 +278,186 @@ test('a schema file gone since load is a config error, before any run is written
   rmSync(join(root, 'suites/e2e/schemas/s.json'))
   await assert.rejects(run(o), (e: Error) => e instanceof ConfigError && /e2e\/c: schema \.\.\/\.\.\/schemas\/s\.json cannot be read: ENOENT/.test(e.message))
   assert.equal(existsSync(runs(root)), false)
+})
+
+test('a workdir the subject made read-only is still removed, and the trial keeps its outcome and spend', async () => {
+  const root = project(harness('c', 1))
+  const events: RunEvent[] = []
+  const r = await run(options(root, { listener: e => events.push(e), executors: { harness: async job => {
+    // What `go mod download` leaves under HOME: 0555 directories of 0444 files.
+    const mod = join(job.workdir.home, 'go/pkg/mod/example.com/m@v1')
+    mkdirSync(mod, { recursive: true })
+    writeFileSync(join(mod, 'go.mod'), 'module m\n')
+    chmodSync(join(mod, 'go.mod'), 0o444)
+    for (let d = mod; d !== job.workdir.home; d = dirname(d)) chmodSync(d, 0o555)
+    return done(job, { usage: { input_tokens: 500, output_tokens: 50, cost_usd: 2 } })
+  } } }))
+  const [t] = readTrials(runs(root), r.id)
+  assert.deepEqual([t!.status, t!.usage, r.verdicts.map(v => v.verdict), r.notes], ['pass', { input_tokens: 500, output_tokens: 50, cost_usd: 2 }, ['PASS'], []])
+  assert.deepEqual(events.filter(e => e.type === 'trial.finished').length, 1)
+  assert.deepEqual(workLeft(root, r.id), [])
+})
+
+test('a workdir that cannot be removed at all is a note, never the trial\'s outcome', async () => {
+  const root = project(harness('c', 1))
+  let parent = ''
+  const r = await run(options(root, { executors: { harness: async job => {
+    // Its parent is read-only, so no chmod inside the workdir can free it.
+    parent = dirname(job.workdir.root)
+    chmodSync(parent, 0o555)
+    return done(job)
+  } } })).finally(() => chmodSync(parent, 0o755))
+  const [t] = readTrials(runs(root), r.id)
+  assert.deepEqual([t!.status, r.verdicts.map(v => v.verdict)], ['pass', ['PASS']])
+  assert.equal(r.notes.length, 1)
+  assert.match(r.notes[0]!, /^workdir .* was not removed: /)
+})
+
+test('when the store itself fails, the listener still hears run.failed', async () => {
+  const root = project(harness('c', 1))
+  const events: RunEvent[] = []
+  const listener = (e: RunEvent) => {
+    events.push(e)
+    if (e.type === 'run.started') chmodSync(join(runs(root), e.run, 'events.jsonl'), 0o444)
+  }
+  await assert.rejects(run(options(root, { executors: { harness: async job => done(job) }, listener })), /EACCES/)
+  assert.equal(events.at(-1)!.type, 'run.failed')
+})
+
+test('the retry budget is exact: 1 + retries attempts for an error that stays retryable', async () => {
+  const root = project(harness('c', 1))
+  const r = await run(options(root, { executors: { harness: async job => blip(job) } }))
+  assert.deepEqual(readTrials(runs(root), r.id).map(t => [t.status, t.attempts]), [['error', 3]])
+})
+
+test('only a retryable infra error is retried: a thrown bug, a case error, or an unmarked infra result is attempted once', async () => {
+  const root = project(harness('c', 1))
+  const attempts = async (executor: Executor) => readTrials(runs(root), (await run(options(root, { executors: { harness: executor } }))).id).map(t => [t.status, t.attempts])
+  assert.deepEqual(await attempts(async () => { throw new TypeError('bug') }), [['error', 1]])
+  assert.deepEqual(await attempts(async () => { throw new ConfigError('change.patch does not apply') }), [['error', 1]])
+  assert.deepEqual(await attempts(async job => ({ ...done(job), exit: 'infra_error', reason: 'no retryable flag' })), [['error', 1]])
+  assert.deepEqual(await attempts(async () => { throw new InfraError('socket hang up', { retryable: true }) }), [['error', 3]])
+})
+
+test('grading is retried only for a retryable infra error, and at most retries times', async () => {
+  const root = project(harness('g', 1, '[{ kind: judge, judge: j, question: "fine?", target: out.txt }]'))
+  const judged = async (fail: () => never) => {
+    let calls = 0
+    const provider = { id: 'anthropic', complete: async () => (calls++, fail()) } as unknown as Provider
+    const r = await run(options(root, { executors: { harness: async job => done(job) }, judgeProvider: () => provider }))
+    return [readTrials(runs(root), r.id)[0]!.status, calls]
+  }
+  assert.deepEqual(await judged(() => { throw new InfraError('judge auth', { retryable: false }) }), ['error', 1])
+  assert.deepEqual(await judged(() => { throw new InfraError('judge 429', { retryable: true }) }), ['error', 3])
+})
+
+test('a timed-out trial whose grading fails is still a fail, with the grading error in its reason', async () => {
+  const root = project(harness('g', 1, '[{ kind: judge, judge: j, question: "fine?", target: out.txt }]'))
+  const provider = { id: 'anthropic', complete: async () => { throw new InfraError('judge 429', { retryable: true }) } } as unknown as Provider
+  const r = await run(options(root, { executors: { harness: async job => done(job, { exit: 'model_failure', reason: 'timeout after 5s' }) }, judgeProvider: () => provider }))
+  const [t] = readTrials(runs(root), r.id)
+  assert.deepEqual([t!.status, r.verdicts.map(v => v.verdict)], ['fail', ['FAIL']])
+  assert.match(t!.reason!, /^timeout after 5s; grading failed: judge 429$/)
+})
+
+test('the default backoff doubles from 1 s, is capped at 30 s, and jitters down to half', () => {
+  const random = Math.random
+  try {
+    Math.random = () => 0.999999
+    assert.deepEqual([1, 2, 3, 5, 6, 9].map(a => Math.round(defaultBackoff(a))), [1000, 2000, 4000, 16000, 30000, 30000])
+    Math.random = () => 0
+    assert.deepEqual([1, 6].map(defaultBackoff), [500, 15000])
+  } finally {
+    Math.random = random
+  }
+})
+
+test('a config named twice is refused before anything runs', async () => {
+  const root = project(harness('c', 1))
+  await assert.rejects(run(options(root, { configs: ['fake', 'fake'] })), (e: Error) => e instanceof ConfigError && /config named twice/.test(e.message))
+  assert.equal(existsSync(runs(root)), false)
+})
+
+test('the case hash covers the prompt and the judges a case calls, not its tags', async () => {
+  const root = project({
+    'suites/e2e/suite.yaml': 'name: e2e\ndefaults: { tags: [one] }\n',
+    'suites/e2e/prompt.md': 'v1\n',
+    'suites/e2e/cases/c/case.yaml': 'name: c\nexecutor: { kind: harness, harness: claude-code, prompt_file: ../../prompt.md }\ngraders: [{ kind: judge, judge: j, question: "fine?", target: out.txt }]\ntrials: 1\n',
+    'suites/e2e/cases/c/fixture/a.txt': 'x\n',
+  })
+  const provider = { id: 'anthropic', complete: async () => reply('{"pass": true, "rationale": "ok"}') } as unknown as Provider
+  const go = async (base?: string) => run(options(root, { executors: { harness: async job => done(job) }, judgeProvider: () => provider, ...(base ? { baseline: baselineSide(runs(root), base) } : {}) }))
+  const excluded = async (change: () => void) => {
+    const base = await go()
+    change()
+    return (await go(base.id)).comparisons[0]!.excluded.map(x => x.case)
+  }
+  assert.deepEqual(await excluded(() => writeFileSync(join(root, 'suites/e2e/suite.yaml'), 'name: e2e\ndefaults: { tags: [two] }\n')), [])
+  assert.deepEqual(await excluded(() => writeFileSync(join(root, 'suites/e2e/prompt.md'), 'v2\n')), ['e2e/c'])
+  const config = join(root, 'litmus.config.yaml')
+  assert.deepEqual(await excluded(() => writeFileSync(config, readFileSync(config, 'utf8').replace('claude-judge', 'claude-judge-2'))), ['e2e/c'])
+})
+
+test('a cancelled run compares nothing, and writes no comparison.json', async () => {
+  const root = project(harness('c', 4))
+  const ctl = new AbortController()
+  setTimeout(() => ctl.abort(new Error('cancelled')), 50)
+  const r = await run(options(root, { configs: ['fake', 'fake-b'], executors: { harness: async job => (await tick(30), done(job)) }, signal: ctl.signal }))
+  assert.deepEqual([r.manifest.status, r.comparisons, existsSync(join(r.dir, 'comparison.json'))], ['cancelled', [], false])
+})
+
+test('the listener hears every event redacted, even one a producer left raw', async () => {
+  const root = project(harness('c', 1))
+  const KEY = 'sk-ant-planted-listener-0123456789'
+  const events: RunEvent[] = []
+  await run(options(root, { env: { ANTHROPIC_API_KEY: KEY }, listener: e => events.push(e), executors: { harness: async job => {
+    job.emit({ type: 'trial.retry', key: job.key, attempt: 1, reason: `said ${KEY}` })
+    return done(job)
+  } } }))
+  const text = JSON.stringify(events)
+  assert.ok(!text.includes(KEY) && text.includes('[REDACTED]'))
+})
+
+test('a cancel during grading retries nothing: no judge call and no retry event', async () => {
+  // Extraction calls its judge directly, outside gradeAll's cancel handling.
+  const root = project({
+    'suites/e2e/cases/x/case.yaml': 'name: x\nexecutor: { kind: harness, harness: claude-code, prompt: go }\nextract: { from: out.txt, to: findings.json, with: j }\ngraders: [{ kind: file-exists, path: findings.json }]\ntrials: 1\n',
+    'suites/e2e/cases/x/fixture/a.txt': 'x\n',
+  })
+  const ctl = new AbortController()
+  let calls = 0
+  // The 429 settles the judge's race first and the cancel lands just after, so
+  // grading sees a retryable error on a run that is already cancelled.
+  const provider = { id: 'anthropic', complete: async () => { calls++; queueMicrotask(() => ctl.abort(new Error('cancelled'))); throw new InfraError('judge 429', { retryable: true }) } } as unknown as Provider
+  const events: RunEvent[] = []
+  const r = await run(options(root, { executors: { harness: async job => done(job) }, judgeProvider: () => provider, signal: ctl.signal, listener: e => events.push(e) }))
+  assert.deepEqual([readTrials(runs(root), r.id)[0]!.status, calls, events.filter(e => e.type === 'trial.retry')], ['cancelled', 1, []])
+})
+
+test('when the last grading attempt fails after its extraction succeeded, no findings.json is left', async () => {
+  const root = project({
+    'suites/e2e/cases/x/case.yaml': 'name: x\nexecutor: { kind: harness, harness: claude-code, prompt: go }\nextract: { from: out.txt, to: findings.json, with: j }\ngraders: [{ kind: judge, judge: j, question: "fine?", target: out.txt }]\ntrials: 1\n',
+    'suites/e2e/cases/x/fixture/a.txt': 'x\n',
+  })
+  const finding = '{"findings":[{"file":"a.txt","line":1,"severity":"high","category":"bug","title":"t","explanation":"e"}]}'
+  let calls = 0
+  // Each grading attempt extracts, then the judge fails with an error that is not retried.
+  const provider = { id: 'anthropic', complete: async () => (++calls % 2 === 1 ? reply(finding) : (() => { throw new InfraError('judge auth', { retryable: false }) })()) } as unknown as Provider
+  const r = await run(options(root, { executors: { harness: async job => done(job) }, judgeProvider: () => provider }))
+  assert.equal(readTrials(runs(root), r.id)[0]!.status, 'error')
+  assert.deepEqual(readdirSync(join(r.dir, 'trials/e2e/x/fake/1/artifacts')), ['out.txt'])
+})
+
+test('a credential only in process.env is scrubbed too, since the harness reads its keys from there', async () => {
+  const root = project(harness('c', 1))
+  const KEY = 'sk-ant-planted-process-env-0123456789'
+  const saved = process.env.ANTHROPIC_API_KEY
+  process.env.ANTHROPIC_API_KEY = KEY
+  try {
+    const r = await run(options(root, { env: {}, executors: { harness: async job => done(job, { reason: `printed ${KEY}` }) } }))
+    assert.equal(readTrials(runs(root), r.id)[0]!.reason, 'printed [REDACTED]')
+  } finally {
+    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY
+    else process.env.ANTHROPIC_API_KEY = saved
+  }
 })

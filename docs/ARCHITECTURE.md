@@ -335,7 +335,7 @@ proof runs.
 
 ```
 run = select(cases) × configs × trials(case)
-write run.json                           # resolved configs (no secrets), hashes of every suite, case, subject, judge and extractor
+write run.json                           # resolved configs (no secrets); case, subject, judge and plugin hashes
 
 for each job, at most `concurrency` at once:
     for attempt in 1 .. 1 + retries:
@@ -352,8 +352,8 @@ for each job, at most `concurrency` at once:
         result.exit == cancelled,
           or the run's cancel aborted this trial    -> cancelled   # checked first, so a cancel can never pass
         result.exit == infra_error                  -> error       # never graded
+        result.exit == model_failure                -> fail        # graders ran for metrics only; a grading error goes in the reason
         grading raised InfraError after retries     -> error
-        result.exit == model_failure                -> fail        # graders ran for metrics only
         every grader passed                         -> pass
         else                                        -> fail
     write trial.json, transcript.jsonl, artifacts/   # usage summed over every attempt
@@ -398,7 +398,17 @@ A grading retry emits `trial.retry` too, with its reason prefixed `grading:`.
 A listener that throws is ignored, so a closed SSE socket never stops a run.
 If litmus cannot record even an error trial (the store cannot be written),
 every worker stops, `run.failed` is emitted, `run.json` is marked `failed`,
-and the run rejects with the error.
+and the run rejects with the error. The listener hears every event whether or
+not the store could record it, so a live view sees `run.failed` even when the
+store is what failed. A run that names one config twice is refused before it
+starts.
+
+A workdir is removed when its attempt ends. A subject can leave directories it
+cannot write (Go's module cache under `HOME` is read-only), so when the first
+removal fails every directory in the workdir is made writable, without
+following links, and removal is tried again. A workdir that still will not go
+is reported in the run's notes. It never changes the trial's status or
+record.
 
 What a case's hash covers, and which trials WARN's medians use, is in
 § Comparison.
@@ -1017,7 +1027,9 @@ A rerun is a new run, and its `run.json` names the parent run it came from.
 the run loaded.
 
 **Redaction.** Before anything is written to disk or printed by a reporter, the
-exact values of these environment variables are replaced with `[REDACTED]`:
+exact values of these environment variables are replaced with `[REDACTED]`.
+The values are read from the process environment and from any environment the
+run is given, because the harness reads its credentials from the process:
 
 - `ANTHROPIC_API_KEY`
 - `OPENROUTER_API_KEY`

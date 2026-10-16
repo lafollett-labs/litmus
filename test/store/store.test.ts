@@ -15,7 +15,9 @@ test('every record and event is redacted before it is written, even one no produ
   const s = RunStore.create(results, { ...manifest(ID), selection: ['k"e\\y'] }, redactor(['k"e\\y']))
   s.event({ type: 'trial.retry', key: 'e2e/c@f#1', attempt: 1, reason: 'said k"e\\y' })
   s.verdicts([])
-  for (const f of ['run.json', 'events.jsonl']) {
+  mkdirSync(s.trialDir({ suite: 'e2e', case: 'c', config: 'f', trial: 1 }), { recursive: true })
+  s.writeTrial({ key: 'e2e/c@f#1', case: 'e2e/c', config: 'f', trial: 1, reason: 'said k"e\\y' } as unknown as Parameters<RunStore['writeTrial']>[0])
+  for (const f of ['run.json', 'events.jsonl', 'trials/e2e/c/f/1/trial.json']) {
     const text = readFileSync(join(s.dir, f), 'utf8')
     assert.ok(!text.includes('k\\"e') && !text.includes('k"e'), f)
     assert.ok(text.includes('[REDACTED]'), f)
