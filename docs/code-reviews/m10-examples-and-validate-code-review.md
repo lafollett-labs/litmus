@@ -126,6 +126,7 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | 1 | `98064a9` | 2 MEDIUM, 2 LOW, 2 INFO | Fixed, as below |
 | 2 | `b82685d` | 1 MEDIUM, 3 LOW, 1 INFO | All round-1 findings RESOLVED (CI: Go 1.26.9, `GOTOOLCHAIN=local` reaches proofs and credentials do not). New findings fixed, as below |
 | 3 | `52697d8` | 1 MEDIUM, 1 LOW | All round-2 findings RESOLVED (a disk comparison catches a rename, a delete and a file becoming a directory, which `--numstat` would miss). New findings fixed, as below |
+| 4 | `c0bd387` | 1 LOW | ✅ APPROVED. Both round-3 findings RESOLVED; no other CLI path prints config-derived text unredacted; `state()`'s catch-all hides no change a fix can make. The LOW (a proof that makes its own files unreadable on its first run exits 3) moves to the M11 branch, so the code merged here is the code approved |
 
 PE-Vue checked the ground truth independently:
 - Each truth range matches the post-change file.
