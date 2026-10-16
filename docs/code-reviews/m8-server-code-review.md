@@ -109,6 +109,7 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | Round | Reviewed SHA | Found | Outcome |
 | - | - | - | - |
 | 1 | `01a936a` | 2 MEDIUM, 2 LOW, 2 INFO | Fixed, as below |
+| 2 | `43e8443` | 0 at MEDIUM or above; 3 LOW | **Clean.** Both MEDIUMs are RESOLVED; the worst response a litmus-written trial can produce is 268 MB, half V8's string limit. LOW-001 was PARTIAL: the close() mutant failed only by hanging. Fixed below |
 
 | ID | Finding | Disposition |
 | - | - | - |
@@ -118,6 +119,14 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | LOW-002 | The docs said any missing run is a 404, but one named in a query or body is a 400 | Fixed in the docs: a run named in the path is a 404, and one named in a query or body is a 400, as the CLI's exit 2 |
 | INFO-001 | The CSP and SPA fallback will meet Vite's `data:` inlining, stale hashed assets and unlisted MIME types | Carried to M9, which builds the UI |
 | INFO-002 | Synchronous reads of every run share the event loop with live runs | Accepted at today's scale |
+
+Round 2:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | With a config broken while the server ran, `scrub` fell back to the credential variables and dropped the config's `redact:` names | Fixed: `scrub` keeps the last names that loaded, seeded at startup. Tested with a `redact:` value quoted by a YAML error; the mutant is killed |
+| LOW-002 | The budget counted raw bytes, so control-byte text expanded six-fold, to a 201 MB body | Fixed: each artifact is charged what its text costs in the response. Tested with 6 MiB of control bytes, which uses the budget up on its own; the raw-bytes mutant is killed |
+| LOW-003 | The close() test caught its mutant only by hanging the suite | Fixed: `close()` is raced against 5 s, as the stuck-client test does. The mutant now fails in seconds |
 
 ## Merge Eligibility (latest)
 

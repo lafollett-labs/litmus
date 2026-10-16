@@ -360,7 +360,7 @@ test('close() cancels a live run and waits for it to be written', async () => {
   const other = await serve({ configFile: join(ROOT, 'litmus.config.yaml'), port: 0, uiDir: join(ROOT, 'ui'), env: {}, runSeams: { backoffMs: () => 0, executors: { model: slow } } })
   const r = await fetch(`${other.url}/api/runs`, { method: 'POST', headers: { origin: other.url, 'content-type': 'application/json' }, body: JSON.stringify({ select: ['e2e/slow'], configs: ['fake'] }), signal: AbortSignal.timeout(10_000) })
   const { id } = (await r.json()) as { id: string }
-  await other.close()
+  await Promise.race([other.close(), new Promise((_, no) => setTimeout(() => no(new Error('close() never cancelled the live run')), 5000))])
   const dir = join(ROOT, '.litmus/runs', id)
   assert.equal(JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).status, 'cancelled')
   assert.equal(JSON.parse(readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').at(-1)!).type, 'run.cancelled')
@@ -392,6 +392,37 @@ test('an error the server reports is redacted, even a YAML error quoting a key',
     const text = await r.text()
     assert.equal(r.status, 400)
     assert.ok(text.includes('[REDACTED]') && !text.includes(KEY), text)
+  } finally {
+    await other.close()
+  }
+})
+
+test('the artifact budget counts what text costs in the response, where a control byte is six characters', async () => {
+  const { id } = (await post('/api/runs', { select: ['e2e/passes'], configs: ['fake'] })).json()
+  await events(id)
+  const dir = join(ROOT, '.litmus/runs', id, 'trials/e2e/passes/fake/1')
+  // 6 MiB of control bytes is 36 MiB in JSON: past the budget on its own.
+  writeFileSync(join(dir, 'artifacts', 'ctl.txt'), Buffer.alloc(6 << 20, 0x01))
+  writeFileSync(join(dir, 'artifacts', 'next.txt'), 'small')
+  const record = JSON.parse(readFileSync(join(dir, 'trial.json'), 'utf8'))
+  writeFileSync(join(dir, 'trial.json'), JSON.stringify({ ...record, artifacts: ['ctl.txt', 'next.txt'] }))
+  const r = await call('GET', `/api/runs/${id}/trial?key=${encodeURIComponent('e2e/passes@fake#1')}`)
+  const got = r.json().artifacts as { name: string; text?: string; truncated?: true }[]
+  assert.deepEqual(got.map(a => [a.name, a.text?.length, a.truncated]), [['ctl.txt', 6 << 20, undefined], ['next.txt', undefined, true]])
+})
+
+test('an error quotes a redact value redacted even after the config broke while the server ran', async () => {
+  const root = tree({
+    'litmus.config.yaml': 'suites: [./suites]\nresults: ./.litmus/runs\nredact: [MY_TOKEN]\nconfigs:\n  fake: { provider: fake }\n',
+    'suites/e2e/suite.yaml': 'name: e2e\n',
+  })
+  const other = await serve({ configFile: join(root, 'litmus.config.yaml'), port: 0, uiDir: join(ROOT, 'ui'), env: { MY_TOKEN: TOKEN } })
+  try {
+    writeFileSync(join(root, 'litmus.config.yaml'), `suites: [./suites]\nresults: ./.litmus/runs\nredact: [MY_TOKEN]\nconfigs:\n  fake: { provider: fake, model: "${TOKEN}" : bad }\n`)
+    const r = await fetch(`${other.url}/api/configs`, { signal: AbortSignal.timeout(10_000) })
+    const text = await r.text()
+    assert.equal(r.status, 400)
+    assert.ok(text.includes('[REDACTED]') && !text.includes(TOKEN), text)
   } finally {
     await other.close()
   }

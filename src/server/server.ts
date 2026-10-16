@@ -62,15 +62,22 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
   let origins = new Set<string>()
   // Everything the server says about an error (a body, a stderr line) is
   // redacted as the CLI's would be: a YAML error quotes the line it failed on,
-  // and that line can hold a key. The config's own list when it still loads.
+  // and that line can hold a key. The config's own list when it still loads,
+  // and otherwise the last list that did: a config edited into a broken one
+  // while the server runs is exactly when its error quotes a value.
+  let names: readonly string[] = []
   const scrub = (text: string) => {
-    let names: readonly string[] = []
     try {
       names = loadConfig(o.configFile, env).redact
     } catch {
-      // the credential variables alone
+      // keep the last names that loaded
     }
     return redactor(secretValues(names, o.env ? { ...process.env, ...o.env } : process.env)).text(text)
+  }
+  try {
+    names = loadConfig(o.configFile, env).redact
+  } catch {
+    // a config that does not load yet: each request says why
   }
 
   const server = createServer((req, res) => {
@@ -272,7 +279,7 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
       if ('size' in got) return { name, size: got.size, truncated: true }
       const text = utf8(got.data)
       if (text === undefined) return { name, size: got.data.length, binary: true }
-      left -= got.data.length
+      left -= JSON.stringify(text).length - 2 // what it costs in the response: a control byte is six characters
       return { name, size: got.data.length, text }
     })
     return { record: parsed, transcript, ...('size' in log ? { transcript_truncated: true } : {}), artifacts }
