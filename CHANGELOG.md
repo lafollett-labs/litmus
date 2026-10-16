@@ -5,7 +5,7 @@ All notable changes to litmus. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may
 change the config, the suite format or the CLI.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-10-16
 
 The first release: a runner for LLM and agent evals that runs a suite, one
 case or one trial, shows it live, and says which cases flipped between two
@@ -61,7 +61,8 @@ models.
   - keyboard and screen-reader support
 - **`litmus validate`.** It checks every case on a disposable copy. It runs
   each seeded bug's proof, which must fail on the change and pass once the
-  bug's fix is applied.
+  bug's fix is applied. Ground truth must name real lines in the post-change
+  tree, and a fix may not edit its own proof.
 - **Example suites.** `smoke` covers every verdict; `canaries` tests the
   graders; `code-review` has a Go case with two seeded bugs and a decoy, a
   TypeScript seeded case, and a TypeScript clean case.

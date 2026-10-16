@@ -185,7 +185,7 @@ stay on the branch, and their messages go into the squash commit's body.
     reads the verdicts. Tests also cover a bad `Host`, and a missing or foreign
     `Origin` on a POST (all rejected), plus cancelling a run.
 
-- [ ] **M9: UI**
+- [x] **M9: UI**
   - Vue 3 and Vite, with the scripts `ui:dev`, `ui:build` and `test:ui`.
   - The toolbar, the tree with live status, the detail pane (transcript,
     graders, findings, usage), the compare view, and light and dark themes.
@@ -211,7 +211,7 @@ stay on the branch, and their messages go into the squash commit's body.
     code-review --config fake` gives the expected verdicts. With a key present,
     the PR records one live run and what it cost.
 
-- [ ] **M11: Release 0.1.0**
+- [x] **M11: Release 0.1.0**
   - A README quickstart, with every command run exactly as written.
   - `CHANGELOG.md`, and ARCHITECTURE.md re-read against the code.
   - Version `0.1.0`, the tag `v0.1.0`, and a GitHub release. Nothing is
