@@ -1,6 +1,6 @@
 # Code Review: m11-release
 
-**Verdict:** ✅ APPROVED (round 2, locked to `8aa848b`)
+**Verdict:** ✅ APPROVED (Gate 1 round 2; Gate 2 round 3, locked to `354b8c6`)
 
 | | |
 | - | - |
@@ -129,6 +129,7 @@ Copilot is out of quota, so a fresh PE-Vue with no prior context stood in for it
 | - | - | - | - |
 | 1 | `44fe147` | 1 MEDIUM, 5 LOW, 4 INFO | Fixed, as below |
 | 2 | `861150a` | 2 LOW, 2 INFO | ✅ APPROVED: every round-1 finding is RESOLVED, and the release pass over the whole PR found nothing at MEDIUM or above. Nothing follows this PR, so its findings are fixed here before the tag, as the round-2 table below shows |
+| 3 | `354b8c6` | none | ✅ APPROVED: all four round-2 findings are RESOLVED, with M29 and M33–M35 killed and the JUnit passing `xmllint`. PE-Vue corrected its INFO-R2-002: Node's UTF-8 encoder had already replaced a split surrogate, so the old file was never malformed and only lost the emoji. The fix keeps the emoji |
 
 | ID | Finding | Disposition |
 | - | - | - |
