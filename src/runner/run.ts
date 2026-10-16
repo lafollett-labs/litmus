@@ -124,19 +124,13 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
     return await execute()
   } catch (e) {
     fault.abort(e)
-    // Best effort on each: the store is what failed. The event lets a live
-    // view end, and a replay of events.jsonl too when it can still be written;
-    // the listener hears it even when the store cannot.
-    const failed: RunEvent = { type: 'run.failed', run: id, error: redact.text((e as Error)?.message ?? String(e)) }
+    // Best effort on both: the store is what failed. The event lets a live
+    // view end (emit reaches the listener even when the store cannot), and a
+    // replay of events.jsonl too when it can still be written.
     try {
-      store.event(failed)
+      emit({ type: 'run.failed', run: id, error: redact.text((e as Error)?.message ?? String(e)) })
     } catch {
       // the error below says why
-    }
-    try {
-      o.listener?.(redact.json(failed))
-    } catch {
-      // the listener's failure is not the run's
     }
     try {
       store.finish('failed', now())
