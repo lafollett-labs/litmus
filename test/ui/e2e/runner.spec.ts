@@ -274,3 +274,14 @@ test('a refusal is announced through a live region that was there before it', as
   await expect(live).toHaveText(/the trial count must be a whole number/)
   await page.getByLabel('trials').fill('')
 })
+
+test('in forced colours (High Contrast) the status shapes still show', async ({ page }) => {
+  await page.emulateMedia({ forcedColors: 'active' })
+  await open(page)
+  // Run in the page; the test files have no DOM types.
+  type Styled = { getComputedStyle: (e: unknown) => { backgroundColor: string } }
+  const fill = (sel: string) => page.locator(sel).first().evaluate(el => (globalThis as unknown as Styled).getComputedStyle(el).backgroundColor)
+  const canvas = await fill('body')
+  for (const status of ['pass', 'fail']) expect(await fill(`.chip .icon.${status}`)).not.toBe(canvas)
+  await page.emulateMedia({ forcedColors: 'none' })
+})

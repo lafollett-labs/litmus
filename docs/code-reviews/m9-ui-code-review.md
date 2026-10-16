@@ -184,6 +184,7 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | Round | Reviewed SHA | Found | Outcome |
 | - | - | - | - |
 | 1 | `40eb128` | 1 HIGH, 3 MEDIUM, 4 LOW, 2 INFO | Fixed, as below |
+| 2 | `f9d9314` | 1 MEDIUM, 2 LOW, 2 INFO | All 10 round-1 findings RESOLVED. The LOW-003 fix opened a MEDIUM, fixed below |
 
 | ID | Finding | Disposition |
 | - | - | - |
@@ -197,6 +198,16 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | LOW-004 | The ruleset did not require the `ui` job | Done: the repository's `main` ruleset requires `check` and `ui` |
 | INFO-001 | Under `vite --host`, a LAN peer's request passed the Origin rewrite | Adopted: only a loopback host's own page is rewritten. Tested |
 | INFO-002 | The `ui` job's npm cache key omitted `tools/vue-tsc`'s lockfile | Adopted |
+
+Round 2:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | The new clip ran before redaction, so a secret straddling the 500-character cut left its prefix in `details` (probed: 29 of 49 characters) | Fixed: a file or title is redacted first, then clipped, in the details and the rationale alike. Tested with a secret across the cut and a 3,500-character title; both mutants (clip before redaction, an unclipped rationale) are killed |
+| LOW-001 | In forced colours (High Contrast) the four filled shapes vanished, since their fill is a background | Fixed: `forced-color-adjust: none` keeps their fill. An e2e test under forced colours asserts the fills differ from the canvas; without the rule, it fails |
+| LOW-002 | ARCHITECTURE said the bound keeps `trial.json` readable, but the rationale still quoted full titles | Fixed in the code, as MEDIUM-001 describes, and the docs say so |
+| INFO-001 | The same refusal twice is not announced again | Accepted: the banner does not change for a sighted user either |
+| INFO-002 | A lost server updates three status regions at once | Accepted: each says something true about its own part of the page |
 
 ## Merge Eligibility (latest)
 

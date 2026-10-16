@@ -48,6 +48,8 @@ defineProps<{ status: Status; decorative?: boolean }>()
   border-top: 1.5px solid var(--muted);
   transform: rotate(-45deg);
 }
+/* High Contrast replaces backgrounds, which would erase the filled shapes. */
+@media (forced-colors: active) { .pass, .fail, .flaky, .error { forced-color-adjust: none; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 </style>

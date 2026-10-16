@@ -176,7 +176,11 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
 
   const m = metrics(truth, findings, s, confirmed)
   const { failed, na } = checkBounds(spec.pass, m)
-  const where = (j: number) => `${findings[j]!.file}:${findings[j]!.line} "${findings[j]!.title}"`
+  // A file or title is the subject's text: redacted first, then clipped, since
+  // a clip through a secret would leave a prefix no redactor matches. Clipped
+  // in the rationale and the details alike, so trial.json stays readable.
+  const safe = (t: string) => clip(ctx.redact.text(t))
+  const where = (j: number) => `${safe(findings[j]!.file)}:${findings[j]!.line} "${safe(findings[j]!.title)}"`
   const lines: string[] = 'error' in read ? [read.error] : []
   lines.push(truth.bugs.length ? `matched ${s.pairs.length}/${truth.bugs.length} bugs` : `clean case: ${findings.length} finding(s)`)
   for (const p of s.pairs) lines.push(`  ${truth.bugs[p.bug]!.id} <- ${where(p.finding)}`)
@@ -189,9 +193,9 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
   for (const f of failed) lines.push(`failed: ${f}`)
   lines.push(...na)
   // Bounded, so trial.json stays readable by the server however much a
-  // review said: titles and paths are clipped, and the unmatched list stops at
-  // DETAILS_MAX with a count of the rest (the metrics count every one).
-  const at = (j: number) => ({ file: clip(findings[j]!.file), line: findings[j]!.line, title: clip(findings[j]!.title) })
+  // review said: the unmatched list stops at DETAILS_MAX with a count of the
+  // rest (the metrics count every one).
+  const at = (j: number) => ({ file: safe(findings[j]!.file), line: findings[j]!.line, title: safe(findings[j]!.title) })
   const details: ReviewDetails = {
     matched: s.pairs.map(p => ({ bug: truth.bugs[p.bug]!.id, ...at(p.finding) })),
     missed,

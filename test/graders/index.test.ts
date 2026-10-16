@@ -86,6 +86,18 @@ test('review details carry the subject\'s finding titles as data, and are redact
   })
 })
 
+test('a long title is redacted before it is clipped, so no part of a secret survives the cut', async () => {
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders:\n  - { kind: review-match, pass: { min_recall: 1 } }\n', { 'truth.yaml': truth, 'fix/b.patch': '' })
+  const secret = 'sk-ant-api03-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  // The secret straddles the 500-character clip.
+  const findings = [{ file: 'a.go', line: 3, severity: 'high', title: `${'x'.repeat(470)}${secret} ${'y'.repeat(3000)}`, explanation: 'e' }]
+  const rs = await gradeAll(trial({ artifacts: { 'findings.json': JSON.stringify({ findings }) } }), { ...ctx(c), redact: redactor([secret]) })
+  const text = JSON.stringify(rs[0])
+  assert.ok(!text.includes(secret.slice(0, 12)), text.slice(-300))
+  assert.ok(rs[0]!.details!.matched[0]!.title.includes('[REDACTED]'))
+  assert.ok(rs[0]!.rationale!.length < 2000)
+})
+
 test('a cancel rejects gradeAll, never a result set that reads like a failed trial', async () => {
   const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders:\n  - { kind: command, run: "sleep 5" }\n  - { kind: command, run: "touch graded-after" }\n')
   const t = trial()

@@ -813,9 +813,10 @@ Its result's `details` hold the outcomes for the UI's Findings tab:
 `matched` (file, line, title, bug), `missed` (bug ids), and `unmatched`
 (file, line, title, and `as`: decoy_hit, duplicate, nit or false_positive,
 with `near`, the decoy or bug it fell within reach of). They stay bounded, so
-`trial.json` stays readable: a file or title is clipped at 500 characters,
-and `unmatched` lists the first 500, with `omitted` counting the rest, which
-the metrics still count. The UI reads these,
+`trial.json` stays readable: in the details and the rationale alike, a file
+or title is redacted and then clipped at 500 characters (a clip through a
+secret would leave a prefix no redactor matches), and `unmatched` lists the
+first 500, with `omitted` counting the rest, which the metrics still count. The UI reads these,
 never the rationale: a title is the subject's text, and prose parsed back out
 of a rationale would let a title forge a line of its own.
 
