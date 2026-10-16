@@ -1,7 +1,7 @@
 // The environment every child process litmus starts (the harness, command
 // graders, validate proofs) begins from. It is an allowlist, never a denylist:
 // a new credential variable nobody thought of stays out by default.
-const ALLOW = ['PATH', 'LANG', 'TERM', 'TMPDIR', 'GOCACHE', 'GOMODCACHE', 'GOPATH', 'GOFLAGS', 'npm_config_cache']
+const ALLOW = ['PATH', 'LANG', 'TERM', 'TMPDIR', 'GOCACHE', 'GOMODCACHE', 'GOPATH', 'GOFLAGS', 'GOTOOLCHAIN', 'npm_config_cache']
 
 export function scrubbedEnv(
   opts: { home: string; extra?: Record<string, string> },

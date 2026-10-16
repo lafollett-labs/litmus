@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, realpathSync, rmdirSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { ConfigError, InfraError } from '../core/errors.ts'
@@ -68,6 +68,7 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
       // run never shows the subject proof/.
       const refused = harnessPreflight(c, wd.dir, config.roots)
       if (refused) say('error', refused)
+      for (const m of truthRefs(c, wd.dir)) say('error', m)
       // lstat: a dangling proof link is still a link, and refused as one.
       if (lstatSync(proofDir, { throwIfNoEntry: false })) {
         const bad = proofTree(c, proofDir, wd.dir)
@@ -125,8 +126,13 @@ async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: strin
   }
   try {
     const proofDir = join(c.dir, 'proof')
+    // The proof as laid over the copy, so a fix that edits it is caught.
+    let shown: { rel: string; body: Buffer; mode: number }[] = []
     try {
-      if (lstatSync(proofDir, { throwIfNoEntry: false })) copyTree(proofDir, wd.dir, c.id, 'proof/')
+      if (lstatSync(proofDir, { throwIfNoEntry: false })) {
+        copyTree(proofDir, wd.dir, c.id, 'proof/')
+        shown = files(proofDir).map(rel => ({ rel, body: readFileSync(join(wd.dir, rel)), mode: lstatSync(join(wd.dir, rel)).mode }))
+      }
     } catch (e) {
       return (e as Error).message
     }
@@ -145,6 +151,12 @@ async function proof(c: LoadedCase, bug: { id: string; proof: string; fix: strin
     } catch (e) {
       return (e as Error).message
     }
+    // A fix that rewrote the proof would pass it without touching the bug.
+    const edited = shown.find(f => {
+      const st = lstatSync(join(wd.dir, f.rel), { throwIfNoEntry: false })
+      return !st?.isFile() || st.mode !== f.mode || !readFileSync(join(wd.dir, f.rel)).equals(f.body)
+    })
+    if (edited) return `fix ${bug.fix} changes proof/${edited.rel}; a fix may change only the subject's tree, never its proof`
     const after = await sh(bug.proof, wd, c, redact, timeoutS, signal)
     if (signal?.aborted) return undefined
     if (!after.pass) return `its proof still fails with the fix applied: ${bug.proof}\n${after.rationale}`
@@ -168,8 +180,14 @@ function proofTree(c: LoadedCase, proofDir: string, work: string): string[] {
   const root = lstatSync(proofDir)
   if (root.isSymbolicLink()) return [`proof/ is a symlink; a proof may not be or contain a link`]
   if (!root.isDirectory()) return [`proof is not a directory; a proof is a tree of files laid over the fixture`]
+  let rels: string[]
+  try {
+    rels = files(proofDir)
+  } catch (e) {
+    return [(e as Error).message]
+  }
   const out: string[] = []
-  for (const rel of files(proofDir)) {
+  for (const rel of rels) {
     const parts = rel.split('/')
     // A proof path that runs through a fixture file cannot be laid over it.
     const through = parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/')).find(p => existsSync(join(work, p)) && !lstatSync(join(work, p)).isDirectory())
@@ -186,6 +204,27 @@ function proofTree(c: LoadedCase, proofDir: string, work: string): string[] {
     return [(e as Error).message]
   }
   return []
+}
+
+// Ground truth names lines in the post-change tree, so each bug's and decoy's
+// file must be a regular file there, and its lines must fall inside it.
+function truthRefs(c: LoadedCase, work: string): string[] {
+  if (!c.truth) return []
+  const out: string[] = []
+  const items = [...c.truth.bugs.map(x => ({ what: 'bug', x })), ...c.truth.decoys.map(x => ({ what: 'decoy', x }))]
+  for (const { what, x } of items) {
+    const path = join(work, x.file)
+    const st = inside(path, work) ? lstatSync(path, { throwIfNoEntry: false }) : undefined
+    if (!st?.isFile()) {
+      out.push(`${what} ${x.id}: ${x.file} is not a file in the fixture (after change.patch)`)
+      continue
+    }
+    const text = readFileSync(path, 'utf8')
+    const count = text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
+    const [start, end] = x.lines
+    if (end > count) out.push(`${what} ${x.id}: lines [${start}, ${end}] run past the end of ${x.file}, which has ${count} lines (after change.patch)`)
+  }
+  return out
 }
 
 // Every regular file under dir, as a path relative to it. A .git entry is

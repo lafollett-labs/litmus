@@ -46,7 +46,9 @@ jobs:
       # proof needs the Go its fixture's go.mod names.
       - uses: actions/setup-go@v7
         with:
-          go-version-file: suites/examples/code-review/cases/go-token-expiry/fixture/go.mod
+          # A supported release at least every example's `go` line; GOTOOLCHAIN
+          # stays local, so a case needing newer fails instead of downloading.
+          go-version: '1.26'
           cache: false
       - run: node src/cli/main.ts validate
 

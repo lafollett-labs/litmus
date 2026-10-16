@@ -312,10 +312,14 @@ It fails a case in any of these situations:
 
 - the tree contains a symlink after the change is applied
 - the fixture contains a `.git` entry
-- `proof` is not a directory, or a `proof/` path also exists under
-  `fixture/`, runs through a fixture file, or is (or contains) a symlink or a
-  `.git` entry
-- a bug's `fix` resolves outside the case, links followed
+- `proof` is not a directory, cannot be read, or a `proof/` path already
+  exists in the post-change tree, runs through a file there, or is (or
+  contains) a symlink or a `.git` entry
+- a bug's or decoy's `file` is not a regular file in the post-change tree, or
+  its `lines` run past the end of it
+- a bug's `fix` resolves outside the case, links followed, or changes a
+  `proof/` file (a fix that rewrote its proof would pass it without touching
+  the bug)
 - `min_trials` exceeds `trials`, or a `rate` threshold is outside (0, 1)
 - a harness case's plugins or fixture declare hooks or MCP servers without
   `allow_hooks: true`
@@ -331,9 +335,9 @@ It warns in two situations:
 - a pass bound is set on a metric that can never be defined for the case, such
   as `min_recall` on a clean case
 
-`run` makes the same error checks when it loads a suite, except the `proof/`,
-`fix` and subject-root ones, which are `validate`'s alone, as are both
-warnings and the proof runs. (In a run, the harness gate simply denies reads
+`run` makes the same error checks, at load or before each trial, except the
+`proof/`, `fix`, ground-truth and subject-root ones, which are `validate`'s
+alone, as are both warnings and the proof runs. (In a run, the harness gate simply denies reads
 under a suite root.) A proof is a suite author's command, run as the command grader
 runs one: in its own process group, with a scrubbed env and the case's
 `timeout_s`. Ctrl-C or SIGTERM kills that group, removes the copy, and exits
@@ -468,9 +472,11 @@ subject wrote into `.git/` ever runs.
 
 - `PATH`, `LANG`, `LC_*`, `TERM` and `TMPDIR`.
 - `HOME`, pointed at a temporary directory created for the trial.
-- The toolchain variables `GOCACHE`, `GOMODCACHE`, `GOPATH`, `GOFLAGS` and
-  `npm_config_cache`, when they are set. `GOFLAGS` is the operator's own
-  setting, so it carries through to the `go` runs in `command` graders.
+- The toolchain variables `GOCACHE`, `GOMODCACHE`, `GOPATH`, `GOFLAGS`,
+  `GOTOOLCHAIN` and `npm_config_cache`, when they are set. `GOFLAGS` and
+  `GOTOOLCHAIN` are the operator's own settings, so they carry through to the
+  `go` runs in `command` graders and proofs (`GOTOOLCHAIN=local` makes a case
+  that needs a newer Go fail instead of downloading one).
 - For the harness only, the one credential its provider needs.
 
 This keeps credentials out of the environment and out of the usual dotfile
@@ -1279,10 +1285,11 @@ rarely have the evidence for NO CHANGE.
 `compare` exits 0 on NO CHANGE or IMPROVEMENT, and 1 on REGRESSION. It also
 exits 1 on INCONCLUSIVE, unless `--allow-inconclusive` is passed.
 
-`validate` exits 0 when every case is valid and 1 otherwise. Warnings don't
-affect its exit code.
+`validate` exits 0 when every case is valid and 1 otherwise, including when a
+suite will not load. Warnings don't affect its exit code. Ctrl-C or SIGTERM
+cancels it with 130 or 143.
 
-Both exit 2 on a usage or config error. Any command exits 3 on any other
+Both exit 2 on a usage error or a config file that will not load. Any command exits 3 on any other
 failure (a results directory litmus cannot read, say), with one redacted line
 on stderr and no stack trace, so infrastructure trouble never reads as a
 REGRESSION.

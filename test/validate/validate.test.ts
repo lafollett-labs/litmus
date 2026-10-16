@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { loadProject } from '../../src/suite/load.ts'
 import { validate, type Problem } from '../../src/validate/validate.ts'
@@ -185,6 +185,61 @@ test('a bad proof/ tree is an error for its case alone, reported even with proof
     assert.deepEqual(only(ps, 's/plain'), ['error: proof is not a directory; a proof is a tree of files laid over the fixture'])
     assert.match(only(ps, 's/dotgit').join('\n'), /^error: s\/dotgit: proof\/ contains a \.git directory at /)
     assert.deepEqual(only(ps, 's/fine'), [])
+  }
+})
+
+test('ground truth must name a file in the post-change tree, and lines inside it, even with proofs: false', async () => {
+  const truth = (bug: string, decoy = '') => `kind: seeded\nbugs:\n  - { id: b1, ${bug}, severity: high, category: correctness, summary: s, proof: "grep -qx fixed a.txt", fix: fix/b1.patch }\n${decoy}`
+  const configFile = project({
+    missing: seeded('missing', {}, { 'truth.yaml': truth('file: a.go, lines: [1, 1]') }),
+    past: seeded('past', {}, { 'truth.yaml': truth('file: a.txt, lines: [1, 2]') }),
+    dir: seeded('dir', {}, { 'fixture/d/x': 'x\n', 'truth.yaml': truth('file: d, lines: [1, 1]') }),
+    escapes: seeded('escapes', {}, { 'truth.yaml': truth('file: ../../../../../../../../../../../../../../../../../../../../etc/hosts, lines: [1, 1]') }),
+    decoy: seeded('decoy', {}, { 'truth.yaml': truth('file: a.txt, lines: [1, 1]', 'decoys:\n  - { id: d1, file: a.txt, lines: [480, 500], summary: s }\n') }),
+    added: seeded('added', {}, {
+      'change.patch': 'diff --git a/b.txt b/b.txt\nnew file mode 100644\n--- /dev/null\n+++ b/b.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n',
+      'truth.yaml': truth('file: a.txt, lines: [1, 1]', 'decoys:\n  - { id: d1, file: b.txt, lines: [2, 2] }\n'.replace(' }', ', summary: s }')),
+    }),
+    fine: seeded('fine'),
+  })
+  for (const o of [{}, { proofs: false }]) {
+    const ps = await check(configFile, o)
+    assert.deepEqual(only(ps, 's/missing'), ['error: bug b1: a.go is not a file in the fixture (after change.patch)'])
+    assert.deepEqual(only(ps, 's/past'), ['error: bug b1: lines [1, 2] run past the end of a.txt, which has 1 lines (after change.patch)'])
+    assert.deepEqual(only(ps, 's/dir'), ['error: bug b1: d is not a file in the fixture (after change.patch)'])
+    assert.deepEqual(only(ps, 's/escapes'), ['error: bug b1: ../../../../../../../../../../../../../../../../../../../../etc/hosts is not a file in the fixture (after change.patch)'])
+    assert.deepEqual(only(ps, 's/decoy'), ['error: decoy d1: lines [480, 500] run past the end of a.txt, which has 1 lines (after change.patch)'])
+    assert.deepEqual(only(ps, 's/added'), [], 'a file the change adds is in the post-change tree')
+    assert.deepEqual(only(ps, 's/fine'), [])
+  }
+})
+
+test('a fix that edits the proof, rather than the bug, is an error', async () => {
+  const cheat = 'diff --git a/check.sh b/check.sh\n--- a/check.sh\n+++ b/check.sh\n@@ -1 +1 @@\n-grep -qx fixed a.txt\n+true\n'
+  const chmod = 'diff --git a/check.sh b/check.sh\nold mode 100644\nnew mode 100755\n'
+  const both = `${FIX}${cheat}`
+  const ps = await check(
+    project({
+      cheat: seeded('cheat', { proof: 'sh check.sh' }, { 'proof/check.sh': 'grep -qx fixed a.txt\n', 'fix/b1.patch': cheat }),
+      mode: seeded('mode', { proof: 'sh check.sh' }, { 'proof/check.sh': 'grep -qx fixed a.txt\n', 'fix/b1.patch': `${FIX}${chmod}` }),
+      both: seeded('both', { proof: 'sh check.sh' }, { 'proof/check.sh': 'grep -qx fixed a.txt\n', 'fix/b1.patch': both }),
+      fine: seeded('fine', { proof: 'sh check.sh' }, { 'proof/check.sh': 'grep -qx fixed a.txt\n' }),
+    }),
+  )
+  for (const c of ['cheat', 'mode', 'both']) assert.deepEqual(only(ps, `s/${c}`), ["error: bug b1: fix fix/b1.patch changes proof/check.sh; a fix may change only the subject's tree, never its proof"], c)
+  assert.deepEqual(only(ps, 's/fine'), [])
+})
+
+test('an unreadable proof/ directory is an error for its case alone', { skip: process.getuid?.() === 0 && 'root reads anything' }, async () => {
+  const configFile = project({ locked: seeded('locked', {}, { 'proof/sub/x': 'x\n' }), fine: seeded('fine') })
+  const sub = join(configFile, '../suites/s/cases/locked/proof/sub')
+  chmodSync(sub, 0o000)
+  try {
+    const ps = await check(configFile)
+    assert.match(only(ps, 's/locked').join('\n'), /^error: EACCES: permission denied, scandir '.*proof\/sub'$/)
+    assert.deepEqual(only(ps, 's/fine'), [])
+  } finally {
+    chmodSync(sub, 0o755)
   }
 })
 

@@ -117,6 +117,29 @@ At the reviewed SHA:
 | - | - | - |
 | LOW-001 | ARCHITECTURE still said `run` makes every check except the `proof/` and `fix` ones. The subject-root check and both warnings are `validate`'s alone, and the list lacked the non-directory and `.git` cases | Fixed. The sentence names every check that is `validate`'s alone, and the `proof/` bullet covers a non-directory and a `.git` entry. Documentation only |
 
+## Gate 2 (PR #14)
+
+Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for it.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `98064a9` | 2 MEDIUM, 2 LOW, 2 INFO | Fixed, as below |
+
+PE-Vue checked the ground truth independently:
+- Each truth range matches the post-change file.
+- In a proof × fix matrix, each Go proof fails before its own fix, passes after it, and still fails under the other bug's fix.
+- A 300k-string fuzz finds the "clean" slug change really clean.
+- SIGINT during a proof exits 130 and kills the proof's group.
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | `validate` never checked a bug's or decoy's `file` and `lines` against the post-change tree, so a typo'd ground truth passed `validate` and then failed every run | Fixed. On the first copy, each bug's and decoy's file must be a regular file inside the copy, and its lines must end within the file. Tested: a missing file, a directory, a path escaping the copy, lines past the end for a bug and for a decoy, and a file the change adds. Four mutants (no check, no line bound, no containment, no decoys) are killed |
+| MEDIUM-002 | A fix patch could edit the proof instead of the bug and still pass | Fixed. The proof files are snapshotted as laid over the copy, and after the fix a changed body, mode or kind is an error. Tested: a fix that rewrites the proof, one that changes only its mode, and one that fixes the bug and edits the proof too. Both mutants (no guard, no mode check) are killed |
+| LOW-001 | An unreadable `proof/` subdirectory threw out of `validate` (exit 3) | Fixed: the walk's error is an error for that case alone. Tested with a mode-000 directory; the unguarded walk, as a mutant, fails |
+| LOW-002 | ARCHITECTURE: `run` makes its checks "when it loads a suite"; `proof/` is compared to "the fixture"; the exit codes for an unloadable suite and for cancellation were missing | Fixed: "at load or before each trial"; "the post-change tree"; `validate` exits 1 when a suite will not load, and 130 or 143 on cancel. The new checks are listed |
+| INFO-001 | CI's Go came from the fixture's `go 1.22` (EOL 1.22.12), and proofs dropped `GOTOOLCHAIN` | Adopted: CI pins Go `1.26`, and `GOTOOLCHAIN` is in the env allowlist, so setup-go's `local` reaches the proofs. Tested in the allowlist test |
+| INFO-002 | `setup-go` is pinned by tag, as every action here is | No change: it matches the workflow's convention |
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `7ada74d`. The PR opens once M5 through M9 merge. It carries one post-approval commit, a documentation-only LOW fix, and Gate 2 reviews it.
