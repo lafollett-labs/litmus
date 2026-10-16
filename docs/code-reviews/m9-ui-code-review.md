@@ -185,6 +185,7 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | - | - | - | - |
 | 1 | `40eb128` | 1 HIGH, 3 MEDIUM, 4 LOW, 2 INFO | Fixed, as below |
 | 2 | `f9d9314` | 1 MEDIUM, 2 LOW, 2 INFO | All 10 round-1 findings RESOLVED. The LOW-003 fix opened a MEDIUM, fixed below |
+| 3 | `123a2f6` | 1 LOW, 1 INFO | ✅ APPROVED. All three round-2 findings RESOLVED (the secret-straddle probe leaks 0 characters; the shapes hold 3.5:1 or better under forced colours; a 9 MiB title gives a 3,451-byte result). The new LOW and INFO are tracked in #13 and left out of this PR, so the merged code is the code reviewed |
 
 | ID | Finding | Disposition |
 | - | - | - |
