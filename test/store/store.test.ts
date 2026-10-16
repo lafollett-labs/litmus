@@ -4,7 +4,7 @@ import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } f
 import { join } from 'node:path'
 import { ConfigError } from '../../src/core/errors.ts'
 import { redactor } from '../../src/core/redact.ts'
-import { baselineRun, baselines, listRuns, readEvents, readRun, RunStore, setBaseline, type RunManifest } from '../../src/store/store.ts'
+import { baselineRun, baselines, listRuns, readEvents, readRun, readTrials, RunStore, setBaseline, type RunManifest } from '../../src/store/store.ts'
 import { tree } from '../helpers/tmp.ts'
 
 const manifest = (id: string): RunManifest => ({ id, status: 'running', started_at: 't', litmus_version: '0', selection: [], configs: {}, cases: [], judges: {}, plugins: {} })
@@ -43,7 +43,9 @@ test('a torn last event line is skipped, not fatal', () => {
 test('baselines name runs beside the runs directory, and an unknown name says what exists', () => {
   const root = tree({ '.keep': '' })
   const results = join(root, '.litmus/runs')
-  RunStore.create(results, manifest(ID), redactor([]))
+  const s = RunStore.create(results, manifest(ID), redactor([]))
+  assert.throws(() => setBaseline(results, 'main', ID), /is running; only a finished run can be a baseline/)
+  s.finish('finished')
   setBaseline(results, 'main', ID)
   assert.deepEqual(baselines(results), { main: ID })
   assert.equal(baselineRun(results, 'main'), ID)
@@ -52,6 +54,17 @@ test('baselines name runs beside the runs directory, and an unknown name says wh
   // A ':' would be read as the config in baseline:<name>[:<config>].
   assert.throws(() => setBaseline(results, 'main:fake', ID), /must match/)
   assert.ok(readFileSync(join(root, '.litmus/baselines.json'), 'utf8').includes(ID))
+  writeFileSync(join(root, '.litmus/baselines.json'), '{"main": ')
+  assert.throws(() => baselines(results), (e: Error) => e instanceof ConfigError && /is not a JSON object of baseline names/.test(e.message))
+})
+
+test('a torn trial.json is skipped by readers, and finish returns the manifest redacted', () => {
+  const results = join(tree({ '.keep': '' }), 'runs')
+  const s = RunStore.create(results, { ...manifest(ID), selection: ['sk-secret-1'] }, redactor(['sk-secret-1']))
+  mkdirSync(join(s.dir, 'trials/e2e/c/f/1'), { recursive: true })
+  writeFileSync(join(s.dir, 'trials/e2e/c/f/1/trial.json'), '{"key": ')
+  assert.deepEqual(readTrials(results, ID), [])
+  assert.deepEqual(s.finish('finished').selection, ['[REDACTED]'])
 })
 
 test('records are replaced whole, never left half-written, and one torn run.json hides no other run', () => {
@@ -66,4 +79,17 @@ test('records are replaced whole, never left half-written, and one torn run.json
   mkdirSync(join(results, torn))
   writeFileSync(join(results, torn, 'run.json'), '{"id": "2026-09-')
   assert.deepEqual(listRuns(results).map(m => [m.id, m.status]), [[ID, 'finished']])
+})
+
+test('runs list newest first by start time, even two started in the same second', () => {
+  const results = join(tree({ '.keep': '' }), 'runs')
+  // Same second; the suffixes sort the other way from the start times.
+  RunStore.create(results, { ...manifest('2026-09-30T01-02-03Z-ffff'), started_at: '2026-09-30T01:02:03.100Z' }, redactor([]))
+  RunStore.create(results, { ...manifest('2026-09-30T01-02-03Z-0000'), started_at: '2026-09-30T01:02:03.900Z' }, redactor([]))
+  assert.deepEqual(listRuns(results).map(m => m.id), ['2026-09-30T01-02-03Z-0000', '2026-09-30T01-02-03Z-ffff'])
+  // By time, not by spelling: +02:00 is two hours earlier than it reads.
+  const zoned = join(tree({ '.keep': '' }), 'runs')
+  RunStore.create(zoned, { ...manifest('2026-09-30T00-30-00Z-aaaa'), started_at: '2026-09-30T00:30:00.000Z' }, redactor([]))
+  RunStore.create(zoned, { ...manifest('2026-09-29T23-00-00Z-bbbb'), started_at: '2026-09-30T01:00:00.000+02:00' }, redactor([]))
+  assert.deepEqual(listRuns(zoned).map(m => m.id), ['2026-09-30T00-30-00Z-aaaa', '2026-09-29T23-00-00Z-bbbb'])
 })

@@ -981,7 +981,7 @@ the cases both of them scored.
 | `<run id>` | That run. It must hold exactly one config |
 | `<run id>:<config>` | That config within that run |
 | `baseline:<name>[:<config>]` | The run stored under that baseline name. Baseline names use the NAME grammar |
-| `config:<name>` | The latest run that includes that config |
+| `config:<name>` | The latest finished run that includes that config (a cancelled or failed run holds only part of its cases; name it by id instead). "Latest" is by start time to the millisecond, since a run id resolves only to the second |
 
 - `litmus run --config a,b` compares every later config against the first.
 - `litmus run --baseline <name>` compares each config against the config of
@@ -1130,12 +1130,52 @@ litmus run [select...] --config a,b [--trials N] [--baseline name]
            [--allow-flaky] [--allow-inconclusive] [--reporter pretty|json|ctrf|junit] [--out path]
 litmus run --rerun <run> --only fail,flaky,error,inconclusive
 litmus compare <side> <side> [--allow-inconclusive] [--out path]
-litmus baseline set <name> <run>
+litmus baseline set <name> <run> | litmus baseline list
 litmus validate [select...]
 litmus serve [--port 4317]
 ```
 
 Every command takes `--config-file <path>` (default `./litmus.config.yaml`).
+
+`--config` may be left out only when the config file defines exactly one
+config. `--rerun` runs the configs of the run it reruns, so it takes neither
+`--config` nor selectors, and `--only` needs `--rerun`. A rerun whose `--only`
+set matches no verdict prints so (to stderr, under a machine-readable
+reporter) and exits 0. `baseline set` takes only a finished run: a cancelled
+or failed one holds some of its cases, and would quietly shrink every
+comparison against it.
+
+**Reporters.** `--reporter` picks the document and `--out` picks where it goes
+(stdout by default). stdout shows the live `pretty` view unless a JSON, CTRF
+or JUnit document is going there instead, so `--reporter junit --out
+junit.xml` gives both. `pretty` on a TTY redraws one status line in place and
+is coloured (unless `NO_COLOR` is set); anywhere else it writes the same lines
+plainly, top to bottom. It ends with the comparisons, the run's notes (such
+as a `--baseline` config the baseline lacks), a count of verdicts, every
+verdict or comparison that decided the exit code, and `exit <n>`.
+
+| Document | One test per | Status |
+| - | - | - |
+| `json` | (none: the manifest, verdicts, comparisons, notes and exit) | |
+| `ctrf` (spec 0.0.0, validated against `src/report/vendor/ctrf.schema.json`) | (case, config) verdict | the gate below decides it: blocking is `failed`, infra is `other`, and anything let through is `passed`, with `flaky: true` for an allowed FLAKY |
+| `junit` | (case, config) verdict, plus one per comparison, in a testsuite named `litmus:comparisons` (no suite can have that name) | blocking is a `<failure>`, infra an `<error>`, and a comparison's REGRESSION a `<failure>` |
+
+A cancelled run's CTRF and JUnit also list each (case, config) it stopped
+before it settled, as skipped, so a cancelled run never reads as a clean one.
+`--out` is checked before anything runs, links followed: a path ending in `/`,
+a directory, a parent that is not an existing directory, or a path that cannot
+be written is exit 2. If the write still fails after the run (a full disk, a
+directory removed meanwhile), the run is already recorded, and a `run` or
+`compare` that would have exited 0 exits 3; a blocking result keeps its code.
+A `run.json` or `verdicts.json` that does not parse (hand-edited, or a disk
+fault), or a `run.json` without its configs, cases, judges or plugins, is a
+config error wherever a command must read that run, and the message names the
+file. Listing runs, and picking one for `config:<name>`, skips such a run. A
+`trial.json` that does not parse is skipped. `--out` is written whenever a run
+ends, finished or cancelled: a rerun with nothing to rerun,
+or a run litmus could not finish, leaves any file already there untouched. A reader
+that closes early (`litmus run | head`) stops the output, not the run: it
+finishes, is written, and exits with its real code.
 
 A selector is one of:
 
@@ -1162,6 +1202,10 @@ else exit 3 if any verdict is infra      # CI can tell infrastructure trouble fr
 else exit 0
 ```
 
+A run cancelled by SIGINT exits 130, and by SIGTERM 143; a second signal
+leaves at once. Only `run` takes the signals this way. If litmus itself fails mid-run (the store cannot be written),
+the run is marked `failed` and `run` exits 3.
+
 Inside `run`, only a comparison's REGRESSION blocks. Its INCONCLUSIVE and NO
 CHANGE are reported, and neither changes the exit code, since small suites
 rarely have the evidence for NO CHANGE.
@@ -1172,4 +1216,7 @@ exits 1 on INCONCLUSIVE, unless `--allow-inconclusive` is passed.
 `validate` exits 0 when every case is valid and 1 otherwise. Warnings don't
 affect its exit code.
 
-Both exit 2 on a usage or config error.
+Both exit 2 on a usage or config error. Any command exits 3 on any other
+failure (a results directory litmus cannot read, say), with one redacted line
+on stderr and no stack trace, so infrastructure trouble never reads as a
+REGRESSION.

@@ -125,7 +125,8 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
   } catch (e) {
     fault.abort(e)
     // Best effort on both: the store is what failed. The event lets a live
-    // view (and a replay of events.jsonl, when it can still be written) end.
+    // view end (emit reaches the listener even when the store cannot), and a
+    // replay of events.jsonl too when it can still be written.
     try {
       emit({ type: 'run.failed', run: id, error: redact.text((e as Error)?.message ?? String(e)) })
     } catch {
@@ -224,7 +225,8 @@ export async function run(o: RunOptions): Promise<RunOutcome> {
     const summary = Object.fromEntries((['PASS', 'FAIL', 'FLAKY', 'ERROR', 'INCONCLUSIVE'] as VerdictKind[]).map(k => [k, verdicts.filter(v => v.verdict === k).length])) as Record<VerdictKind, number>
     emit({ type: cancelled ? 'run.cancelled' : 'run.finished', run: id, summary })
     const manifest = store.finish(cancelled ? 'cancelled' : 'finished', now())
-    return { id, dir: store.dir, manifest, verdicts, comparisons, notes: [...notes, ...leaks] }
+    // Redacted like the files, so a reporter prints nothing the store would not write.
+    return { id, dir: store.dir, manifest, verdicts: redact.json(verdicts), comparisons: redact.json(comparisons), notes: redact.json([...notes, ...leaks]) }
   }
 }
 
@@ -509,7 +511,7 @@ function comparisonsOf(o: RunOptions, current: RunSide): { comparisons: Comparis
 // A comparison over the cases both sides scored, WARN medians included: taken
 // over every case a side ran, a median would measure which cases were picked
 // rather than how the model did on the same ones.
-function pair(a: RunSide, configA: string, b: RunSide, configB: string, opts: CompareOptions): Comparison {
+export function pair(a: RunSide, configA: string, b: RunSide, configB: string, opts: CompareOptions): Comparison {
   const side = (s: RunSide, config: string): CompareSide => ({ label: s.label, verdicts: s.verdicts.filter(v => v.config === config), hashes: s.hashes })
   const sa = side(a, configA)
   const sb = side(b, configB)

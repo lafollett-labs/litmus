@@ -163,7 +163,7 @@ stay on the branch, and their messages go into the squash commit's body.
     - `events.jsonl` replays to the same verdicts
     - a fake key planted in the environment appears in no file under the run
 
-- [ ] **M7: CLI and reporters**
+- [x] **M7: CLI and reporters**
   - `run`, `compare` (every addressing form), `baseline` and `list`.
   - The `pretty` reporter (live on a TTY, plain lines otherwise), plus `json`,
     CTRF and JUnit.

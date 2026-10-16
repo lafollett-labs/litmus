@@ -109,10 +109,11 @@ export class RunStore {
     if (c.length) this.#writeJson('comparison.json', c)
   }
 
+  // Returns the manifest as written: redacted, like everything a reporter prints.
   finish(status: 'finished' | 'cancelled' | 'failed', at: Date = new Date()): RunManifest {
     this.#manifest = { ...this.#manifest, status, finished_at: at.toISOString() }
     this.#writeJson('run.json', this.#manifest)
-    return this.#manifest
+    return this.#redact.json(this.#manifest)
   }
 
   #writeJson(name: string, value: unknown): void {
@@ -137,24 +138,47 @@ const parse = <T>(path: string): T | undefined => {
 
 // ── readers ──────────────────────────────────────────────────────────────────
 
+// What every reader of a manifest leans on. A record without it was edited by
+// hand or written by something else, and reading on would crash far from here.
+const isObject = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v)
+const whole = (m: unknown): m is RunManifest =>
+  isObject(m) && ['configs', 'judges', 'plugins'].every(k => isObject((m as Record<string, unknown>)[k])) && Array.isArray((m as RunManifest).cases)
+
 export function readRun(resultsDir: string, id: string): StoredRun {
   if (!RUN_ID.test(id)) throw new ConfigError(`"${id}" is not a run id`)
   const dir = join(resultsDir, id)
   if (!existsSync(join(dir, 'run.json'))) throw new ConfigError(`no run ${id} under ${resultsDir}`)
-  const read = <T>(name: string, fallback: T): T => (existsSync(join(dir, name)) ? (JSON.parse(readFileSync(join(dir, name), 'utf8')) as T) : fallback)
-  return { manifest: read<RunManifest>('run.json', undefined as never), verdicts: read<Verdict[]>('verdicts.json', []), comparisons: read<Comparison[]>('comparison.json', []) }
+  const read = <T>(name: string, fallback: T): T => {
+    if (!existsSync(join(dir, name))) return fallback
+    const value = parse<T>(join(dir, name))
+    if (value === undefined) throw new ConfigError(`${join(dir, name)} does not parse; the run's record is damaged`)
+    return value
+  }
+  const manifest = read<RunManifest>('run.json', undefined as never)
+  if (!whole(manifest)) throw new ConfigError(`${join(dir, 'run.json')} lacks its configs, cases, judges or plugins; the run's record is damaged`)
+  return { manifest, verdicts: read<Verdict[]>('verdicts.json', []), comparisons: read<Comparison[]>('comparison.json', []) }
 }
 
-// Newest first: run ids sort chronologically as strings by construction. A
-// run whose run.json does not parse (written by hand, or by an older litmus
-// without atomic writes) is skipped, so one bad run cannot hide the others.
+// Newest first, by start time to the millisecond: a run id sorts only to the
+// second, and two runs started in that second would otherwise come back in
+// the order of their random suffixes. A run whose run.json does not parse, or
+// lacks the fields every reader needs (written by hand, or by an
+// older litmus without atomic writes), is skipped, so one bad run cannot hide
+// the others.
 export function listRuns(resultsDir: string): RunManifest[] {
   if (!existsSync(resultsDir)) return []
+  // A start time that does not parse (a hand-edited file) sorts oldest.
+  const at = (m: RunManifest) => {
+    const t = Date.parse(m.started_at)
+    return Number.isFinite(t) ? t : -Infinity
+  }
   return readdirSync(resultsDir)
     .filter(d => RUN_ID.test(d))
-    .sort()
-    .reverse()
-    .flatMap(d => parse<RunManifest>(join(resultsDir, d, 'run.json')) ?? [])
+    .flatMap(d => {
+      const m = parse<RunManifest>(join(resultsDir, d, 'run.json'))
+      return whole(m) ? [m] : []
+    })
+    .sort((a, b) => at(b) - at(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
 }
 
 // A torn last line (the process killed mid-append) is skipped, as the
@@ -184,7 +208,10 @@ export function readTrials(resultsDir: string, id: string): TrialRecord[] {
       if (e.name === '.attempts') continue
       const path = join(dir, e.name)
       if (e.isDirectory()) walk(path)
-      else if (e.name === 'trial.json') out.push(JSON.parse(readFileSync(path, 'utf8')) as TrialRecord)
+      else if (e.name === 'trial.json') {
+        const record = parse<TrialRecord>(path)
+        if (record) out.push(record) // a torn record is skipped, as listRuns skips one
+      }
     }
   }
   walk(join(resultsDir, id, 'trials'))
@@ -198,14 +225,20 @@ const baselinesFile = (resultsDir: string) => join(dirname(resultsDir), 'baselin
 
 export function baselines(resultsDir: string): Record<string, string> {
   const f = baselinesFile(resultsDir)
-  return existsSync(f) ? (JSON.parse(readFileSync(f, 'utf8')) as Record<string, string>) : {}
+  if (!existsSync(f)) return {}
+  const all = parse<Record<string, string>>(f)
+  if (all === undefined || typeof all !== 'object' || all === null || Array.isArray(all)) throw new ConfigError(`${f} is not a JSON object of baseline names; fix it or remove it`)
+  return all
 }
 
 // NAME, so `baseline:<name>[:<config>]` parses: a ':' in a name would be read
 // as the config.
 export function setBaseline(resultsDir: string, name: string, runId: string): void {
   if (!NAME.test(name)) throw new ConfigError(`baseline name "${name}" must match ${NAME} (lowercase, digits, . _ -)`)
-  readRun(resultsDir, runId)
+  // A cancelled or failed run holds only some of its cases; as a baseline it
+  // would quietly shrink every comparison against it.
+  const { status } = readRun(resultsDir, runId).manifest
+  if (status !== 'finished') throw new ConfigError(`run ${runId} is ${status}; only a finished run can be a baseline`)
   const all = { ...baselines(resultsDir), [name]: runId }
   mkdirSync(dirname(baselinesFile(resultsDir)), { recursive: true })
   writeAtomic(baselinesFile(resultsDir), `${JSON.stringify(all, null, 2)}\n`)
