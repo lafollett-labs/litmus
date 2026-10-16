@@ -14,7 +14,7 @@ export type StartRun = { select?: string[]; configs?: string[]; trials?: number;
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, { method, ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) })
   const data = (await res.json()) as T & { error?: string }
-  if (!res.ok) throw new Error(data.error ?? `${method} ${path}: ${res.status}`)
+  if (!res.ok) throw Object.assign(new Error(data.error ?? `${method} ${path}: ${res.status}`), { status: res.status })
   return data
 }
 

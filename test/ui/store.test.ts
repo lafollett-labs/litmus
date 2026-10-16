@@ -101,6 +101,32 @@ test('a trial still running in another process says so, not the server\'s 404', 
   assert.match(state.detail?.note ?? '', /still running in another process/)
 })
 
+test('a trial a failed run never recorded shows the error, not the live-elsewhere note', async () => {
+  routes = { 'GET /api/runs/r7': stored('failed'), 'GET /api/suites': () => suites }
+  watchRun('r7')
+  last().send({ type: 'trial.started', key: 's/a@fake#1' })
+  openTrial('s/a@fake#1')
+  last().fail()
+  await tick()
+  await tick()
+  assert.equal(state.run?.done, 'failed')
+  assert.equal(state.detail?.note, null)
+  assert.match(state.detail?.error ?? '', /no route/)
+})
+
+test('a run live elsewhere whose trial read fails for another reason shows that error', async () => {
+  routes = { 'GET /api/runs/r8': stored('running'), 'GET /api/suites': () => suites, 'GET /api/runs/r8/trial?key=s%2Fa%40fake%231': () => { throw new Error('EACCES reading trial.json') } }
+  watchRun('r8')
+  last().send({ type: 'trial.started', key: 's/a@fake#1' })
+  openTrial('s/a@fake#1')
+  last().fail()
+  await tick()
+  await tick()
+  assert.equal(state.run?.done, 'elsewhere')
+  assert.equal(state.detail?.note, null)
+  assert.equal(state.detail?.error, 'EACCES reading trial.json')
+})
+
 test('a trial opened while it runs waits, is fetched when it finishes, and closes when another run is shown', async () => {
   let fetched = 0
   routes = { 'GET /api/runs/r2/trial?key=s%2Fa%40fake%231': () => (fetched++, { record: { status: 'pass' }, transcript: [], artifacts: [] }) }

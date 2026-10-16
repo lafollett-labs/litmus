@@ -1,6 +1,6 @@
 # Code Review: m9-ui
 
-**Verdict:** 🔄 CHANGES REQUESTED (round 3 of 3: the cap. Every finding is fixed at `88845a7`; a round 4 needs the operator)
+**Verdict:** ✅ APPROVED (round 4, past the cap with the operator's go-ahead, locked to `1365909`)
 
 | | |
 | - | - |
@@ -146,9 +146,33 @@ At `88845a7`:
 | - | - | - |
 | SELF-001 | `npm ci && npm run check` in a fresh clone exited 127: `check:vue` needs `tools/vue-tsc`, which only a second, separate install provided. Found while running M11's done-criterion | Fixed in `e3d2d9a`. A root `postinstall` runs `npm ci --prefix tools/vue-tsc`, and CI and CONTRIBUTING drop the extra step. In a fresh clone of `m9-ui`, `npm ci` exits 0, `npm run check` exits 0, `npm test` passes 510 with 4 (live) skipped, and `npm run test:ui` passes 13 of 13 |
 
+## Review Round 4
+
+| | |
+| - | - |
+| **Review Round** | 4 (past the 3-round cap; the operator handed the call to the engineer on 2026-10-15) |
+| **Reviewed SHA** | `1365909` |
+| **Reviewer** | PE-Vue |
+
+PE-Vue marked all round-3 findings and SELF-001 RESOLVED:
+
+- With the round-2 focus condition put back, the page-load Playwright test fails. In a probe, focus stays in the filter when a run ends on its own, and Enter on Run all lands on the run line.
+- Removing the trial-count check fails a model test, and dropping `absent` fails the store test.
+- The unselectable row's accessible name carries its reason.
+- A fresh clone runs `npm ci` (exit 0), `npm run check` (exit 0), `npm test` (510 of 514, 4 live skipped) and `npm run test:ui` (13 of 13).
+
+**✅ APPROVED:** no finding at MEDIUM or above.
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | The "still running in another process" note also showed for a run that failed here, and it replaced any server error, such as a 500, while the run was elsewhere | Fixed after approval. The note is offered only while the stored run is still `running`, and only a 404 becomes the note; any other error is shown as it is. `api.call` puts the HTTP status on the error. Two store tests cover it, a failed run and a 500 while elsewhere, and each half of the fix, reverted as a mutant, fails one of them |
+| LOW-002 | The root `postinstall` left `package-lock.json` stale, so `npm install` adds `"hasInstallScript": true` | Fixed after the rebase onto main, which changed the lockfile (#8): the lockfile is regenerated with the flag |
+| LOW-003 | `npm audit` reports a high advisory in `source-map-js` 1.2.1, which vite and vue bring in at build time | Fixed after the rebase onto main: `npm audit fix` at the root and in `tools/vue-tsc` (lockfiles only) |
+| INFO-001 | A high advisory on the base, in `@modelcontextprotocol/sdk` 1.30.1 | Already fixed on main: #8 bumped it to 1.32.1 |
+
 ## Merge Eligibility (latest)
 
-**Not eligible.** Round 3, the cap, found one MEDIUM. It and every LOW are fixed at `88845a7` (since rebased), as is SELF-001, but no reviewer has seen those fixes. Per the workflow, the round cap halts this branch to the operator: a round 4 on `88845a7` needs Cali's go-ahead.
+**Locked to SHA:** `1365909`. The PR opens once M8 merges and this branch is rebased onto main. It carries the post-approval LOW fixes, and Gate 2 reviews them.
 
 ---
 

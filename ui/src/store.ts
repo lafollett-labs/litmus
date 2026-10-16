@@ -68,7 +68,7 @@ async function settled(id: string): Promise<void> {
     state.suites = suites
     // A trial still waiting will get no trial.finished now: look for its record once.
     const d = state.detail
-    if (d?.waiting && d.run === id) void fetchTrial(id, d.key, 'still running in another process; reload to see it when it finishes')
+    if (d?.waiting && d.run === id) void fetchTrial(id, d.key, stored.manifest.status === 'running' ? 'still running in another process; reload to see it when it finishes' : undefined)
   } catch (e) {
     if (state.run?.id !== id) return
     if (state.run.done === 'running') state.run.done = 'lost'
@@ -150,8 +150,8 @@ export function openTrial(key: string): void {
   if (finished) void fetchTrial(run, key)
 }
 
-// `absent`: what to say, instead of the server's error, when the record may
-// simply not exist yet.
+// `absent`: what to say, instead of the server's 404, when the record may
+// simply not exist yet. Any other error is shown as it is.
 async function fetchTrial(run: string, key: string, absent?: string): Promise<void> {
   const mine = () => state.detail?.run === run && state.detail.key === key
   try {
@@ -159,7 +159,8 @@ async function fetchTrial(run: string, key: string, absent?: string): Promise<vo
     const data = markRaw(await api.trial(run, key))
     if (mine()) Object.assign(state.detail!, { data, waiting: false })
   } catch (e) {
-    if (mine()) Object.assign(state.detail!, absent === undefined ? { error: (e as Error).message, waiting: false } : { note: absent, waiting: false })
+    const missing = absent !== undefined && (e as { status?: number }).status === 404
+    if (mine()) Object.assign(state.detail!, missing ? { note: absent, waiting: false } : { error: (e as Error).message, waiting: false })
   }
 }
 
