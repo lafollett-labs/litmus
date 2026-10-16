@@ -170,6 +170,13 @@ PE-Vue marked all round-3 findings and SELF-001 RESOLVED:
 | LOW-003 | `npm audit` reports a high advisory in `source-map-js` 1.2.1, which vite and vue bring in at build time | Fixed after the rebase onto main: `npm audit fix` at the root and in `tools/vue-tsc` (lockfiles only) |
 | INFO-001 | A high advisory on the base, in `@modelcontextprotocol/sdk` 1.30.1 | Already fixed on main: #8 bumped it to 1.32.1 |
 
+### Found while preparing the PR
+
+| ID | Finding | Disposition |
+| - | - | - |
+| SELF-002 | `npm run ui:dev` could not start a run. The dev proxy rewrote Host but passed the browser's Origin through, and the server takes a POST only from its own origin, so every POST was a 403. Probed: "Origin must be this server" | Fixed in `vite.config.ts`. A request whose Origin is the dev server's own page has it rewritten to the server's, and any other Origin passes through and is refused. Probed both ways: the dev page starts a run, and a foreign Origin is still a 403 |
+| M8 Gate 2 INFO-001 | The server's CSP blocks `data:` URLs, which Vite uses to inline small assets | The built UI has none today. Adopted anyway: `assetsInlineLimit: 0` |
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `1365909`. The PR opens once M8 merges and this branch is rebased onto main. It carries the post-approval LOW fixes, and Gate 2 reviews them.
