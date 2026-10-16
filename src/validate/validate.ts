@@ -167,7 +167,13 @@ async function proof(c: LoadedCase, bug: { id: string; file: string; proof: stri
     // A fix that rewrote the proof would pass it without touching the bug.
     // Taken after the first run, so what the proof does to its own files is
     // not laid at the fix's door.
-    const proofBefore = ownedState(wd.dir, owned)
+    // A proof that locked its own files on its first run fails its case alone.
+    let proofBefore: Map<string, string>
+    try {
+      proofBefore = ownedState(wd.dir, owned)
+    } catch (e) {
+      return (e as Error).message
+    }
     // A bug whose file is not in the tree is reported as such, not here.
     const bugFile = truthFile(wd.dir, bug.file)
     const bugBefore = bugFile === undefined ? undefined : state(bugFile)
@@ -176,7 +182,12 @@ async function proof(c: LoadedCase, bug: { id: string; file: string; proof: stri
     } catch (e) {
       return (e as Error).message
     }
-    const proofAfter = ownedState(wd.dir, owned)
+    let proofAfter: Map<string, string>
+    try {
+      proofAfter = ownedState(wd.dir, owned)
+    } catch (e) {
+      return (e as Error).message
+    }
     const edited = [...new Set([...proofBefore.keys(), ...proofAfter.keys()])].sort().find(rel => proofBefore.get(rel) !== proofAfter.get(rel))
     if (edited !== undefined) return `fix ${bug.fix} changes proof/${edited}; a fix may change only the subject's tree, never its proof`
     if (bugFile !== undefined && state(bugFile) === bugBefore) warn(`its fix leaves ${bug.file} unchanged; a proof cured without touching the bug's file may be cured some other way`)

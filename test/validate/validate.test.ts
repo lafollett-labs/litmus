@@ -272,6 +272,19 @@ test('a fix that adds to a directory only the proof made changes the proof; one 
   assert.deepEqual(only(ps, 's/elsewhere'), ["warn: bug b1: its fix leaves a.txt unchanged; a proof cured without touching the bug's file may be cured some other way"])
 })
 
+test('a proof that locks its own files on its first run fails its case alone', { skip: process.getuid?.() === 0 && 'root reads anything' }, async () => {
+  const ps = await check(
+    project({
+      selflock: seeded('selflock', { proof: 'test -r check.sh && chmod 000 check.sh; exit 1' }, { 'proof/check.sh': 'true\n' }),
+      dirlock: seeded('dirlock', { proof: 'test -r t/check.sh && chmod 000 t; exit 1' }, { 'proof/t/check.sh': 'true\n' }),
+      fine: seeded('fine'),
+    }),
+  )
+  assert.match(only(ps, 's/selflock').join('\n'), /^error: bug b1: EACCES: permission denied, open '.*check\.sh'$/)
+  assert.match(only(ps, 's/dirlock').join('\n'), /^error: bug b1: EACCES: permission denied, scandir '.*\/t'$/)
+  assert.deepEqual(only(ps, 's/fine'), [])
+})
+
 test('an unreadable proof/ directory is an error for its case alone', { skip: process.getuid?.() === 0 && 'root reads anything' }, async () => {
   const configFile = project({ locked: seeded('locked', {}, { 'proof/sub/x': 'x\n' }), fine: seeded('fine') })
   const sub = join(configFile, '../suites/s/cases/locked/proof/sub')

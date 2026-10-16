@@ -90,6 +90,16 @@ At the reviewed SHA, `npm run check` exits 0, `npm test` passes 532 of 536 with 
 
 At `bf4188e`, `npm run check` exits 0 and `npm test` passes 534 of 538, with 4 (live) skipped.
 
+## Carried from PR #14 (M10) Gate 2
+
+M10 merged as approved in Gate 2 round 4. That round's one LOW is fixed here, so M11's Gate 2 reviews it:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| PR14-R4-LOW-001 | A proof that made its own file or proof-only directory unreadable on its first run threw EACCES out of `validate` (exit 3), and no other case was reported | Fixed: an error while snapshotting what the proof owns is an error for that bug alone. Tested for a locked file and a locked directory, with a sibling case still reported. The unguarded snapshot, as a mutant, fails |
+
+M11 also merges M10's Gate 2 rules into the ARCHITECTURE re-read: ground truth, the proof-edit check, `GOTOOLCHAIN`, and three warnings. A case `validate` cannot read (EACCES while hashing) is an error for that case alone, matching M10's per-case rule.
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `8aa848b`. The PR opens once M5 through M10 merge. It carries the post-approval commit `bf4188e` (LOW and INFO fixes only), and Gate 2 reviews it.
