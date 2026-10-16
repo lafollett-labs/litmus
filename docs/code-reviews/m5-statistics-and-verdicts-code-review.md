@@ -98,6 +98,16 @@ A fresh PE-Vue review with no Gate 1 context stood in for Copilot.
 
 At `a040a71`, `npm run check` is clean, and 417 tests pass with 4 (live) skipped. **The merge is held for the owner's sign-off on the MOVER redesign and the fixed-cases semantic.**
 
+## Owner decision
+
+The owner delegated the call, made on 2026-10-15:
+
+| Question | Decision |
+| - | - |
+| MOVER over per-side Wilson intervals, exact (Clopper–Pearson) below 9 trials | **Accepted.** It holds every single-case cell at or under 2.5%, it is deterministic, and it has more power than the bootstrap it replaced |
+| The fixed-cases estimand (the suite is its cases, not a sample of a wider population) | **Accepted.** A suite is a fixed set its author chose, so three of ten cases collapsing from 30/30 to 0/30 is a real REGRESSION |
+| Clopper–Pearson at every trial count | **Declined.** It would recover about 5 points of coverage at mid-range rates and cost power. A tolerance δ > 0 already absorbs the gap, and the spec says so |
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
