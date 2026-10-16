@@ -60,6 +60,18 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
   let closing = false
   let hosts = new Set<string>()
   let origins = new Set<string>()
+  // Everything the server says about an error (a body, a stderr line) is
+  // redacted as the CLI's would be: a YAML error quotes the line it failed on,
+  // and that line can hold a key. The config's own list when it still loads.
+  const scrub = (text: string) => {
+    let names: readonly string[] = []
+    try {
+      names = loadConfig(o.configFile, env).redact
+    } catch {
+      // the credential variables alone
+    }
+    return redactor(secretValues(names, o.env ? { ...process.env, ...o.env } : process.env)).text(text)
+  }
 
   const server = createServer((req, res) => {
     handle(req, res).catch(e => {
@@ -69,11 +81,11 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
       // socket of its own until the one ahead of it ends.
       if (!req.socket || req.socket.destroyed) return
       const status = e instanceof HttpError ? e.status : e instanceof ConfigError || e instanceof z.ZodError ? 400 : 500
-      if (status === 500) process.stderr.write(`litmus serve: ${(e as Error).stack ?? String(e)}\n`)
+      if (status === 500) process.stderr.write(`litmus serve: ${scrub((e as Error).stack ?? String(e))}\n`)
       if (res.headersSent) return void res.end()
       if ((e as { close?: boolean }).close) res.shouldKeepAlive = false
       const message = e instanceof z.ZodError ? e.issues.map(i => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') : (e as Error).message
-      json(res, status, { error: status === 500 ? 'internal error' : message })
+      json(res, status, { error: status === 500 ? 'internal error' : scrub(message) })
     })
   })
 
@@ -182,7 +194,7 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
     })
       .catch(e => {
         if (id === undefined) started.reject(e)
-        else process.stderr.write(`litmus serve: run ${id} failed: ${(e as Error).message}\n`)
+        else process.stderr.write(`litmus serve: run ${id} failed: ${scrub((e as Error).message)}\n`)
       })
       .finally(() => {
         entry.done = true
@@ -251,12 +263,17 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
         return [] // a torn line
       }
     })
+    // One response inlines at most ARTIFACTS_BUDGET of text, so many large
+    // artifacts cannot build a string past V8's limit: past it, only the size.
+    let left = ARTIFACTS_BUDGET
     const artifacts = parsed.artifacts.map(name => {
-      const got = readInside(join(dir, 'artifacts'), name, ARTIFACT_MAX)
+      const got = readInside(join(dir, 'artifacts'), name, Math.min(ARTIFACT_MAX, left))
       if ('missing' in got) return { name, missing: true }
       if ('size' in got) return { name, size: got.size, truncated: true }
       const text = utf8(got.data)
-      return text === undefined ? { name, size: got.data.length, binary: true } : { name, size: got.data.length, text }
+      if (text === undefined) return { name, size: got.data.length, binary: true }
+      left -= got.data.length
+      return { name, size: got.data.length, text }
     })
     return { record: parsed, transcript, ...('size' in log ? { transcript_truncated: true } : {}), artifacts }
   }
@@ -349,6 +366,7 @@ export async function serve(o: ServeOptions): Promise<Litmus> {
 }
 
 const ARTIFACT_MAX = 8 << 20
+const ARTIFACTS_BUDGET = 32 << 20 // the inline text of every artifact in one response
 const TRANSCRIPT_MAX = 64 << 20
 
 // A file under root, only if its real path is under root's real path (a

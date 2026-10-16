@@ -1100,8 +1100,11 @@ would start a fragment that never reaches the server, in a path or a query.
 
 A body must be `application/json` (415 otherwise) and at most 1 MiB. A request
 the operator got wrong (a bad selector, an unknown config, a body that does
-not parse) is a 400 with `{ error }`, and a run, trial or route that does not
-exist is a 404. Each event on the stream carries its index as its `id`, so a
+not parse, or a run named in a query or body that does not exist) is a 400
+with `{ error }`. A run named in the path (`:id`), a trial, or a route that
+does not exist is a 404. Every error message the server sends or logs is
+redacted as the CLI's would be: a YAML error quotes the line it failed on. A
+500 says only `internal error`. Each event on the stream carries its index as its `id`, so a
 client that reconnects with `Last-Event-ID` (a plain number; anything else is
 ignored) gets only what it missed; the stream ends after `run.finished`,
 `run.cancelled` or `run.failed`. For a run that is not live in this server
@@ -1110,8 +1113,10 @@ request with nothing left to send gets a 204, the one answer that stops an
 EventSource reconnecting; a client following a run started elsewhere reads
 its status from `/api/runs/:id` instead. A
 trial's artifacts come back as text when they are UTF-8 and at most 8 MiB,
-as a size when binary, and as a size with `truncated` when larger; a
-transcript over 64 MiB comes back empty with `transcript_truncated`. Every
+as a size when binary, and as a size with `truncated` when larger. One
+response inlines at most 32 MiB of artifact text in all, so a trial with many
+large artifacts can always be viewed; past that, each comes back as a size
+with `truncated`. A transcript over 64 MiB comes back empty with `transcript_truncated`. Every
 file the server reads, a UI file included, must resolve inside its directory
 with links followed (a linked directory cannot lead out), and is read
 without following a final link.

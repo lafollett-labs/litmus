@@ -102,6 +102,23 @@ At `85fbb24`, `npm run check` exits 0 and 495 tests pass with 4 (live) skipped.
 | - | - | - |
 | SELF-001 | The 413 test failed about one full run in five with `write EPIPE`. Its client was still writing the 1.1 MB body when the server answered 413 and closed, so the write raced the close; a reset can also drop the 413 itself | Fixed. The test now writes the headers and one byte past the limit over a raw socket, then stops, so nothing is unread when the server closes. It reads the 413 and `connection: close` before the server's FIN. 30 of 30 isolated runs pass, and a server that keeps the connection open fails it. The server is unchanged: a client that keeps writing a body over 1 MiB can still see a reset instead of the 413, which is the usual cost of closing on an oversized request |
 
+## Gate 2 (PR #11)
+
+Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for it.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `01a936a` | 2 MEDIUM, 2 LOW, 2 INFO | Fixed, as below |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | Error bodies, and the server's stderr lines, were not redacted. A YAML error quotes the line it failed on, so a config typo on a line holding a key reached the UI | Fixed. One `scrub` (the config's redact list when it loads, and the credential variables always) covers every error body, the 500 stack on stderr, and a failed run's stderr line. Tested with a key quoted by a YAML error; the mutant is killed |
+| MEDIUM-002 | Artifacts had no total limit: a trial with many large artifacts built a string past V8's limit (a 500 at about 1 GB RSS) and could never be viewed | Fixed. One response inlines at most 32 MiB of artifact text; past that, each artifact comes back as its size with `truncated`. Documented. Tested with five 8 MiB artifacts: four inline, the fifth truncated. Both mutants are killed |
+| LOW-001 | Live `Last-Event-ID` and shutdown had no tests: four mutants survived | Tested: a reconnect during a live run gets only what it missed, and `close()` cancels a live run and waits for its record, even when an executor takes 300 ms to honour the cancel. All three mutants are killed |
+| LOW-002 | The docs said any missing run is a 404, but one named in a query or body is a 400 | Fixed in the docs: a run named in the path is a 404, and one named in a query or body is a 400, as the CLI's exit 2 |
+| INFO-001 | The CSP and SPA fallback will meet Vite's `data:` inlining, stale hashed assets and unlisted MIME types | Carried to M9, which builds the UI |
+| INFO-002 | Synchronous reads of every run share the event loop with live runs | Accepted at today's scale |
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `bd93180`, which is now carried by the rebase onto M7's approved tip. The PR opens once M5, M6 and M7 merge. It carries the post-approval commits (LOW and INFO fixes only), and Gate 2 reviews them.

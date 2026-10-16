@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import { request, type IncomingHttpHeaders } from 'node:http'
 import { connect } from 'node:net'
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { RunEvent } from '../../src/core/types.ts'
+import type { Executor } from '../../src/executors/types.ts'
 import { serve } from '../../src/server/server.ts'
 import { tree } from '../helpers/tmp.ts'
 
@@ -59,9 +60,9 @@ const post = (path: string, body?: unknown, origin = ORIGIN) => call('POST', pat
 const parse = (text: string) => text.split('\n\n').filter(Boolean).map(block => ({ id: Number(/^id: (\d+)$/m.exec(block)![1]), event: JSON.parse(/^data: (.*)$/m.exec(block)![1]!) as RunEvent }))
 const events = (id: string, headers: Record<string, string> = {}) => call('GET', `/api/runs/${id}/events`, { headers }).then(r => parse(r.text))
 // The stream as it arrives: `first` fires on the first chunk.
-function subscribe(id: string, first: () => void): Promise<ReturnType<typeof parse>> {
+function subscribe(id: string, first: () => void, headers: Record<string, string> = {}): Promise<ReturnType<typeof parse>> {
   return new Promise((ok, fail) => {
-    const req = request({ host: '127.0.0.1', port: litmus.port, path: `/api/runs/${id}/events`, headers: { host: HOST }, setHost: false, signal: AbortSignal.timeout(10_000) }, res => {
+    const req = request({ host: '127.0.0.1', port: litmus.port, path: `/api/runs/${id}/events`, headers: { host: HOST, ...headers }, setHost: false, signal: AbortSignal.timeout(10_000) }, res => {
       let text = ''
       res.setEncoding('utf8')
       res.on('data', d => {
@@ -329,6 +330,68 @@ test('a run is planned against the server\'s environment, so its credential chec
     const r = await fetch(`${other.url}/api/runs`, { method: 'POST', headers: { origin: other.url, 'content-type': 'application/json' }, body: JSON.stringify({ select: [], configs: ['fake'] }), signal: AbortSignal.timeout(10_000) })
     assert.equal(r.status, 400)
     assert.match(((await r.json()) as { error: string }).error, /real\.params\.note holds the value of a credential variable/)
+  } finally {
+    await other.close()
+  }
+})
+
+test('a live subscriber that reconnects with Last-Event-ID gets only what it missed', async () => {
+  const { id } = (await post('/api/runs', { select: ['e2e/slow'], configs: ['fake'] })).json()
+  const first = Promise.withResolvers<void>()
+  const all = subscribe(id, first.resolve)
+  await first.promise
+  const again = Promise.withResolvers<void>()
+  const rest = subscribe(id, again.resolve, { 'last-event-id': '0' })
+  await again.promise
+  await post(`/api/runs/${id}/cancel`)
+  const [full, missed] = await Promise.all([all, rest])
+  assert.equal(full[0]!.id, 0)
+  assert.equal(missed[0]!.id, 1)
+  assert.deepEqual(missed.map(e => e.id), full.slice(1).map(e => e.id))
+})
+
+test('close() cancels a live run and waits for it to be written', async () => {
+  // An executor slow to honour the cancel: close() must wait for the record anyway.
+  const slow: Executor = job => new Promise(ok => job.signal.addEventListener('abort', () => setTimeout(() => {
+    mkdirSync(dirname(job.out.transcript), { recursive: true })
+    writeFileSync(job.out.transcript, '')
+    ok({ exit: 'cancelled', artifacts: {}, transcript: job.out.transcript, usage: { input_tokens: 0, output_tokens: 0 }, wall_clock_ms: 1 })
+  }, 300)))
+  const other = await serve({ configFile: join(ROOT, 'litmus.config.yaml'), port: 0, uiDir: join(ROOT, 'ui'), env: {}, runSeams: { backoffMs: () => 0, executors: { model: slow } } })
+  const r = await fetch(`${other.url}/api/runs`, { method: 'POST', headers: { origin: other.url, 'content-type': 'application/json' }, body: JSON.stringify({ select: ['e2e/slow'], configs: ['fake'] }), signal: AbortSignal.timeout(10_000) })
+  const { id } = (await r.json()) as { id: string }
+  await other.close()
+  const dir = join(ROOT, '.litmus/runs', id)
+  assert.equal(JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).status, 'cancelled')
+  assert.equal(JSON.parse(readFileSync(join(dir, 'events.jsonl'), 'utf8').trim().split('\n').at(-1)!).type, 'run.cancelled')
+})
+
+test('one response inlines at most 32 MiB of artifact text; the rest are only their size', async () => {
+  const { id } = (await post('/api/runs', { select: ['e2e/passes'], configs: ['fake'] })).json()
+  await events(id)
+  const dir = join(ROOT, '.litmus/runs', id, 'trials/e2e/passes/fake/1')
+  const names = ['a1.txt', 'a2.txt', 'a3.txt', 'a4.txt', 'a5.txt']
+  for (const n of names) writeFileSync(join(dir, 'artifacts', n), Buffer.alloc((8 << 20) - 1, 0x61))
+  const record = JSON.parse(readFileSync(join(dir, 'trial.json'), 'utf8'))
+  writeFileSync(join(dir, 'trial.json'), JSON.stringify({ ...record, artifacts: names }))
+  const r = await call('GET', `/api/runs/${id}/trial?key=${encodeURIComponent('e2e/passes@fake#1')}`)
+  assert.equal(r.status, 200)
+  const got = r.json().artifacts as { name: string; text?: string; truncated?: true }[]
+  assert.deepEqual(got.map(a => [a.name, a.text?.length, a.truncated]), [...names.slice(0, 4).map(n => [n, (8 << 20) - 1, undefined]), ['a5.txt', undefined, true]])
+})
+
+test('an error the server reports is redacted, even a YAML error quoting a key', async () => {
+  const root = tree({
+    'litmus.config.yaml': 'suites: [./suites]\nresults: ./.litmus/runs\nconfigs:\n  fake: { provider: fake }\n',
+    'suites/e2e/suite.yaml': 'name: e2e\n',
+  })
+  const other = await serve({ configFile: join(root, 'litmus.config.yaml'), port: 0, uiDir: join(ROOT, 'ui'), env: { ANTHROPIC_API_KEY: KEY } })
+  try {
+    writeFileSync(join(root, 'litmus.config.yaml'), `suites: [./suites]\nresults: ./.litmus/runs\nconfigs:\n  fake: { provider: fake, model: "${KEY}" : bad }\n`)
+    const r = await fetch(`${other.url}/api/suites`, { signal: AbortSignal.timeout(10_000) })
+    const text = await r.text()
+    assert.equal(r.status, 400)
+    assert.ok(text.includes('[REDACTED]') && !text.includes(KEY), text)
   } finally {
     await other.close()
   }
