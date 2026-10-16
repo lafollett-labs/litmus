@@ -44,7 +44,9 @@ litmus serve                           # the runner UI at http://127.0.0.1:4317;
 Runs are written to `.litmus/runs/`. To try a real model, put
 `ANTHROPIC_API_KEY` in your environment and run with `--config sonnet-5`. That
 config is defined in `litmus.config.yaml`, and a run with it costs real tokens.
-Keys are read only from the environment, never from a file.
+Keys are read only from the environment, never from a file. Without the key,
+every trial is ERROR, the summary says why (`ANTHROPIC_API_KEY is not set`),
+and the run exits 3.
 
 ## What it does
 

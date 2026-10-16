@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { bedrockRegion } from '../../src/providers/index.ts'
 import { planRun } from '../../src/runner/plan.ts'
 import { run } from '../../src/runner/run.ts'
 import { tree } from '../helpers/tmp.ts'
@@ -38,6 +39,21 @@ test('a bedrock config runs with a region from the config, AWS_REGION or AWS_DEF
   assert.equal(plan(['s/m'], ['br'], { AWS_DEFAULT_REGION: 'us-east-1' }), 'run')
   assert.equal(plan(['s/m'], ['br'], { AWS_REGION: '', AWS_DEFAULT_REGION: 'us-east-1' }), 'run')
   refused(['s/m'], ['br'], { AWS_REGION: '' }, /config "br" is on bedrock with no region/)
+  refused(['s/m'], ['br'], { AWS_DEFAULT_REGION: '' }, /config "br" is on bedrock with no region/)
+  refused(['s/m'], ['br'], { AWS_REGION: '', AWS_DEFAULT_REGION: '' }, /config "br" is on bedrock with no region/)
+})
+
+test('the region rule: the config\'s own, then AWS_REGION, then AWS_DEFAULT_REGION, an empty value unset', () => {
+  const def = { provider: 'bedrock', model: 'm' } as Parameters<typeof bedrockRegion>[0]
+  assert.equal(bedrockRegion({ ...def, region: 'ap-south-1' } as typeof def, { AWS_REGION: 'eu-west-1', AWS_DEFAULT_REGION: 'us-east-1' }), 'ap-south-1')
+  assert.equal(bedrockRegion(def, { AWS_REGION: 'eu-west-1', AWS_DEFAULT_REGION: 'us-east-1' }), 'eu-west-1')
+  assert.equal(bedrockRegion(def, { AWS_REGION: '', AWS_DEFAULT_REGION: 'us-east-1' }), 'us-east-1')
+  assert.equal(bedrockRegion(def, { AWS_DEFAULT_REGION: '' }), undefined)
+})
+
+test('a config or judge named like an Object property is unknown, not Object\'s', () => {
+  // Unknown here, so left to run(), which refuses it by name; never Object's constructor's "provider undefined".
+  assert.equal(plan(['s/h'], ['constructor']), 'run')
 })
 
 test('a harness case runs on anthropic or bedrock, and is refused on any other provider', () => {

@@ -117,6 +117,32 @@ test('on a TTY a run that fails or is cancelled leaves no status line under its 
   }
 })
 
+test('an errored pair says why, on its infra line and in CTRF and JUnit: the first distinct reason, the rest counted', () => {
+  const trial = (n: number, reason?: string, status: 'error' | 'pass' = 'error', config = 'sonnet-5') =>
+    ({ key: `s/c@${config}#${n}`, case: 's/c', config, status, ...(reason === undefined ? {} : { reason }) }) as RunReport['trials'][number]
+  const errored = verdict({ config: 'sonnet-5', verdict: 'ERROR', scored: 0, errors: 3, passes: 0, successes: 0 })
+  const other = verdict({ config: 'two', verdict: 'ERROR', scored: 0, errors: 2, passes: 0, successes: 0 })
+  const r = report({
+    verdicts: [errored, other],
+    trials: [
+      trial(1, 'ANTHROPIC_API_KEY is not set'), trial(2, 'ANTHROPIC_API_KEY is not set\nmore detail'), trial(3), trial(4, 'a passing trial says nothing', 'pass'),
+      trial(1, 'timeout after 600s', 'error', 'two'), trial(2, 'HTTP 529 overloaded', 'error', 'two'), trial(3, 'HTTP 503', 'error', 'two'),
+    ],
+    exit: 3,
+  })
+  let out = ''
+  pretty({ write: t => (out += t), tty: false }, plain).finish(r)
+  assert.ok(out.includes('  infra   s/c@sonnet-5 ERROR — ANTHROPIC_API_KEY is not set\n'), out)
+  assert.ok(out.includes('  infra   s/c@two ERROR — timeout after 600s (and 2 other reasons)\n'), out)
+  const ctrf = JSON.parse(render('ctrf', r)) as { results: { tests: { message?: string }[] } }
+  assert.match(ctrf.results.tests[0]!.message!, / — ANTHROPIC_API_KEY is not set$/)
+  assert.match(render('junit', r), /message="ERROR s\/c@sonnet-5 [^"]* — ANTHROPIC_API_KEY is not set"/)
+  // No reason recorded: the line is as it was.
+  let bare = ''
+  pretty({ write: t => (bare += t), tty: false }, plain).finish(report({ verdicts: [errored], trials: [trial(1)], exit: 3 }))
+  assert.ok(bare.includes('  infra   s/c@sonnet-5 ERROR\n'), bare)
+})
+
 test('CTRF: a FLAKY the gate lets through is passed and flaky; one it blocks is failed, not flaky, with a message', () => {
   const tests = (allowFlaky: boolean) => (JSON.parse(render('ctrf', report({ verdicts: [verdict({ verdict: 'FLAKY', passes: 2, successes: 2, success_rate: 2 / 3 })], gate: { allowFlaky, allowInconclusive: false } }))) as { results: { tests: { status: string; flaky?: true; message?: string }[] } }).results.tests
   const [allowed] = tests(true)

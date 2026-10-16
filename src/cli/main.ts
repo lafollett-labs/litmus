@@ -5,6 +5,7 @@ import { redactor, secretValues } from '../core/redact.ts'
 import { loadConfig } from '../suite/load.ts'
 import { baselineCommand, compareCommand, runCommand, serveCommand, validateCommand } from './commands.ts'
 import { list } from './list.ts'
+import { LITMUS_VERSION } from '../runner/run.ts'
 
 const USAGE = `usage: litmus <command> [options]
 
@@ -25,6 +26,7 @@ a selector is <suite>, <suite>/<case>, a glob, tag:<tag>, or a trial key
 options:
   --config-file <path>  litmus.config.yaml to use (default: ./litmus.config.yaml)
   -h, --help            this text
+  -v, --version         the litmus version
 
 exit codes (run): 0 ok, 1 a blocking verdict or a REGRESSION, 2 a usage or
 config error, 3 infrastructure trouble only, 130 cancelled by SIGINT, 143 by SIGTERM
@@ -78,6 +80,10 @@ export async function main(argv: string[], io: Io): Promise<number> {
   }
   if (command === '-h' || command === '--help' || command === 'help') {
     io.out(USAGE)
+    return 0
+  }
+  if (command === '-v' || command === '--version' || command === 'version') {
+    io.out(`litmus ${LITMUS_VERSION}`)
     return 0
   }
   try {

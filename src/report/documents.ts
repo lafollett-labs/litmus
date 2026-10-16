@@ -1,6 +1,6 @@
 import type { TrialRecord, Verdict } from '../core/types.ts'
 import { LITMUS_VERSION } from '../runner/run.ts'
-import { verdictLine, plain, type RunReport } from './format.ts'
+import { errorReason, verdictLine, plain, type RunReport } from './format.ts'
 import { standing } from './gate.ts'
 
 export type DocumentFormat = 'json' | 'ctrf' | 'junit'
@@ -29,8 +29,12 @@ const span = (ts: TrialRecord[]) => ({
   duration: Math.round(ts.reduce((n, t) => n + t.wall_clock_ms, 0)),
   ...(ts.length ? { start: Math.min(...ts.map(t => ms(t.started_at))), stop: Math.max(...ts.map(t => ms(t.finished_at))) } : {}),
 })
-// Why a test that did not pass the gate did not: its verdict line, uncoloured.
-const message = (v: Verdict) => verdictLine(v, plain).replace(/\s+/g, ' ')
+// Why a test that did not pass the gate did not: its verdict line, uncoloured,
+// and why its trials errored, if any did.
+const message = (r: RunReport, v: Verdict) => {
+  const why = errorReason(r.trials, v)
+  return `${verdictLine(v, plain).replace(/\s+/g, ' ')}${why === undefined ? '' : ` — ${why}`}`
+}
 
 // The (case, config) pairs a cancel stopped before they settled: queued by the
 // run, whether or not a trial of theirs started, but with no verdict. A
@@ -59,7 +63,7 @@ function ctrf(r: RunReport) {
       rawStatus: v.verdict,
       ...span(ts),
       suite: [suiteOf(v)],
-      ...(s === 'passed' ? {} : { message: message(v) }),
+      ...(s === 'passed' ? {} : { message: message(r, v) }),
       retries: ts.reduce((n, t) => n + Math.max(0, t.attempts - 1), 0),
       ...(v.verdict === 'FLAKY' && s === 'passed' ? { flaky: true } : {}),
       parameters: { config: v.config },
@@ -147,7 +151,7 @@ function junit(r: RunReport): string {
         continue
       }
       const tag = s === 'blocking' ? 'failure' : 'error'
-      out.push(`${head}>`, `      <${tag} message="${xml(message(v))}" type="${v.verdict}"/>`, '    </testcase>')
+      out.push(`${head}>`, `      <${tag} message="${xml(message(r, v))}" type="${v.verdict}"/>`, '    </testcase>')
     }
     for (const p of sk) out.push(`    <testcase classname="${xml(name)}" name="${xml(`${p.case}@${p.config}`)}" time="0.000">`, `      <skipped message="${STOPPED}"/>`, '    </testcase>')
     out.push('  </testsuite>')

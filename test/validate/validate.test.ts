@@ -277,11 +277,13 @@ test('a proof that locks its own files on its first run fails its case alone', {
     project({
       selflock: seeded('selflock', { proof: 'test -r check.sh && chmod 000 check.sh; exit 1' }, { 'proof/check.sh': 'true\n' }),
       dirlock: seeded('dirlock', { proof: 'test -r t/check.sh && chmod 000 t; exit 1' }, { 'proof/t/check.sh': 'true\n' }),
+      locksbug: seeded('locksbug', { proof: 'test -r a.txt && chmod 000 a.txt; exit 1' }),
       fine: seeded('fine'),
     }),
   )
   assert.match(only(ps, 's/selflock').join('\n'), /^error: bug b1: EACCES: permission denied, open '.*check\.sh'$/)
   assert.match(only(ps, 's/dirlock').join('\n'), /^error: bug b1: EACCES: permission denied, scandir '.*\/t'$/)
+  assert.match(only(ps, 's/locksbug').join('\n'), /^error: bug b1: EACCES: permission denied, open '.*a\.txt'$/)
   assert.deepEqual(only(ps, 's/fine'), [])
 })
 

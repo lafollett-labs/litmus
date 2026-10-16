@@ -80,19 +80,20 @@ function runnable(config: Config, configs: string[], selection: Selection, only:
     const names = s.trials ? [...new Set(s.trials.map(t => t.config))] : configs
     return names.filter(n => !only || only.has(`${s.case.id}@${n}`)).map(name => ({ c: s.case, name }))
   })
-  const regionless = (def: ConfigDef | JudgeDef) => def.provider === 'bedrock' && bedrockRegion(def, env) === undefined
+  const regionless = (def: ConfigDef | JudgeDef) => def.provider === 'bedrock' && !bedrockRegion(def, env)
+  const own = <T,>(m: Record<string, T>, name: string): T | undefined => (Object.hasOwn(m, name) ? m[name] : undefined)
   for (const name of new Set(pairs.map(p => p.name))) {
-    const def = config.configs[name]
+    const def = own(config.configs, name)
     if (def && regionless(def)) throw new ConfigError(`config "${name}" is on bedrock with no region: set region on the config, or AWS_REGION`)
   }
   for (const { c, name } of pairs) {
-    const def = config.configs[name] // an unknown name is refused where the run starts
+    const def = own(config.configs, name) // an unknown name is refused where the run starts
     if (def && c.spec.executor.kind === 'harness' && !HARNESS_PROVIDERS.includes(def.provider)) {
       throw new ConfigError(`${c.id} is a harness case, which cannot run on config "${name}" (provider ${def.provider}); the harness runs on ${HARNESS_PROVIDERS.join(' or ')}`)
     }
   }
   for (const j of new Set(pairs.flatMap(p => judgesOf(p.c)))) {
-    const def = config.judges[j]
+    const def = own(config.judges, j)
     if (def && regionless(def)) throw new ConfigError(`judge "${j}" is on bedrock with no region: set region on the judge, or AWS_REGION`)
   }
 }

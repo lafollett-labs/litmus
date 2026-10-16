@@ -176,7 +176,12 @@ async function proof(c: LoadedCase, bug: { id: string; file: string; proof: stri
     }
     // A bug whose file is not in the tree is reported as such, not here.
     const bugFile = truthFile(wd.dir, bug.file)
-    const bugBefore = bugFile === undefined ? undefined : state(bugFile)
+    let bugBefore: string | undefined
+    try {
+      bugBefore = bugFile === undefined ? undefined : state(bugFile)
+    } catch (e) {
+      return (e as Error).message // the proof locked the bug's own file
+    }
     try {
       git(wd.dir, ['apply', fix], `${c.id}: fix ${bug.fix} does not apply after change.patch`)
     } catch (e) {
@@ -190,7 +195,13 @@ async function proof(c: LoadedCase, bug: { id: string; file: string; proof: stri
     }
     const edited = [...new Set([...proofBefore.keys(), ...proofAfter.keys()])].sort().find(rel => proofBefore.get(rel) !== proofAfter.get(rel))
     if (edited !== undefined) return `fix ${bug.fix} changes proof/${edited}; a fix may change only the subject's tree, never its proof`
-    if (bugFile !== undefined && state(bugFile) === bugBefore) warn(`its fix leaves ${bug.file} unchanged; a proof cured without touching the bug's file may be cured some other way`)
+    let bugAfter: string | undefined
+    try {
+      bugAfter = bugFile === undefined ? undefined : state(bugFile)
+    } catch (e) {
+      return (e as Error).message
+    }
+    if (bugFile !== undefined && bugAfter === bugBefore) warn(`its fix leaves ${bug.file} unchanged; a proof cured without touching the bug's file may be cured some other way`)
     const after = await sh(bug.proof, wd, c, redact, timeoutS, signal)
     if (signal?.aborted) return undefined
     if (!after.pass) return `its proof still fails with the fix applied: ${bug.proof}\n${after.rationale}`

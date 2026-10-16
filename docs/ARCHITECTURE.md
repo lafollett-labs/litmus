@@ -1,8 +1,8 @@
 # Architecture
 
 This file is the contract. Code that disagrees with it is a bug, or this file is
-out of date, and both get fixed in the same pull request. Until 0.1.0, contracts
-can change freely.
+out of date, and both get fixed in the same pull request. Before 1.0.0, a minor
+version may change any contract here; the CHANGELOG records each change.
 
 ## Vocabulary
 
@@ -535,8 +535,9 @@ subject wrote into `.git/` ever runs.
 - For the harness only: the credential variables its provider needs (for
   `anthropic`, `ANTHROPIC_API_KEY`; for `bedrock`, the region as `AWS_REGION`,
   `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
-  `AWS_BEARER_TOKEN_BEDROCK`, and `AWS_PROFILE` with `AWS_CONFIG_FILE` and
-  `AWS_SHARED_CREDENTIALS_FILE`, whichever are set), `CLAUDE_CONFIG_DIR`, and
+  `AWS_BEARER_TOKEN_BEDROCK`, whichever are set, and with `AWS_PROFILE`, also
+  `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`, defaulting to the
+  operator's `~/.aws` files), `CLAUDE_CONFIG_DIR`, and
   the Claude Code flags listed under the harness executor.
 
 This keeps credentials out of the environment and out of the usual dotfile
@@ -1315,6 +1316,7 @@ litmus compare <side> <side> [--allow-inconclusive] [--out path]
 litmus baseline set <name> <run> | litmus baseline list
 litmus validate [select...]
 litmus serve [--port 4317]
+litmus --version                                 # litmus <version>, exit 0
 ```
 
 Every command takes `--config-file <path>` (default `./litmus.config.yaml`).
@@ -1334,7 +1336,10 @@ junit.xml` gives both. `pretty` on a TTY redraws one status line in place and
 is coloured (unless `NO_COLOR` is set); anywhere else it writes the same lines
 plainly, top to bottom. It ends with the comparisons, the run's notes (such
 as a `--baseline` config the baseline lacks), a count of verdicts, every
-verdict or comparison that decided the exit code, and `exit <n>`.
+verdict or comparison that decided the exit code, and `exit <n>`. A pair
+whose trials errored says why on its line (the first distinct reason, the rest
+counted), as a CTRF or JUnit failure message does: `ANTHROPIC_API_KEY is not
+set`, say.
 
 | Document | One test per | Status |
 | - | - | - |

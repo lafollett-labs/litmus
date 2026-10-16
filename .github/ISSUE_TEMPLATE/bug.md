@@ -10,7 +10,8 @@ labels: bug
 that shows it.
 
 **Where.** The trial key (`<suite>/<case>@<config>#<n>`), the provider and
-model, and `node --version`.
+model, `litmus --version` (or `litmus_version` in the run's `run.json`), and
+`node --version`.
 
 **Anything from the run.** `trial.json` or the relevant lines of
 `events.jsonl` help most. Read a transcript before pasting it: it holds

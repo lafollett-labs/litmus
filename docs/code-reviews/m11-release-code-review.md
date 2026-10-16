@@ -6,8 +6,8 @@
 | - | - |
 | **Branch** | `m11-release` (Gate 1, local, before any PR; stacked on M10) |
 | **Reviewer** | @Cali LaFollett (PE-Vue) |
-| **Review Round** | 1 |
-| **Reviewed SHA** | `98ee084` |
+| **Review Round** | 2 (Gate 1), then Gate 2 on PR #16 below |
+| **Reviewed SHA** | `98ee084` (round 1; see SHAs after rebasing) |
 | **Title** | M11: release prep for 0.1.0 (quickstart, CHANGELOG, ARCHITECTURE re-read, and the code fixes it found) |
 | **Date** | 2026-09-30 |
 
@@ -108,6 +108,39 @@ M11 also merges M10's Gate 2 rules into the ARCHITECTURE re-read: ground truth, 
 | - | - | - |
 | PR15-LOW-001 | A queued trial of a cancelled run showed the server's 404 as a red error, though it never ran | Fixed. An unfinished trial of a cancelled run gets a neutral note, "not run: the run was cancelled before this trial started", both when it is opened after the cancel and when it was already open as the stream ended. A record that exists is still shown. Tested on both paths and with a record present. Dropping the note in either path, as a mutant, fails |
 | PR15-INFO-001 | The pane's header icon fell back to "queued" for a running trial with no record | Fixed: it falls back to the trial's state in its own run. An e2e assertion opens a running trial and expects "running"; the old fallback, as a mutant, fails it |
+
+## SHAs after rebasing
+
+The SHAs above are pre-rebase. The branch was rebased onto each merge of M5 through M10 and #15, and those commits are not on the PR. They correspond to these PR #16 commits, which stay on GitHub with the PR after the squash merge:
+
+| Recorded | On PR #16 | Commit |
+| - | - | - |
+| `98ee084` | `ad1d479` | docs(architecture): re-read against the code for 0.1.0 (round 1's head) |
+| `d237ace` | `c685177` | fix(run): check only the pairs a run would run; one region rule; bedrock judges too |
+| `b180d6d` | `8c79222` | fix(validate): a fix through a link named .git or .DS_Store resolves outside the case |
+| `8aa848b` | `0be5214` | docs: m11 code review, round 1 (round 2's head) |
+| `bf4188e` | `ea60a11` | fix(run): a trial key on a config the run does not use says so before any other check |
+
+## Gate 2 (PR #16)
+
+Copilot is out of quota, so a fresh PE-Vue with no prior context stood in for it. It ran the README quickstart as written in a fresh clone, and checked 45 ARCHITECTURE statements against the code: 44 matched, and the 45th is INFO-002. It also checked the release mechanics: the version is read from `package.json`, the license is MIT, and nothing private is tracked.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `44fe147` | 1 MEDIUM, 5 LOW, 4 INFO | Fixed, as below |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | The quickstart's real-model line, run without a key, gave 6 ERRORs and exit 3 with no reason on the terminal; the reason reached only `trial.json` and the UI | Fixed, keeping exit 3, so CI still reads it as infrastructure trouble. Each `infra` or `blocks` line, and each CTRF or JUnit failure message, now says why its pair's trials errored: the first distinct reason, the rest counted. Through the CLI with no key, the line reads `infra   smoke/passes@sonnet-5 ERROR — ANTHROPIC_API_KEY is not set`. The README says so too. Tested for one reason, several, and none; both mutants (the pretty line and the document message) are killed |
+| LOW-001 | A proof that locked the bug's own file still threw EACCES out of `validate` | Fixed: both snapshots of the bug's file are guarded and fail their bug alone. Tested (`locksbug`); the unguarded snapshot, as a mutant, fails |
+| LOW-002 | Region precedence and an empty `AWS_DEFAULT_REGION` were not pinned for `planRun` | Fixed. `regionless` tests falsiness, and tests pin the order (the config's own, then `AWS_REGION`, then `AWS_DEFAULT_REGION`) and an empty `AWS_DEFAULT_REGION`. The swap and the dropped coalesce, both of which survived before, are now killed. The defensive `proofAfter` guard (M17) is kept as unreachable defence |
+| LOW-003 | No `litmus --version`, and the bug template did not ask for it | Fixed: `-v`, `--version` and `version` print `litmus <version>` and exit 0. The usage, ARCHITECTURE § CLI and the bug template all name it. Tested; the mutant is killed |
+| LOW-004 | ARCHITECTURE's opening said contracts change freely only until 0.1.0 | Fixed to match the CHANGELOG: before 1.0.0, a minor version may change any contract |
+| LOW-005 | The review record's SHAs were pre-rebase, and the round field was stale | Fixed: the table above maps them, and the round field is corrected |
+| INFO-001 | `--config constructor` hit Object's constructor in `runnable()` | Fixed with `Object.hasOwn`, as run.ts does. Tested; the mutant is killed |
+| INFO-002 | The env-allowlist summary said the AWS files pass only when set | Fixed: with `AWS_PROFILE`, they default to the operator's `~/.aws` files |
+| INFO-003 | PLAN M11 is ticked before the tag exists | Accepted: the tag goes on the merge commit right after this PR merges, and the release is checked before this is called done |
+| INFO-004 | Verified correct | None needed |
 
 ## Merge Eligibility (latest)
 
