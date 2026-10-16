@@ -58,3 +58,15 @@ export function summaryLine(verdicts: Verdict[], paint: Paint): string {
   const n = verdicts.length
   return `${n} verdict${n === 1 ? '' : 's'}${counts.length ? `: ${counts.map(([k, c]) => paint(TONE[k], `${c} ${k}`)).join(' · ')}` : ''}`
 }
+
+// Why a pair's trials errored, for the line that names it: a missing key, say,
+// which otherwise reaches only trial.json. The distinct first lines of the
+// errored trials' reasons (already redacted), each cut at 200 code points,
+// the first shown and the rest counted.
+export function errorReason(trials: TrialRecord[], v: Verdict): string | undefined {
+  const seen = trials.filter(t => t.case === v.case && t.config === v.config && t.status === 'error' && t.reason).map(t => Array.from(t.reason!.split('\n')[0]!).slice(0, 200).join(''))
+  const distinct = [...new Set(seen)]
+  if (!distinct.length) return undefined
+  const more = distinct.length - 1
+  return more ? `${distinct[0]} (and ${more} other reason${more === 1 ? '' : 's'})` : distinct[0]
+}

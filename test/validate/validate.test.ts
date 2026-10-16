@@ -24,7 +24,7 @@ async function check(configFile: string, o: Parameters<typeof validate>[2] = {})
   const base = join(realpathSync(tree({ '.keep': '' })), 'wd')
   mkdirSync(base)
   const problems = await validate(config, suites.flatMap(s => s.cases), { env: {}, workBase: base, ...o })
-  assert.deepEqual(readdirSync(join(base, 'litmus')), [], 'every copy, and the run\'s directory, is removed')
+  assert.deepEqual(existsSync(join(base, 'litmus')) ? readdirSync(join(base, 'litmus')) : [], [], 'every copy, and the run\'s directory, is removed')
   return problems
 }
 
@@ -106,7 +106,8 @@ test('a symlink in the fixture is an error, and warnings name a rate policy that
   const ps = await check(configFile)
   assert.match(only(ps, 's/rate').join('\n'), /^warn: policy rate with threshold 0\.9 needs at least \d+ unbroken passes to return PASS; the case runs 2 trials/)
   assert.deepEqual(only(ps, 's/clean'), ['warn: review-match sets min_recall, which is never defined on a clean case (it has no bugs), so it never applies'])
-  assert.match(only(ps, 's/linked').join('\n'), /^error: .*fixture contains a symlink/)
+  // Any link in a case is refused when a run hashes the case, so validate reports that and checks no further.
+  assert.deepEqual(only(ps, 's/linked'), [`error: ${join(configFile, '../suites/s/cases/linked/fixture/escape')} is a symlink; a hashed tree must hold only files and directories; a run that selects this case is refused`])
 })
 
 test('a harness case gets the checks a run makes before the SDK loads: hooks need allow_hooks, and a suite may not sit inside a plugin', async () => {
@@ -178,10 +179,10 @@ test('a bad proof/ tree is an error for its case alone, reported even with proof
   symlinkSync('/nonexistent/litmus-proof', join(cases, 'dangling/proof'))
   for (const o of [{}, { proofs: false }]) {
     const ps = await check(configFile, o)
-    assert.match(only(ps, 's/linked').join('\n'), /^error: s\/linked: proof\/ contains a symlink at .*hosts$/)
+    assert.deepEqual(only(ps, 's/linked'), [`error: ${join(cases, 'linked/proof/hosts')} is a symlink; a hashed tree must hold only files and directories; a run that selects this case is refused`])
     assert.deepEqual(only(ps, 's/through'), ['error: proof/a.txt/x runs through a.txt, a file in the fixture (after change.patch); a proof may only add files'])
-    assert.deepEqual(only(ps, 's/rooted'), ['error: proof/ is a symlink; a proof may not be or contain a link'])
-    assert.deepEqual(only(ps, 's/dangling'), ['error: proof/ is a symlink; a proof may not be or contain a link'])
+    assert.deepEqual(only(ps, 's/rooted'), [`error: ${join(cases, 'rooted/proof')} is a symlink; a hashed tree must hold only files and directories; a run that selects this case is refused`])
+    assert.deepEqual(only(ps, 's/dangling'), [`error: ${join(cases, 'dangling/proof')} is a symlink; a hashed tree must hold only files and directories; a run that selects this case is refused`])
     assert.deepEqual(only(ps, 's/plain'), ['error: proof is not a directory; a proof is a tree of files laid over the fixture'])
     assert.match(only(ps, 's/dotgit').join('\n'), /^error: s\/dotgit: proof\/ contains a \.git directory at /)
     assert.deepEqual(only(ps, 's/fine'), [])
@@ -271,13 +272,28 @@ test('a fix that adds to a directory only the proof made changes the proof; one 
   assert.deepEqual(only(ps, 's/elsewhere'), ["warn: bug b1: its fix leaves a.txt unchanged; a proof cured without touching the bug's file may be cured some other way"])
 })
 
+test('a proof that locks its own files on its first run fails its case alone', { skip: process.getuid?.() === 0 && 'root reads anything' }, async () => {
+  const ps = await check(
+    project({
+      selflock: seeded('selflock', { proof: 'test -r check.sh && chmod 000 check.sh; exit 1' }, { 'proof/check.sh': 'true\n' }),
+      dirlock: seeded('dirlock', { proof: 'test -r t/check.sh && chmod 000 t; exit 1' }, { 'proof/t/check.sh': 'true\n' }),
+      locksbug: seeded('locksbug', { proof: 'test -r a.txt && chmod 000 a.txt; exit 1' }),
+      fine: seeded('fine'),
+    }),
+  )
+  assert.match(only(ps, 's/selflock').join('\n'), /^error: bug b1: EACCES: permission denied, open '.*check\.sh'$/)
+  assert.match(only(ps, 's/dirlock').join('\n'), /^error: bug b1: EACCES: permission denied, scandir '.*\/t'$/)
+  assert.match(only(ps, 's/locksbug').join('\n'), /^error: bug b1: EACCES: permission denied, open '.*a\.txt'$/)
+  assert.deepEqual(only(ps, 's/fine'), [])
+})
+
 test('an unreadable proof/ directory is an error for its case alone', { skip: process.getuid?.() === 0 && 'root reads anything' }, async () => {
   const configFile = project({ locked: seeded('locked', {}, { 'proof/sub/x': 'x\n' }), fine: seeded('fine') })
   const sub = join(configFile, '../suites/s/cases/locked/proof/sub')
   chmodSync(sub, 0o000)
   try {
     const ps = await check(configFile)
-    assert.match(only(ps, 's/locked').join('\n'), /^error: EACCES: permission denied, scandir '.*proof\/sub'$/)
+    assert.match(only(ps, 's/locked').join('\n'), /^error: EACCES: permission denied, scandir '.*proof\/sub'; a run that selects this case cannot read it either$/)
     assert.deepEqual(only(ps, 's/fine'), [])
   } finally {
     chmodSync(sub, 0o755)
@@ -295,13 +311,23 @@ test('a harness case\'s proof/ may add what a harness would refuse in a fixture:
   assert.match(refused.join('\n'), /the fixture has \.mcp\.json/)
 })
 
-test('a fix/ that links out of the case resolves outside it', async () => {
+test('a fix/ that links out of the case is refused as a link in the case', async () => {
   const configFile = project({ out: seeded('out') }, { 'elsewhere/b1.patch': FIX })
   const fixDir = join(configFile, '../suites/s/cases/out/fix')
   rmSync(join(fixDir, 'b1.patch'))
   rmSync(join(fixDir), { recursive: true })
   symlinkSync(join(configFile, '../elsewhere'), fixDir)
-  assert.match(only(await check(configFile), 's/out').join('\n'), /fix fix\/b1\.patch resolves outside the case/)
+  assert.deepEqual(only(await check(configFile), 's/out'), [`error: ${fixDir} is a symlink; a hashed tree must hold only files and directories; a run that selects this case is refused`])
+})
+
+test('a fix through a link named .DS_Store or .git, which the case hash skips, resolves outside the case', async () => {
+  const configFile = project({ ds: seeded('ds', { fix: '.DS_Store' }), gt: seeded('gt', { fix: '.git/b1.patch' }) }, { 'elsewhere/b1.patch': FIX })
+  const cases = join(configFile, '../suites/s/cases')
+  symlinkSync(join(configFile, '../elsewhere/b1.patch'), join(cases, 'ds/.DS_Store'))
+  symlinkSync(join(configFile, '../elsewhere'), join(cases, 'gt/.git'))
+  const ps = await check(configFile)
+  assert.deepEqual(only(ps, 's/ds'), ['error: bug b1: fix .DS_Store resolves outside the case'])
+  assert.deepEqual(only(ps, 's/gt'), ['error: bug b1: fix .git/b1.patch resolves outside the case'])
 })
 
 test('a model case\'s subject file may sit anywhere, even above the suites: nothing reads its folder', async () => {

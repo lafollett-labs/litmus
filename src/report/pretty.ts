@@ -1,5 +1,5 @@
 import type { RunEvent, Verdict } from '../core/types.ts'
-import { comparisonLines, summaryLine, verdictLine, type Paint, type RunReport } from './format.ts'
+import { comparisonLines, errorReason, summaryLine, verdictLine, type Paint, type RunReport } from './format.ts'
 import { standing } from './gate.ts'
 
 export type Sink = { write: (text: string) => void; tty: boolean }
@@ -90,8 +90,10 @@ function reasons(r: RunReport): string[] {
   const out: string[] = []
   for (const v of r.verdicts) {
     const s = standing(v, r.gate)
-    if (s === 'blocking') out.push(`  blocks  ${id(v)} ${v.verdict}`)
-    else if (s === 'infra') out.push(`  infra   ${id(v)} ${v.verdict}`)
+    const why = errorReason(r.trials, v)
+    const tail = why === undefined ? '' : ` — ${why}`
+    if (s === 'blocking') out.push(`  blocks  ${id(v)} ${v.verdict}${tail}`)
+    else if (s === 'infra') out.push(`  infra   ${id(v)} ${v.verdict}${tail}`)
   }
   for (const c of r.comparisons) if (c.verdict === 'REGRESSION') out.push(`  blocks  ${c.a} → ${c.b} REGRESSION`)
   return out

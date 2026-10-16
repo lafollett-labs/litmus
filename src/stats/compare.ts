@@ -6,7 +6,7 @@ type Metrics = Partial<Record<Warn['metric'], number>>
 export type CompareSide = {
   label: string
   verdicts: Verdict[] // one per case: a side is a single config
-  metrics?: Metrics // the per-trial median of each metric over this side's trials: one number per metric
+  metrics?: Metrics // per metric, the median over cases of each case's median trial: one number per metric
   // Per-case hash of everything that decides scoring: case.yaml, truth,
   // fixture, change, proof, fix, and the grader and extractor hashes. A case
   // whose hash differs between sides is excluded, never compared.

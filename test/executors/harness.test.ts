@@ -215,6 +215,20 @@ test('tokens are counted across every model in the session, subagents included',
   assert.deepEqual(r.usage, { input_tokens: 415, output_tokens: 80, cost_usd: 0.5 })
 })
 
+test('on bedrock, an empty AWS_REGION counts as unset and AWS_DEFAULT_REGION is forwarded as the region', async () => {
+  const { query, calls } = scripted([result()])
+  process.env['AWS_REGION'] = ''
+  process.env['AWS_DEFAULT_REGION'] = 'eu-west-1'
+  try {
+    await runHarness(job(HARNESS(), {}, { provider: 'bedrock', model: 'anthropic.claude-sonnet-5' }), query)
+  } finally {
+    delete process.env['AWS_REGION']
+    delete process.env['AWS_DEFAULT_REGION']
+  }
+  assert.equal(calls[0]?.env?.['AWS_REGION'], 'eu-west-1')
+  assert.equal(calls[0]?.env?.['CLAUDE_CODE_USE_BEDROCK'], '1')
+})
+
 test('without an API key, or on a provider the harness cannot use, nothing runs', async () => {
   const { query, calls } = scripted([result()])
   delete process.env['ANTHROPIC_API_KEY']

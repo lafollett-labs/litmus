@@ -1,8 +1,8 @@
 # Architecture
 
 This file is the contract. Code that disagrees with it is a bug, or this file is
-out of date, and both get fixed in the same pull request. Until 0.1.0, contracts
-can change freely.
+out of date, and both get fixed in the same pull request. Before 1.0.0, a minor
+version may change any contract here; the CHANGELOG records each change.
 
 ## Vocabulary
 
@@ -50,11 +50,13 @@ src/
 ├── store/       # write and read runs on disk, baselines
 ├── report/      # pretty terminal output, CTRF, JUnit, JSON
 ├── server/      # HTTP API and server-sent events on 127.0.0.1
+├── validate/    # checks each case on a disposable copy, and runs each seeded bug's proof
 └── cli/         # litmus list | run | compare | baseline | validate | serve
 ui/              # Vue 3 + Vite single-page runner, a client of the server
 suites/examples/ # smoke, canaries, code-review: examples only, never a release gate
 test/            # node --test, plus Playwright for the UI
-litmus.config.yaml   # this repository's own config: the example suites and the fake provider
+litmus.config.yaml   # this repository's own config: the example suites, the fake provider,
+                     #   and a live anthropic config (sonnet-5) with its pricing
 ```
 
 ## Configuration: `litmus.config.yaml`
@@ -62,7 +64,8 @@ litmus.config.yaml   # this repository's own config: the example suites and the 
 This file lives where you run litmus. Suite roots are searched in the order
 listed, and a suite name defined under two roots is an error. So is a root
 that holds no suite, a directory under a root with `suite.yml` or `cases/` but
-no `suite.yaml`, and a broken symlink under a root or `cases/`. Entries whose
+no `suite.yaml`, a suite with no case under `cases/`, and a broken symlink
+under a root or `cases/`. Entries whose
 names start with `.` or `_` are never suites or cases and are skipped. Judge
 names in `extract.with`, `judge` graders and `review-match.confirm` must be
 defined under `judges`.
@@ -106,6 +109,9 @@ compare:
 redact: []                           # extra environment variable names whose values are scrubbed from output
 ```
 
+Each `redact` entry must be an environment variable name
+(`^[A-Za-z_][A-Za-z0-9_]*$`), not a value.
+
 A config can also carry `params`, which are provider-specific request fields
 passed through untouched. `params` is recorded in `run.json`, so it must never
 hold a credential. Credentials come only from the environment (below). When
@@ -136,7 +142,10 @@ environment variables: `ANTHROPIC_API_KEY`, the AWS credential chain, and
 nothing else. It never falls back to `ANTHROPIC_AUTH_TOKEN` or to a saved login
 profile, whose `base_url` could send the eval to another host and bill another
 account. A Bedrock config takes its region from `region`, then `AWS_REGION`,
-then `AWS_DEFAULT_REGION`. With none of them set, it is a config error.
+then `AWS_DEFAULT_REGION`, and an empty value counts as unset. With none of
+them set, a run that would use the config, or a judge on bedrock that a
+selected case calls, is refused with a config error (exit 2) before it
+starts. A config the run only names, with no trial on it, is not checked.
 
 ## Suite and case files
 
@@ -229,6 +238,7 @@ Defaults for the rest of the case:
 
 | Key | Default |
 | - | - |
+| `expect` | `pass` |
 | `executor.max_tokens` (model) | 8000 |
 | `executor.max_turns` (harness) | 30 |
 | `executor.setting_sources`, `plugins` | `[]` |
@@ -236,6 +246,8 @@ Defaults for the rest of the case:
 | `extract.from`, `extract.to` | `final_message`, `findings.json` |
 | grader `target` (regex, judge) | `transcript` |
 | grader `min` (regex, tool-used) | 1 |
+| `regex.flags` | none: JavaScript `RegExp` flags such as `i` or `m`; `g` is always added, and the pattern must compile with its flags at load |
+| `file-exists.exists` | `true` |
 | `command.timeout_s` | 120 |
 | `review-match.artifact`, `window` | `findings.json`, 5 |
 
@@ -250,11 +262,15 @@ a directory (a plugin), and never a symlink. A directory is hashed by its tree: 
 relative path, executable bit and content. `.git` and `.DS_Store` are left out,
 and a symlink or special file is refused. A `prompt_file` or a file `subject`
 may not point at any case's `case.yaml`, `truth.yaml`, `fake.yaml`, `fix/` or
-`proof/`, by its written path or its real one. A directory subject is never
-sent to the model, only hashed. This rule catches authoring mistakes, such as a
-wrong relative path or a stale symlink. It is not a boundary against the suite's
-own author, who writes the prompt and could put the answers in it directly.
-That is why a hard link, which has a path of its own, is not chased.
+`proof/`; its real path is checked as well as the one written. A directory
+subject is never sent to the model, only hashed. This rule catches authoring
+mistakes, such as a wrong relative path. It is not a boundary against the
+suite's own author, who writes the prompt and could put the answers in it
+directly. That is why a hard link, which has a path of its own, is not chased.
+
+A case directory may hold no symlink (entries named `.git` or `.DS_Store`
+aside, which the case hash skips). A run that selects such a case is refused
+when it hashes the case, and `validate` reports it.
 
 `truth.yaml`:
 
@@ -276,6 +292,10 @@ decoys:
     summary: subtle.ConstantTimeCompare is deliberate
 ```
 
+Every bug needs `category`, `proof` and `fix`, and its `fix` file must exist
+when the case loads. A seeded case has at least one bug, and a clean case has
+none. Bug and decoy ids are unique across both lists.
+
 The `litmus:findings` schema is what a reviewer produces. Line numbers refer
 to the tree the subject saw, which is the post-change tree. It is model output,
 so extra keys (a `confidence`, a top-level `summary`) are allowed and ignored.
@@ -284,8 +304,8 @@ A missing or mistyped required field fails:
 ```ts
 type Finding = {
   file: string
-  line: number               // first line
-  end_line?: number          // last line, inclusive; defaults to line
+  line: number               // first line, >= 1
+  end_line?: number          // last line, inclusive, >= line; defaults to line
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info'
   category?: string
   title: string
@@ -297,9 +317,15 @@ type Findings = { findings: Finding[] }
 
 ### `litmus validate`
 
-`validate` checks the schemas, the file references and the rules above. It
-also runs every seeded bug's proof on a disposable copy of the case, never on
-the suite itself:
+`validate` loads the suites as `run` does, so it checks the schemas, the file
+references and the rules above. A suite or case that fails to load (a
+`min_trials` above `trials`, a `rate` threshold outside (0, 1), an unknown
+judge name, any other load error) stops it before any case is checked: it
+prints the error and `invalid: the suites do not load`, and exits 1.
+
+It then checks each selected case on a disposable copy of its post-change
+tree, never on the suite itself, and runs every seeded bug's proof on a copy
+of its own:
 
 ```
 for each seeded bug:
@@ -310,25 +336,33 @@ for each seeded bug:
 
 It fails a case in any of these situations:
 
-- the tree contains a symlink after the change is applied
-- the fixture contains a `.git` entry
-- `proof` is not a directory, cannot be read, or a `proof/` path already
-  exists in the post-change tree, runs through a file there, or is (or
-  contains) a symlink or a `.git` entry
-- a bug's or decoy's `file` is not a regular file in the post-change tree,
-  spelled exactly as on disk (review-match compares paths case-sensitively),
-  or its `lines` run past the end of it
-- a bug's `fix` resolves outside the case, links followed, or changes a
-  `proof/` file or adds to a directory only `proof/` made. A fix that rewrote
-  its proof would pass it without touching the bug. What the proof itself
-  changes on its first run is not counted
-- `min_trials` exceeds `trials`, or a `rate` threshold is outside (0, 1)
-- a harness case's plugins or fixture declare hooks or MCP servers without
-  `allow_hooks: true`
+- the case directory holds a symlink, or anything that is neither a file nor
+  a directory (`.git` and `.DS_Store` aside). This is reported first, and
+  nothing else is checked for the case
+- the post-change tree cannot be built (see Sandbox): the fixture holds a
+  `.git` entry, `change.patch` does not apply, or the patch creates a symlink
+- a harness case's plugins, or under `setting_sources: [project]` its
+  fixture, declare hooks or MCP servers without `allow_hooks: true`, or break
+  another plugin rule (see the harness executor)
 - a harness case with `setting_sources: [project]` has a fixture
   `.claude/settings.json` (or `settings.local.json`) that sets any key other
   than `$schema`
-- a suite root lies inside one of a harness case's plugin or subject roots
+- a harness case's plugin lies inside a suite, or contains one
+- `proof` is not a directory or cannot be read, or a `proof/` path also
+  exists in the post-change tree, runs through a file there, or is (or
+  contains) a `.git` entry
+- a bug's or decoy's `file` is not a regular file in the post-change tree,
+  spelled exactly as on disk (review-match compares paths case-sensitively),
+  or its `lines` run past the end of it
+- a suite root lies inside a harness case's subject root
+- for a seeded bug, any of:
+  - its `fix` lies outside the case (links followed), or does not exist
+  - its proof passes before the fix, or times out before the fix
+  - the fix does not apply after `change.patch`
+  - its proof still fails with the fix applied
+  - its fix changes a `proof/` file or adds to a directory only `proof/`
+    made (a fix that rewrote its proof would pass it without touching the
+    bug; what the proof itself changes on its first run is not counted)
 
 It warns in three situations:
 
@@ -339,11 +373,18 @@ It warns in three situations:
 - a bug's fix leaves the bug's own `file` unchanged, so its proof may be cured
   some other way (a Go `TestMain` that exits 0, say)
 
-`run` makes the same error checks, at load or before each trial, except the
-`proof/`, `fix`, ground-truth and subject-root ones, which are `validate`'s
-alone, as are the warnings and the proof runs. (In a run, the harness gate simply denies reads
-under a suite root.) A proof is a suite author's command, run as the command grader
-runs one: in its own process group, with a scrubbed env and the case's
+`run` makes the load checks too. Before the run starts, it also refuses with
+a config error (exit 2) a selected case whose directory holds a symlink, a
+bedrock config with no region, and a harness case on a provider other than
+`anthropic` or `bedrock`. The workdir and harness checks (a symlink after the
+patch, a fixture `.git`, hooks, MCP and fixture settings, a plugin in or
+around a suite) it makes per trial, as each attempt's workdir is built and its
+session starts. Each one makes that trial an `error`, so the case settles
+ERROR and `run` exits 3. Only `validate` reports these before anything is
+spent. The `proof/`, `fix`, ground-truth and subject-root checks, the warnings and the
+proof runs are `validate`'s alone. (In a run, the harness gate simply denies
+reads under a suite root.) A proof is a suite author's command, run as the
+command grader runs one: in its own process group, with a scrubbed env and the case's
 `timeout_s`. Ctrl-C or SIGTERM kills that group, removes the copy, and exits
 130 or 143 with nothing reported, since a cut-short validate vouches for no
 case.
@@ -380,7 +421,9 @@ for each job, at most `concurrency` at once:
 on finish or cancel:
     write verdicts.json                  # settled cases only
 on finish, if the run has more than one config, or --baseline was given:
-    write comparison.json                # a cancelled run compares nothing
+    compare                              # a cancelled run compares nothing
+    if at least one comparison resulted:
+        write comparison.json
 ```
 
 | How the executor stopped | `exit` | Retried | Trial status |
@@ -388,7 +431,8 @@ on finish, if the run has more than one config, or --baseline was given:
 | It finished, including a refusal, a truncation or unparseable output | `ok` | No | `pass` or `fail`, decided by the graders |
 | A harness timeout or max turns | `model_failure` | Never | `fail` |
 | A model-executor timeout, throttling (408, 409, 429), 5xx or network | `infra_error` (retryable) | Up to `retries`, with backoff | `error` once the retries run out |
-| Auth failure, another 4xx, or a missing key | `infra_error` (not retryable) | Never | `error` |
+| The harness's Agent SDK threw, or its session ended with no result message | `infra_error` (retryable) | Up to `retries`, with backoff | `error` once the retries run out |
+| Auth failure (including a harness API-error turn with no status whose text names auth or billing), another 4xx, or a missing key | `infra_error` (not retryable) | Never | `error` |
 | The operator cancelled | `cancelled` | Never | `cancelled` |
 | The workdir could not be built (a patch that no longer applies), or an executor threw | none | Only a retryable `InfraError` | `error`, with the reason; the run goes on |
 | The trial threw outside its attempts (the store could not move its files) | none | Never | `error`, with the reason; the run goes on |
@@ -406,8 +450,9 @@ never accepted: a provider or SDK that answers late did not answer in time.
 The model executor races the call against the clock, so a provider that
 ignores its signal and never settles still times out.
 
-Retries back off exponentially with jitter (1 s, 2 s, 4 s ... up to 30 s), and
-a cancel cuts a backoff short. Once a run is cancelled no new trial starts, the
+Retries back off exponentially (1 s, 2 s, 4 s ... up to 30 s), each step
+jittered down to as little as half its length, and a cancel cuts a backoff
+short. Once a run is cancelled no new trial starts, the
 ones in flight end `cancelled`, and no further case settles. The run writes the
 verdicts of the cases that settled before it stopped.
 
@@ -438,9 +483,13 @@ INCONCLUSIVE.
 
 ## Sandbox
 
-**Workdirs.** Each workdir is created under
-`os.tmpdir()/litmus/<run>/<key-slug>-<key-hash>-<attempt>/`. The hash
-keeps two keys that slug alike apart. The workdir is used by its real path,
+**Workdirs.** Each attempt gets a fresh root,
+`os.tmpdir()/litmus/<run>/<key-slug>-<key-hash>-<attempt>/`, where the key
+hash is the first 12 hex digits of the trial key's SHA-256. The hash keeps two
+keys that slug alike apart. The root holds `work/` (the workdir, the subject's
+cwd), `home/` (`HOME` for child processes) and `claude/` (`CLAUDE_CONFIG_DIR`
+for the harness), and the whole root is removed when the attempt is done with
+it. The workdir is used by its real path,
 so a `TMPDIR`, or a `litmus/` under it, that is a symlink is judged where it
 lands. It is never placed inside the results store or a suite root, compared
 case-folded. Nor is it placed anywhere with instructions in its real
@@ -458,12 +507,14 @@ ancestors that Claude Code would load: `CLAUDE.md`, `CLAUDE.local.md`,
    refused. A patch can create one.
 5. The builder takes a snapshot of every file (path, size and hash).
 
-Git runs only while the workdir is being built, before the subject starts. It
-runs with `PATH` alone for its environment, and with `GIT_CONFIG_NOSYSTEM=1`,
-`GIT_CONFIG_GLOBAL=/dev/null`, `core.hooksPath=/dev/null`,
-`core.fsmonitor=false`, `maintenance.auto=false` and `gc.auto=0`. The last two
-stop a detached git from outliving the build. The gate also refuses the
-subject any write under `<workdir>/.git/`.
+Git runs only while the workdir is being built, before the subject starts. Its
+environment holds only `PATH`, `HOME` (set to the workdir),
+`GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` and
+`GIT_TERMINAL_PROMPT=0`. Every call passes `-c core.hooksPath=/dev/null`,
+`core.fsmonitor=false`, `maintenance.auto=false`, `gc.auto=0`,
+`commit.gpgsign=false`, `user.name=litmus` and `user.email=litmus@localhost`.
+`maintenance.auto` and `gc.auto` stop a detached git from outliving the
+build. The gate also refuses the subject any write under `<workdir>/.git/`.
 
 After the executor exits, **the files the subject wrote** are found by
 comparing against the snapshot, not by asking git. Files are read without
@@ -475,13 +526,19 @@ subject wrote into `.git/` ever runs.
 `command` graders and `validate` proofs. Each one gets a scrubbed environment:
 
 - `PATH`, `LANG`, `LC_*`, `TERM` and `TMPDIR`.
-- `HOME`, pointed at a temporary directory created for the trial.
+- `HOME`, pointed at the attempt's `home/`.
 - The toolchain variables `GOCACHE`, `GOMODCACHE`, `GOPATH`, `GOFLAGS`,
   `GOTOOLCHAIN` and `npm_config_cache`, when they are set. `GOFLAGS` and
   `GOTOOLCHAIN` are the operator's own settings, so they carry through to the
   `go` runs in `command` graders and proofs (`GOTOOLCHAIN=local` makes a case
   that needs a newer Go fail instead of downloading one).
-- For the harness only, the one credential its provider needs.
+- For the harness only: the credential variables its provider needs (for
+  `anthropic`, `ANTHROPIC_API_KEY`; for `bedrock`, the region as `AWS_REGION`,
+  `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
+  `AWS_BEARER_TOKEN_BEDROCK`, whichever are set, and with `AWS_PROFILE`, also
+  `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`, defaulting to the
+  operator's `~/.aws` files), `CLAUDE_CONFIG_DIR`, and
+  the Claude Code flags listed under the harness executor.
 
 This keeps credentials out of the environment and out of the usual dotfile
 locations. **It does not contain a hostile process**, which can still read any
@@ -494,7 +551,7 @@ executor lands (see "After 0.1.0" in the plan):
 - `allow_hooks`, which runs plugin and project hooks
 
 A shell command, hook or MCP server started by the harness is a child of the
-harness process, so it inherits the harness's credential.
+harness process, so it inherits the harness's credentials.
 
 A `command` grader leads its own process group, and the whole group is killed
 when the shell exits or times out. A process that leaves the group (`setsid`)
@@ -558,8 +615,8 @@ it. SDK retries are turned off, because the runner owns retries. Server-side
 model fallbacks are never enabled: a fallback answers with a different model,
 and an eval that silently measures the wrong model is worse than an ERROR. The
 config refuses at load each provider's switch for them: Anthropic's
-`fallbacks`, and OpenRouter's `models`, `route` and `openrouter/auto`.
-OpenRouter's routing between hosts of the same model is not a model fallback,
+`fallbacks` (on an `anthropic` or a `bedrock` config), and OpenRouter's
+`models`, `route` and `openrouter/auto`. OpenRouter's routing between hosts of the same model is not a model fallback,
 and stays on.
 
 Usage counts cached input tokens (cache reads and writes) as input tokens. When
@@ -573,20 +630,30 @@ estimates it.
 ### Executor
 
 ```ts
-interface Executor {
-  kind: 'model' | 'harness'
-  execute(job: {
-    case: Case; config: Config; trial: number; attempt: number; workdir: string
-    emit: (e: TrialEvent) => void; signal: AbortSignal
-  }): Promise<{
-    exit: 'ok' | 'model_failure' | 'infra_error' | 'cancelled'
-    reason?: string
-    retryable?: boolean                   // infra_error only
-    artifacts: Record<string, string>     // name -> path under the trial's artifacts dir
-    transcript: string                    // path to transcript.jsonl
-    usage: { input_tokens: number; output_tokens: number; cost_usd?: number }
-    wall_clock_ms: number
-  }>
+type ExecJob = {
+  key: string                                    // trial key
+  case: LoadedCase
+  configName: string
+  config: ConfigDef
+  trial: number
+  attempt: number
+  workdir: Workdir
+  suiteRoots: string[]                           // every configured suite root: the gate never lets a subject reach one
+  out: { artifacts: string; transcript: string } // owned by the store; the executor writes here
+  pricing: ConfigFile['pricing']
+  emit: (e: RunEvent) => void
+  redact: Redactor                               // applied to everything the executor writes or emits
+  signal: AbortSignal                            // the operator's cancel
+}
+type Executor = (job: ExecJob) => Promise<ExecutorResult>
+type ExecutorResult = {
+  exit: 'ok' | 'model_failure' | 'infra_error' | 'cancelled'
+  reason?: string
+  retryable?: boolean                            // infra_error only
+  artifacts: Record<string, string>              // name -> absolute path
+  transcript: string                             // absolute path to transcript.jsonl
+  usage: Usage
+  wall_clock_ms: number
 }
 ```
 
@@ -597,12 +664,18 @@ interface Executor {
     path and line numbers
   - `{{diff}}`: the contents of `change.patch`
   - `{{file:<path>}}`: a single file from the workdir
+
+  A file that holds a NUL byte renders as `=== name === (binary, N bytes)`.
+  A `{{file:…}}` that points outside the workdir, or cannot be read, is a
+  config error, and the trial is an `error`.
 - **System prompt.** The subject's content, when the case has a subject.
 - **Artifacts.** It always writes `response.txt`. It writes `findings.json`
   when the response has a JSON object to extract: the last ```` ```json ````
   fenced block if there is one, otherwise the whole response if that parses
   as a JSON object. When neither exists, `findings.json` is not written. A
   `json-schema` grader then fails the trial; it is not a model failure.
+- **Reason.** When the provider reports a stop reason, an `ok` trial records
+  it as `reason: "stop_reason: <x>"`.
 
 **`harness: claude-code`** drives Claude Code through
 `@anthropic-ai/claude-agent-sdk`. It runs in the workdir (`cwd`) with a
@@ -622,11 +695,16 @@ scrubbed environment and these settings:
   still load; the SDK gives no way to turn them off.
 - **Permissions.** `permissionMode: 'default'` is set explicitly, and
   `disallowedTools` lists every tool class the case has not allowed.
-- `CLAUDE_CONFIG_DIR` is a fresh directory created for the trial, and
-  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` is set. MCP config is strict, with no
-  servers unless `allow_hooks` is set.
-- The case's plugins are loaded. A plugin or fixture that would start a host
-  process is refused unless the case sets `allow_hooks: true`. That means
+- `CLAUDE_CONFIG_DIR` is the attempt's fresh `claude/` directory, and
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`,
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and
+  `ENABLE_CLAUDEAI_MCP_SERVERS=false` are set. `persistSession: false` is
+  passed. MCP config is always strict, with no configured servers
+  (`strictMcpConfig: true`, `mcpServers: {}`); `allow_hooks` only lets a
+  plugin's or the fixture's MCP declarations past the refusal below.
+- The case's plugins are loaded. A plugin, or under
+  `setting_sources: [project]` the fixture, that would start a host process
+  is refused unless the case sets `allow_hooks: true`. That means
   hooks, MCP servers or LSP servers, and they are uncontained, like
   `allow_shell`. The rules for plugins:
   - `plugin.json` may hold only the keys `name`, `version`, `description`,
@@ -651,8 +729,10 @@ scrubbed environment and these settings:
     That refuses outright the shapes Claude Code's YAML reads differently from
     the spec (a quoted `<<` merges there, and `[hooks]` becomes `hooks`). No
     key may be `hooks`, `mcpServers`, `lspServers`, `monitors`, `statusLine`
-    or `isolation`. The same goes for markdown under a fixture `.claude/`
-    directory at any depth.
+    or `isolation`. Under `setting_sources: [project]`, the same goes for
+    markdown under a fixture `.claude/` directory at any depth, and a fixture
+    `.mcp.json` needs `allow_hooks`. Without `[project]` the fixture's hooks,
+    MCP and `.claude/` files are not scanned.
   - `allow_hooks: true` waives only the process signals (the process files,
     manifest keys and frontmatter keys above). A symlink, a key that isn't
     plain, a merge key, a parse failure and `isolation` are refused either
@@ -663,8 +743,9 @@ scrubbed environment and these settings:
   is never used. `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS
   credential variables, including `AWS_BEARER_TOKEN_BEDROCK`. With
   `AWS_PROFILE`, it points `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`
-  at the operator's own files, because `HOME` is redirected. Pairing a harness
-  with `openrouter` or `fake` is a config error.
+  at the operator's own files, because `HOME` is redirected. A run that pairs
+  a harness case with a config on any other provider (`openrouter`, `fake`)
+  is refused with a config error before it starts.
 - `maxTurns` comes from the case, and the trial's timeout aborts the session.
 - **Result.** A turn that ends on an API error arrives as a `success` result
   with `is_error` set, and its text is the error. It is an `infra_error`,
@@ -684,7 +765,7 @@ fires on every call, subagents' included.
 | Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` or `final_message.txt`. Under `setting_sources: [project]`, also not `.mcp.json`, and not under a `.claude/` directory at any depth: Claude Code discovers `.claude/` skills, agents and commands between a touched file and the cwd, so the session would load them as its own config |
 | Agent, Task (subagents) | With no `isolation`. Their tool calls pass through the same gate; a worktree or remote agent would not |
 | TodoWrite, Skill | Always |
-| Bash | `allow_shell: true` |
+| Bash, BashOutput, KillShell, KillBash | `allow_shell: true` |
 | WebFetch, WebSearch, `mcp__*` | `allow_network: true` (`mcp__*` also needs `allow_hooks: true`) |
 | Anything else | Never |
 
@@ -725,15 +806,19 @@ Paths are resolved the way the tool would resolve them, then judged:
 `extract: { from, to, with }` runs after an executor that finishes with `ok`
 and before the graders.
 
-- `from` is `final_message` or the name of an artifact.
+- `from` is `final_message` or the name of an artifact. `final_message`
+  reads `final_message.txt`, falling back to `response.txt`.
 - `with` names one of the `judges`.
 
-The extractor sends litmus's built-in extraction prompt and the target schema
-(`litmus:findings`), then writes `to` as an artifact. It is identified by a
-hash of the judge definition plus the prompt version. That hash is recorded in
-`trial.json` and `run.json`. A comparison refuses to pair two results whose
-extractor hashes differ, and the same goes for judges. This lets a real
-`/review` skill be scored without changing the format it writes.
+Any artifact already at `to` is dropped before extracting, so it never
+stands in for an extraction that failed. The extractor sends litmus's
+built-in extraction prompt and the target schema (`litmus:findings`), then
+writes `to` as an artifact. It is identified by a hash of the judge definition
+plus the prompt version. That hash is recorded in `trial.json` only;
+`run.json` holds the judge hashes. The case hash covers the judge hashes and
+the extract prompt version, so a comparison excludes a case whose extractor
+or judges differ between the sides. This lets a real `/review` skill be scored
+without changing the format it writes.
 
 An extraction that yields nothing says why:
 - there was no source, or it was empty, which is never extracted into zero findings
@@ -781,8 +866,8 @@ its graders say.
 | Grader | Passes when |
 | - | - |
 | `regex` | The pattern matches the target (an artifact or `transcript`) between `min` and `max` times. An empty match does not count, and counting stops once past `max`, when `matches` reads null (a lower bound, not a count). `transcript` is what the subject wrote: its messages and tool calls, not litmus's prompt and not tool results, which are the fixture it read |
-| `json-schema` | The artifact parses and validates against the schema (`litmus:findings`, or a path to a JSON Schema) |
-| `file-exists` | The path exists (or does not) in the workdir after the trial. A path that leads outside the workdir through a symlink fails |
+| `json-schema` | The artifact parses and validates against the schema (`litmus:findings`, or a path to a JSON Schema). A schema file is Draft-07 when its `$schema` says so, and 2020-12 otherwise. An unknown keyword or format is a config error, and the trial is an `error` |
+| `file-exists` | The path exists (or does not) in the workdir after the trial. A path that leads outside the workdir through a symlink fails. A path that is absolute or contains `..` is a config error at grading, and the trial is an `error` |
 | `tool-used` | A tool was called between `min` and `max` times, read from the transcript. Useful for capping subagent fan-out |
 | `command` | A shell command, run in the workdir after the trial with the scrubbed environment, exits 0 within `timeout_s`. Its output is redacted before it is cut to its last 4,000 bytes. **Uncontained** (see Sandbox) |
 | `review-match` | Findings matched against `truth.yaml` meet the case's `pass` bounds (below) |
@@ -815,8 +900,9 @@ for each unmatched finding:
     else:                                        false positive  # on a clean case, every finding lands here or on a decoy
 ```
 
-Paths are normalized before they are compared. A leading workdir path
-(absolute, or its realpath) is stripped, as are a leading `./` and backslashes.
+Paths are normalized before they are compared: backslashes become `/`, a
+finding's leading workdir path (absolute, or its realpath) is stripped, and
+the path is posix-normalized, which also drops a leading `./`.
 
 The metrics are below. A metric is null when its denominator is 0.
 
@@ -824,7 +910,8 @@ The metrics are below. A metric is null when its denominator is 0.
 recall            = matched / bugs                    # also recall_critical, _high, _medium, _low: always present, null for a severity the truth lacks
 precision         = matched / (matched + false_positives + decoy_hits)
 precision_all     = matched / findings
-false_positives, decoy_hits, duplicates, nits, findings   # counts
+false_positives, decoy_hits, duplicates, nits, findings, matched, bugs   # counts
+confirmed                                             # a count; only with confirm
 claims_correct    = confirmed / matched               # only with confirm
 ```
 
@@ -918,15 +1005,21 @@ the cases both of them scored.
   - one side could not score it
   - its **case hash** differs between the sides
 
-  The case hash covers `case.yaml`, `truth.yaml`, `fixture/`, `change.patch`,
-  `proof/`, `fix/`, the resolved prompt, every `json-schema` file its graders
-  read (inside the case or not), and the grader and extractor hashes. An edit
-  to ground truth would otherwise be blamed on the model. A `command`
+  The case hash covers the whole case directory (`case.yaml`, `truth.yaml`,
+  `fixture/`, `change.patch`, `proof/`, `fix/`, `fake.yaml`; `.git` and
+  `.DS_Store` aside), the resolved prompt, every `json-schema` file its
+  graders read (inside the case or not), the settings resolved from the suite's
+  `defaults` (tags aside), the hashes of the judges it calls, and the extract
+  prompt version when it extracts. An edit to ground truth would otherwise be
+  blamed on the model. Editing a suite's `defaults` therefore excludes, against
+  an older baseline, every case whose resolved settings it changes. A `command`
   grader's script outside the case is not covered, since litmus cannot tell
   what it reads. A difference in a subject or plugin hash does not exclude a
   case, because comparing subject versions is a real use. It is listed in the
-  comparison's `notes` instead: `<case>: subject changed (<old> → <new>)`,
-  `plugin <root>: changed`, or `plugin <root>: loaded only by <side>`. A
+  comparison's `notes` instead: `<case>: subject changed (<old12> → <new12>)`,
+  `plugin <root>: changed (<old12> → <new12>)`, or
+  `plugin <root>: loaded only by <side>`, where `<old12>` and `<new12>` are
+  the first 12 hex digits of each hash. A
   plugin is known by its absolute root, so a baseline recorded from another
   checkout reads as two `loaded only by` notes rather than one `changed`.
 - **Flips.** Every case whose verdict changed is listed with its old and new
@@ -994,8 +1087,7 @@ the cases both of them scored.
   A case is excluded, and never flips, when its hash differs between the sides
   or is missing on one of them, or when only one side ran it. A case one side
   could not score is excluded from the interval but still flips, since a case
-  that stopped scoring is news. When neither side carries case hashes, the
-  comparison's `notes` say that changed cases were not detected.
+  that stopped scoring is news.
 - **WARN.** Raised for a metric when the ratio of B's median to A's falls
   outside [1/`warn_ratio`, `warn_ratio`]. A side's median is the median over
   the paired cases of each case's median over its scored trials (an errored
@@ -1041,6 +1133,9 @@ the cases both of them scored.
         ├── transcript.jsonl              # TranscriptEntry per line
         └── artifacts/
 ```
+
+The tree shows the default `results: ./.litmus/runs`. `baselines.json` always
+sits beside the `results` directory, in its parent, wherever `results` points.
 
 The record shapes are the types in `src/core/types.ts`. Runs are append-only,
 and each JSON file is written to a temporary name and renamed into place, so
@@ -1120,22 +1215,24 @@ would start a fragment that never reaches the server, in a path or a query.
 | - | - | - |
 | GET | `/api/suites` | The case tree, with each case's latest verdict for each config |
 | GET | `/api/configs` | Configured configs and judges, with no secrets |
-| POST | `/api/runs` | Start a run: `{ select, configs, trials?, baseline?, rerun?: { run, only: VerdictKind[] } }`. Answers 202 `{ id }` once the run has one, or `{ id: null, message }` for a rerun with nothing to do |
+| POST | `/api/runs` | Start a run: `{ select?, configs?, trials?, baseline?, rerun?: { run, only: VerdictKind[] } }`. `select` defaults to `[]`, and `configs` may be left out as `--config` may. Answers 202 `{ id }` once the run has one, or `{ id: null, message }` for a rerun with nothing to do; 503 while the server is shutting down |
 | GET | `/api/runs` | Run history |
 | GET | `/api/runs/:id` | Manifest, verdicts, comparison |
 | GET | `/api/runs/:id/events` | Server-sent events: the backlog first, then the live stream |
-| POST | `/api/runs/:id/cancel` | Cancel the run (409 when it is not running) |
+| POST | `/api/runs/:id/cancel` | Cancel the run: 202 `{ id }`, or 409 when it is not running |
 | GET | `/api/runs/:id/trial?key=<encoded trial key>` | Trial record, transcript and artifacts |
 | GET | `/api/compare?a=&b=` | Compare two runs, using the forms under Addressing runs and comparisons |
-| PUT | `/api/baselines/:name` | Set a baseline to a run: `{ run }` |
+| PUT | `/api/baselines/:name` | Set a baseline to a run: `{ run }`. Answers 200 `{ name, run }` |
 
-A body must be `application/json` (415 otherwise) and at most 1 MiB. A request
-the operator got wrong (a bad selector, an unknown config, a body that does
-not parse, or a run named in a query or body that does not exist) is a 400
-with `{ error }`. A run named in the path (`:id`), a trial, or a route that
-does not exist is a 404. Every error message the server sends or logs is
-redacted as the CLI's would be: a YAML error quotes the line it failed on. A
-500 says only `internal error`. Each event on the stream carries its index as its `id`, so a
+A body must be `application/json` (415 otherwise) and at most 1 MiB (413
+otherwise). A request the operator got wrong (a bad selector, an unknown
+config, a body that does not parse, a malformed run id) is a 400 with
+`{ error }`. So is an unknown run named to `/api/compare` or
+`PUT /api/baselines/:name`. Only the `/api/runs/:id` routes answer 404 for a
+run that does not exist; a trial the run lacks and a route that does not
+exist are 404 too. Every error message the server sends or logs is redacted
+as the CLI's would be: a YAML error quotes the line it failed on. A 500 says
+only `internal error`. Each event on the stream carries its index as its `id`, so a
 client that reconnects with `Last-Event-ID` (a plain number; anything else is
 ignored) gets only what it missed; the stream ends after `run.finished`,
 `run.cancelled` or `run.failed`. For a run that is not live in this server
@@ -1144,16 +1241,19 @@ request with nothing left to send gets a 204, the one answer that stops an
 EventSource reconnecting; a client following a run started elsewhere reads
 its status from `/api/runs/:id` instead. A
 trial's artifacts come back as text when they are UTF-8 and at most 8 MiB,
-as a size when binary, and as a size with `truncated` when larger. One
-response inlines at most 32 MiB of artifact text in all, so a trial with many
-large artifacts can always be viewed; past that, each comes back as a size
-with `truncated`. A transcript over 64 MiB comes back empty with `transcript_truncated`. Every
+as a size with `binary` when binary, as a size with `truncated` when larger,
+and as `{ missing: true }` when the file is gone or leads outside. One
+response inlines at most 32 MiB of artifact text in all, counted as the text
+costs in JSON, so a trial with many large artifacts can always be viewed;
+past that, each comes back as a size with `truncated`. A transcript over
+64 MiB comes back empty with `transcript_truncated`. Every
 file the server reads, a UI file included, must resolve inside its directory
 with links followed (a linked directory cannot lead out), and is read
 without following a final link.
 
 Any path outside `/api` serves the built UI (`ui/dist`), with `index.html` for
-a path that is not a file, so the UI's own routes survive a reload. Every
+a path that is not a file, so the UI's own routes survive a reload. A method
+other than GET or HEAD there is a 405. Every
 response says `nosniff`, forbids framing (`frame-ancestors 'none'`, since a
 framed page could borrow the operator's clicks), and sends no referrer.
 `litmus serve` stops on Ctrl-C: it drops open connections at once, cancels
@@ -1168,8 +1268,8 @@ API and nothing else.
 - **Toolbar:** Run all, Run selected, Rerun failed, Rerun flaky, Rerun
   errored and Cancel, plus a multi-select of configs and a trial count.
 - **Tree:** suite → case → config → trial.
-  - Each row has a checkbox, a status icon, and a counts badge
-    (`✓ 12 ✗ 2 ~ 1 ! 0 ? 0`).
+  - Each row has a checkbox and a status icon. Suite, case and config rows
+    also carry a counts badge (`✓ 12 ✗ 2 ~ 1 ! 0 ? 0`); trial rows do not.
   - Checking a case or suite runs it on the toolbar's configs. Checking a
     config or trial runs those trial keys on their own config, so the toolbar's
     trial count does not apply to them. When both kinds are checked, every
@@ -1183,20 +1283,27 @@ API and nothing else.
   - A text filter and status chips narrow the tree.
   - Status icons: queued (hollow), running (spinner), pass (a green circle),
     fail (a red square), flaky (an amber diamond), error (a grey triangle),
-    inconclusive (outlined), cancelled (struck through). The shape carries the
-    status as well as the colour.
+    inconclusive (outlined), cancelled (struck through), and `none` (dotted)
+    for a config never run. The shape carries the status as well as the colour.
+- On load, the UI opens the newest run.
 - **Detail pane** for a trial:
   - **Transcript:** a timeline of messages, tool calls and refusals, modelled
     on Playwright's UI mode.
   - **Graders:** each result with its reasoning and metrics.
-  - **Findings:** matched bugs, missed bugs, false positives, decoy hits and
-    nits, set against the ground truth.
-  - **Usage:** tokens, cost, time and attempts.
+  - **Findings:** on a trial graded by `review-match` only: matched bugs,
+    missed bugs, false positives, decoy hits, duplicates and nits, set against
+    the ground truth.
+  - **Usage:** subject tokens and cost, grading tokens and cost, time,
+    attempts and tool calls.
+  - **Artifacts:** each artifact with its size, and its text when it is text.
 - A run that the stream stops following while its record still says running
   is shown as running elsewhere (the CLI's); one whose server went away is
   shown as lost.
 - **Compare view:** a grid of cases × configs with a verdict in each cell. The
-  flip list sits on top, next to the suite verdict and any WARN metrics.
+  flip list sits on top, next to the suite verdict and any WARN metrics. A
+  two-side form compares any two sides, written in the forms under Addressing
+  runs and comparisons. Each comparison also lists its excluded cases and its
+  notes.
 
 ## CLI
 
@@ -1209,15 +1316,16 @@ litmus compare <side> <side> [--allow-inconclusive] [--out path]
 litmus baseline set <name> <run> | litmus baseline list
 litmus validate [select...]
 litmus serve [--port 4317]
+litmus --version                                 # litmus <version>, exit 0
 ```
 
 Every command takes `--config-file <path>` (default `./litmus.config.yaml`).
 
 `--config` may be left out only when the config file defines exactly one
 config. `--rerun` runs the configs of the run it reruns, so it takes neither
-`--config` nor selectors, and `--only` needs `--rerun`. A rerun whose `--only`
-set matches no verdict prints so (to stderr, under a machine-readable
-reporter) and exits 0. `baseline set` takes only a finished run: a cancelled
+`--config` nor selectors. `--rerun` and `--only` each need the other. A
+rerun whose `--only` set matches no verdict prints so (to stderr, under a
+machine-readable reporter) and exits 0. `baseline set` takes only a finished run: a cancelled
 or failed one holds some of its cases, and would quietly shrink every
 comparison against it.
 
@@ -1228,11 +1336,14 @@ junit.xml` gives both. `pretty` on a TTY redraws one status line in place and
 is coloured (unless `NO_COLOR` is set); anywhere else it writes the same lines
 plainly, top to bottom. It ends with the comparisons, the run's notes (such
 as a `--baseline` config the baseline lacks), a count of verdicts, every
-verdict or comparison that decided the exit code, and `exit <n>`.
+verdict or comparison that decided the exit code, and `exit <n>`. A pair
+whose trials errored says why on its line (the first distinct reason, the rest
+counted), as a CTRF or JUnit failure message does: `ANTHROPIC_API_KEY is not
+set`, say.
 
 | Document | One test per | Status |
 | - | - | - |
-| `json` | (none: the manifest, verdicts, comparisons, notes and exit) | |
+| `json` | (none: the manifest, verdicts, comparisons, notes and exit; an errored pair's verdict carries `error_reason`) | |
 | `ctrf` (spec 0.0.0, validated against `src/report/vendor/ctrf.schema.json`) | (case, config) verdict | the gate below decides it: blocking is `failed`, infra is `other`, and anything let through is `passed`, with `flaky: true` for an allowed FLAKY |
 | `junit` | (case, config) verdict, plus one per comparison, in a testsuite named `litmus:comparisons` (no suite can have that name) | blocking is a `<failure>`, infra an `<error>`, and a comparison's REGRESSION a `<failure>` |
 
@@ -1278,22 +1389,24 @@ else exit 3 if any verdict is infra      # CI can tell infrastructure trouble fr
 else exit 0
 ```
 
-A run cancelled by SIGINT exits 130, and by SIGTERM 143; a second signal
-leaves at once. Only `run` takes the signals this way. If litmus itself fails mid-run (the store cannot be written),
-the run is marked `failed` and `run` exits 3.
+`run` and `validate` cancel on SIGINT or SIGTERM, and exit 130 or 143;
+`serve` stops (see Server) and exits 0. A second signal leaves at once. If
+litmus itself fails mid-run (the store cannot be written), the run is marked
+`failed` and `run` exits 3.
 
 Inside `run`, only a comparison's REGRESSION blocks. Its INCONCLUSIVE and NO
 CHANGE are reported, and neither changes the exit code, since small suites
 rarely have the evidence for NO CHANGE.
 
 `compare` exits 0 on NO CHANGE or IMPROVEMENT, and 1 on REGRESSION. It also
-exits 1 on INCONCLUSIVE, unless `--allow-inconclusive` is passed.
+exits 1 on INCONCLUSIVE, unless `--allow-inconclusive` is passed. It exits 2
+on a usage or config error.
 
 `validate` exits 0 when every case is valid and 1 otherwise, including when a
-suite will not load. Warnings don't affect its exit code. Ctrl-C or SIGTERM
-cancels it with 130 or 143.
+suite or case fails to load (an unknown judge name among them). It exits 2
+only on a usage error, a config file that will not load, or a bad selector.
+Warnings don't affect its exit code.
 
-Both exit 2 on a usage error or a config file that will not load. Any command exits 3 on any other
-failure (a results directory litmus cannot read, say), with one redacted line
-on stderr and no stack trace, so infrastructure trouble never reads as a
-REGRESSION.
+Any command exits 3 on any other failure (a results directory litmus cannot
+read, say), with one redacted line on stderr and no stack trace, so
+infrastructure trouble never reads as a REGRESSION.

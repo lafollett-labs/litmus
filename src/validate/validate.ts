@@ -11,6 +11,7 @@ import { command } from '../graders/command.ts'
 import type { GradeContext, TrialResult } from '../graders/index.ts'
 import { buildWorkdir, copyTree, git } from '../sandbox/workdir.ts'
 import { minTrialsToPass } from '../stats/verdict.ts'
+import { hashTree } from '../suite/tree.ts'
 import type { Config, LoadedCase } from '../suite/load.ts'
 
 export type Problem = { case: string; level: 'error' | 'warn'; message: string }
@@ -50,6 +51,18 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
   for (const c of cases) {
     if (o.signal?.aborted) break
     const say = (level: Problem['level'], message: string) => out.push({ case: c.id, level, message: redact.text(message) })
+    // A run hashes every case it selects before it starts, and refuses the
+    // whole run on a case whose directory holds a link: nothing below matters.
+    try {
+      hashTree(c.dir)
+    } catch (e) {
+      // A case it cannot read (EACCES, say) stops a run with exit 3: an error
+      // for this case alone here.
+      if (e instanceof ConfigError) say('error', `${e.message}; a run that selects this case is refused`)
+      else if ((e as NodeJS.ErrnoException).code !== undefined) say('error', `${(e as Error).message}; a run that selects this case cannot read it either`)
+      else throw e
+      continue
+    }
     let attempt = 0
     // A fresh copy of the post-change tree: the fixture, then change.patch.
     const copy = () => buildWorkdir(c, { run, key: trialKey({ suite: c.suite, case: c.name, config: 'validate', trial: 1 }), attempt: ++attempt }, base, avoid)
@@ -143,7 +156,8 @@ async function proof(c: LoadedCase, bug: { id: string; file: string; proof: stri
     const fix = resolve(c.dir, bug.fix)
     if (!inside(fix, c.dir)) return `fix ${bug.fix} lies outside the case`
     if (!existsSync(fix)) return `fix ${bug.fix} does not exist`
-    // Links followed: a fix/ that is a link out of the case lies outside it too.
+    // Links followed: the case hash skips .git and .DS_Store, so a link by
+    // either name is not refused there.
     if (!inside(realpathSync.native(fix), realpathSync.native(c.dir))) return `fix ${bug.fix} resolves outside the case`
 
     const before = await sh(bug.proof, wd, c, redact, timeoutS, signal)
@@ -153,19 +167,41 @@ async function proof(c: LoadedCase, bug: { id: string; file: string; proof: stri
     // A fix that rewrote the proof would pass it without touching the bug.
     // Taken after the first run, so what the proof does to its own files is
     // not laid at the fix's door.
-    const proofBefore = ownedState(wd.dir, owned)
+    // A proof that locked its own files on its first run fails its case alone.
+    let proofBefore: Map<string, string>
+    try {
+      proofBefore = ownedState(wd.dir, owned)
+    } catch (e) {
+      return (e as Error).message
+    }
     // A bug whose file is not in the tree is reported as such, not here.
     const bugFile = truthFile(wd.dir, bug.file)
-    const bugBefore = bugFile === undefined ? undefined : state(bugFile)
+    let bugBefore: string | undefined
+    try {
+      bugBefore = bugFile === undefined ? undefined : state(bugFile)
+    } catch (e) {
+      return (e as Error).message // the proof locked the bug's own file
+    }
     try {
       git(wd.dir, ['apply', fix], `${c.id}: fix ${bug.fix} does not apply after change.patch`)
     } catch (e) {
       return (e as Error).message
     }
-    const proofAfter = ownedState(wd.dir, owned)
+    let proofAfter: Map<string, string>
+    try {
+      proofAfter = ownedState(wd.dir, owned)
+    } catch (e) {
+      return (e as Error).message
+    }
     const edited = [...new Set([...proofBefore.keys(), ...proofAfter.keys()])].sort().find(rel => proofBefore.get(rel) !== proofAfter.get(rel))
     if (edited !== undefined) return `fix ${bug.fix} changes proof/${edited}; a fix may change only the subject's tree, never its proof`
-    if (bugFile !== undefined && state(bugFile) === bugBefore) warn(`its fix leaves ${bug.file} unchanged; a proof cured without touching the bug's file may be cured some other way`)
+    let bugAfter: string | undefined
+    try {
+      bugAfter = bugFile === undefined ? undefined : state(bugFile)
+    } catch (e) {
+      return (e as Error).message
+    }
+    if (bugFile !== undefined && bugAfter === bugBefore) warn(`its fix leaves ${bug.file} unchanged; a proof cured without touching the bug's file may be cured some other way`)
     const after = await sh(bug.proof, wd, c, redact, timeoutS, signal)
     if (signal?.aborted) return undefined
     if (!after.pass) return `its proof still fails with the fix applied: ${bug.proof}\n${after.rationale}`
@@ -186,9 +222,8 @@ function sh(run: string, wd: { dir: string; home: string }, c: LoadedCase, redac
 // What is wrong with a case's proof/ tree, overlaid on a post-change copy: a
 // proof may only add regular files, and only where the fixture has none.
 function proofTree(c: LoadedCase, proofDir: string, work: string): string[] {
-  const root = lstatSync(proofDir)
-  if (root.isSymbolicLink()) return [`proof/ is a symlink; a proof may not be or contain a link`]
-  if (!root.isDirectory()) return [`proof is not a directory; a proof is a tree of files laid over the fixture`]
+  // A link here, or anywhere in the case, was refused when the case was hashed.
+  if (!lstatSync(proofDir).isDirectory()) return [`proof is not a directory; a proof is a tree of files laid over the fixture`]
   let rels: string[]
   try {
     rels = files(proofDir)

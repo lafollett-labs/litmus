@@ -25,7 +25,7 @@ const shown = computed<Tab>(() => (tabs.value.includes(tab.value) ? tab.value : 
     <p v-if="!state.detail" class="muted hint">Open a trial (the <code>#n</code> rows) to see its transcript, graders, findings and usage.</p>
     <template v-else>
       <header>
-        <StatusIcon :status="data?.record.status ?? 'queued'" />
+        <StatusIcon :status="data?.record.status ?? (state.run?.id === state.detail.run ? state.run.trials[state.detail.key] : undefined) ?? 'queued'" />
         <h2 class="mono">{{ state.detail.key }}</h2>
         <span v-if="data" class="muted">{{ data.record.exit }}<template v-if="data.record.reason"> · {{ data.record.reason }}</template></span>
       </header>

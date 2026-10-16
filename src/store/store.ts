@@ -81,6 +81,9 @@ export class RunStore {
     const dir = this.trialDir(ref)
     const from = this.attemptDir(ref, attempt)
     const artifactsDir = join(dir, 'artifacts')
+    // No attempt may have written anything: a workdir that would not build, or
+    // an executor that threw before its first write.
+    mkdirSync(dir, { recursive: true })
     if (existsSync(from.transcript)) renameSync(from.transcript, join(dir, 'transcript.jsonl'))
     else writeFileSync(join(dir, 'transcript.jsonl'), '')
     if (existsSync(from.artifacts)) renameSync(from.artifacts, artifactsDir)

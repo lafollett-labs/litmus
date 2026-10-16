@@ -125,6 +125,29 @@ test('exit 2 on every usage or config error, with the reason on stderr', t => {
   }
 })
 
+test('a config every trial would fail on is refused before the run, with exit 2', () => {
+  const root = tree({
+    'litmus.config.yaml': 'suites: [./suites]\nresults: ./.litmus/runs\nconfigs:\n  fake: { provider: fake }\n  br: { provider: bedrock, model: anthropic.claude-sonnet-5 }\n',
+    'suites/s/suite.yaml': 'name: s\n',
+    'suites/s/cases/m/case.yaml': 'name: m\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, target: response.txt, pattern: hi }]\ntrials: 1\n',
+    'suites/s/cases/m/fake.yaml': 'responses: [{ text: hi }]\n',
+    'suites/s/cases/h/case.yaml': 'name: h\nexecutor: { kind: harness, harness: claude-code, prompt: go }\ngraders: [{ kind: regex, target: response.txt, pattern: hi }]\ntrials: 1\n',
+    'suites/s/cases/h/fixture/a.txt': 'x\n',
+  })
+  const env: NodeJS.ProcessEnv = { ...ENV }
+  delete env['AWS_REGION']
+  delete env['AWS_DEFAULT_REGION']
+  const go = (...args: string[]) => spawnSync(process.execPath, [MAIN, 'run', ...args], { cwd: root, encoding: 'utf8', env })
+  const region = go('s/m', '--config', 'br')
+  assert.equal(region.status, 2, region.stdout)
+  assert.match(region.stderr, /config "br" is on bedrock with no region/)
+  const harnessOnFake = go('s', '--config', 'fake')
+  assert.equal(harnessOnFake.status, 2, harnessOnFake.stdout)
+  assert.match(harnessOnFake.stderr, /s\/h is a harness case, which cannot run on config "fake" \(provider fake\)/)
+  assert.equal(readdirSync(root).includes('.litmus'), false, 'no run was written')
+  assert.equal(go('s/m', '--config', 'fake').status, 0)
+})
+
 test('a rerun takes neither selectors nor --config, even of a run that exists', () => {
   const id = runId(litmus('run', 'e2e/fails', '--config', 'fake').stdout)
   const withSelector = litmus('run', '--rerun', id, '--only', 'fail', 'e2e/fails')

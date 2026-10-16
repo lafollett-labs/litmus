@@ -9,6 +9,7 @@ import { digest, readRegular, snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
 import { fold, inside } from '../core/paths.ts'
 import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
+import { bedrockRegion } from '../providers/index.ts'
 import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
 import type { ExecJob } from './types.ts'
@@ -267,7 +268,7 @@ function credentials(job: ExecJob): Record<string, string> | string {
       return env['ANTHROPIC_API_KEY'] ? { ANTHROPIC_API_KEY: env['ANTHROPIC_API_KEY'] } : 'the claude-code harness needs ANTHROPIC_API_KEY (a claude.ai login is never used)'
     case 'bedrock': {
       const out: Record<string, string> = { CLAUDE_CODE_USE_BEDROCK: '1' }
-      const region = job.config.region ?? env['AWS_REGION'] ?? env['AWS_DEFAULT_REGION']
+      const region = bedrockRegion(job.config, env)
       if (!region) return 'the claude-code harness on bedrock needs a region (config.region or AWS_REGION)'
       out['AWS_REGION'] = region
       for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK', 'AWS_PROFILE']) if (env[k]) out[k] = env[k]!

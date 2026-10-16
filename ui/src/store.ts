@@ -68,7 +68,7 @@ async function settled(id: string): Promise<void> {
     state.suites = suites
     // A trial still waiting will get no trial.finished now: look for its record once.
     const d = state.detail
-    if (d?.waiting && d.run === id) void fetchTrial(id, d.key, stored.manifest.status === 'running' ? ELSEWHERE : undefined)
+    if (d?.waiting && d.run === id) void fetchTrial(id, d.key, absentOn(state.run.done))
   } catch (e) {
     if (state.run?.id !== id) return
     if (state.run.done === 'running') state.run.done = 'lost'
@@ -80,6 +80,15 @@ async function settled(id: string): Promise<void> {
 
 const ELSEWHERE = 'still running in another process; reload to see it when it finishes'
 const LOST = 'lost touch with litmus before this trial finished'
+const NOT_RUN = 'not run: the run was cancelled before this trial started'
+
+// What to say, in place of a 404, for an unfinished trial of a run that ended
+// this way: its record may not exist yet, or (cancelled) never will.
+function absentOn(done: RunState['done']): string | undefined {
+  if (done === 'elsewhere') return ELSEWHERE
+  if (done === 'cancelled') return NOT_RUN
+  return undefined
+}
 
 async function start(body: Parameters<typeof api.start>[0]): Promise<void> {
   state.busy = true
@@ -156,7 +165,7 @@ export function openTrial(key: string): void {
   state.detail = { run, key, data: null, error: null, note: null, waiting }
   if (waiting) return
   if (!finished && done === 'lost') state.detail.error = LOST
-  else void fetchTrial(run, key, !finished && done === 'elsewhere' ? ELSEWHERE : undefined)
+  else void fetchTrial(run, key, finished ? undefined : absentOn(done))
 }
 
 // `absent`: what to say, instead of the server's 404, when the record may

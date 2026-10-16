@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tree } from '../helpers/tmp.ts'
 
@@ -46,6 +47,11 @@ test('help exits 0 with usage on stdout; no command at all exits 2 with usage on
     const r = litmus(...args)
     assert.equal(r.status, 0, args.join(' '))
     assert.match(r.stdout, /usage: litmus/, args.join(' '))
+  }
+  for (const args of [['--version'], ['-v'], ['version']]) {
+    const r = litmus(...args)
+    assert.equal(r.status, 0, args.join(' '))
+    assert.equal(r.stdout, `litmus ${JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version}\n`, args.join(' '))
   }
   const none = litmus()
   assert.equal(none.status, 2)

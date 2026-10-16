@@ -117,7 +117,7 @@ export type Comparison = {
   notes: string[] // differences worth knowing that do not exclude a case (subject or plugin versions)
   flips: Flip[]
   delta: number | null // mean over cases of B's success rate minus A's
-  interval: Interval | null // MOVER 95% over per-side Wilson / Clopper–Pearson intervals
+  interval: Interval | null // 95%, by MOVER over each side's intervals: Wilson, exact (Clopper–Pearson) below 9 trials
   tolerance: number
   verdict: SuiteVerdictKind
   warns: Warn[]

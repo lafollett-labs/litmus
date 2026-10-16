@@ -87,7 +87,7 @@ function decide(
 
 // The fewest trials at which even an unbroken run can PASS under the rate
 // policy. Below it a case is INCONCLUSIVE however it performs (5/5 at 0.8 is),
-// so config loading can refuse a trial count that could never pass.
+// so `litmus validate` warns of a trial count that could never pass.
 //
 // n/n's Wilson lower bound is n/(n + z²), so the answer is near z²t/(1−t); it
 // is found by bisection on wilson itself, so rounding can never disagree with
