@@ -177,6 +177,27 @@ PE-Vue marked all round-3 findings and SELF-001 RESOLVED:
 | SELF-002 | `npm run ui:dev` could not start a run. The dev proxy rewrote Host but passed the browser's Origin through, and the server takes a POST only from its own origin, so every POST was a 403. Probed: "Origin must be this server" | Fixed in `vite.config.ts`. A request whose Origin is the dev server's own page has it rewritten to the server's, and any other Origin passes through and is refused. Probed both ways: the dev page starts a run, and a foreign Origin is still a 403 |
 | M8 Gate 2 INFO-001 | The server's CSP blocks `data:` URLs, which Vite uses to inline small assets | The built UI has none today. Adopted anyway: `assetsInlineLimit: 0` |
 
+## Gate 2 (PR #12)
+
+Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for it.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `40eb128` | 1 HIGH, 3 MEDIUM, 4 LOW, 2 INFO | Fixed, as below |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| HIGH-001 | A stream refused outright (a 204, or any error status) left the run "running" forever, and a reload did not clear it. A real EventSource is CLOSED before that error fires, and `follow()` returned early on CLOSED | Fixed. `follow()` tracks its own end and never reads `readyState`. A store test whose fake is CLOSED before its error, as a 204 is, settles the run; the old guard, as a mutant, fails it |
+| MEDIUM-001 | Through the dev proxy, Vite's default CORS let any localhost page read `/api` (run history, transcripts) | Fixed: `server.cors` and `preview.cors` are false, as the server sends no CORS. Tested; the mutant is killed |
+| MEDIUM-002 | Trial status was shown by colour alone (WCAG 1.4.1): pass and fail are 1.03:1 apart in luminance | Fixed. The shape carries the status: pass a circle, fail a square, flaky a diamond, error a triangle. ARCHITECTURE § UI says so, and the screenshots show it |
+| MEDIUM-003 | Status and error messages were not reliably announced (WCAG 4.1.3): live regions were inserted with their text | Fixed. The app and the trial pane each keep an always-present `role="status"` region whose text changes; a compare problem is `role="alert"`. An e2e test asserts the app's region is there and empty before a refusal and holds it after. Rendering it with its text, as a mutant, fails the test |
+| LOW-001 | Nothing pinned the security properties: the proxy's Origin rewrite, or `v-html` on subject text | Tested. The review fixture's title holds `<img src=x onerror=…>`, and the e2e test asserts it shows as text, makes no `img`, and runs nothing; a `v-html` mutant fails it. A unit test drives the proxy's handler: the dev page's own Origin is rewritten, and any other passes through |
+| LOW-002 | Status icons doubled accessible names ("pass pass") | Fixed: `decorative` icons are `aria-hidden` where text beside them says the status |
+| LOW-003 | Uncapped review details could push `trial.json` past the server's 8 MiB read | Fixed. Files and titles are clipped at 500 characters, and `unmatched` lists the first 500 with `omitted` counting the rest. The Findings tab takes its counts from the metrics and says how many it does not list. Tested; both mutants are killed |
+| LOW-004 | The ruleset did not require the `ui` job | Done: the repository's `main` ruleset requires `check` and `ui` |
+| INFO-001 | Under `vite --host`, a LAN peer's request passed the Origin rewrite | Adopted: only a loopback host's own page is rewritten. Tested |
+| INFO-002 | The `ui` job's npm cache key omitted `tools/vue-tsc`'s lockfile | Adopted |
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `1365909`. The PR opens once M8 merges and this branch is rebased onto main. It carries the post-approval LOW fixes, and Gate 2 reviews them.

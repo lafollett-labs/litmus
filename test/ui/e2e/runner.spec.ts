@@ -73,6 +73,10 @@ test('a review trial shows its findings against the ground truth', async ({ page
   await expect(findings).toContainText('nil-token')
   await expect(findings).toContainText('Missed bugs 1')
   await expect(findings).toContainText('off-by-one')
+  // A title is the subject's text: markup in it shows as text and never runs.
+  await expect(findings).toContainText('slow loop <img src=x onerror=window.__x=1>')
+  await expect(findings.locator('img')).toHaveCount(0)
+  expect(await page.evaluate(() => (globalThis as { __x?: number }).__x)).toBeUndefined()
   await shot(page, 'findings')
 })
 
@@ -256,4 +260,17 @@ test('after a run with a larger trial count, a config row runs its case\'s own t
   await expect(page.locator('.banner')).toHaveCount(0)
   await expect(row(page, 'smoke/passes@fake#2')).toHaveAttribute('data-status', 'pass')
   await expect(row(page, 'smoke/passes@fake#3')).toHaveCount(0)
+})
+
+test('a refusal is announced through a live region that was there before it', async ({ page }) => {
+  await open(page)
+  await done(page, 'finished')
+  const live = page.locator('[data-live="app"][role="status"]')
+  await expect(live).toHaveCount(1) // there, and empty, before anything is said
+  await expect(live).toHaveText('')
+  await page.getByLabel('trials').fill('x')
+  await tick(page, 'smoke/passes')
+  await page.getByRole('button', { name: 'Run selected' }).click()
+  await expect(live).toHaveText(/the trial count must be a whole number/)
+  await page.getByLabel('trials').fill('')
 })

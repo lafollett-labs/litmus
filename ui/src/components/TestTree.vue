@@ -74,7 +74,7 @@ function key(e: KeyboardEvent, r: Row) {
     <div class="filters">
       <input v-model="state.filter" type="search" placeholder="Filter cases" aria-label="Filter cases" />
       <button v-for="s in CHIPS" :key="s" class="chip" :class="{ on: state.chips.has(s) }" :aria-pressed="state.chips.has(s)" @click="chip(s)">
-        <StatusIcon :status="s" /> {{ s }}
+        <StatusIcon :status="s" decorative /> {{ s }}
       </button>
     </div>
     <!-- Space checks a row and Enter opens it; the checkbox is the mouse's way to the same aria-checked. The open trial is aria-current: aria-selected would mean checked in a multi-select tree. -->

@@ -30,3 +30,17 @@ test('the Findings panel shows every outcome of a real review-match grade, past 
   assert.equal(v.duplicates.length, g.metrics!['duplicates'])
   assert.equal(findingsOf({ grader: 'regex', pass: true }), undefined)
 })
+
+test('the details stay bounded: titles are clipped, and past 500 unmatched findings the rest are counted, not listed', async () => {
+  const truth: TruthFile = { kind: 'seeded', bugs: [{ id: 'b', file: 'a.go', lines: [10, 12], severity: 'high', category: 'correctness', summary: 'b breaks', proof: 'go test', fix: 'fix/b.patch' }], decoys: [] }
+  const { c } = oneCase('name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 0.001 } }]\n', { 'truth.yaml': JSON.stringify(truth), 'fix/b.patch': '' })
+  const long = 'x'.repeat(2000)
+  const findings = [{ file: 'a.go', line: 11, severity: 'high', title: long, explanation: 'why' }, ...Array.from({ length: 620 }, (_, i) => ({ file: 'a.go', line: 1000 + i * 10, severity: 'high', title: `t${i}`, explanation: 'why' }))]
+  const g = await reviewMatch(spec({ kind: 'review-match', pass: { min_recall: 0.001 } }), trial({ artifacts: { 'findings.json': JSON.stringify({ findings }) } }), ctx(c))
+  assert.equal(g.details!.matched[0]!.title.length, 500)
+  assert.ok(g.details!.matched[0]!.title.endsWith('…'))
+  assert.equal(g.details!.unmatched.length, 500)
+  assert.equal(g.details!.omitted, 120)
+  const v = findingsOf(g)!
+  assert.deepEqual([v.counts.falsePositives, v.falsePositives.length, v.omitted], [620, 500, 120])
+})

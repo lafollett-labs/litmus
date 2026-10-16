@@ -38,7 +38,7 @@ const tone = (c: Comparison) => ({ REGRESSION: 'fail', IMPROVEMENT: 'pass', 'NO 
       <span class="muted">→</span>
       <input v-model="b" placeholder="side B" aria-label="side B" />
       <button type="submit" :disabled="!a.trim() || !b.trim()">Compare</button>
-      <span v-if="problem" class="error">{{ problem }}</span>
+      <span v-if="problem" class="error" role="alert">{{ problem }}</span>
     </form>
 
     <article v-for="(c, i) in shown" :key="`${c.a}→${c.b}${i < state.comparisons.length ? '' : ' (asked)'}`" class="comparison" :data-verdict="c.verdict">
@@ -48,7 +48,7 @@ const tone = (c: Comparison) => ({ REGRESSION: 'fail', IMPROVEMENT: 'pass', 'NO 
         <span v-if="c.delta !== null && c.interval" class="mono muted">Δ {{ signed(c.delta) }} [{{ signed(c.interval.lo) }}, {{ signed(c.interval.hi) }}] over {{ c.cases }} case{{ c.cases === 1 ? '' : 's' }}</span>
       </header>
       <ul class="flips" aria-label="Flips">
-        <li v-for="f in c.flips" :key="f.case"><code>{{ f.case }}</code> <StatusIcon :status="VERDICT_STATUS[f.from]" /> {{ f.from }} → <StatusIcon :status="VERDICT_STATUS[f.to]" /> {{ f.to }}</li>
+        <li v-for="f in c.flips" :key="f.case"><code>{{ f.case }}</code> <StatusIcon :status="VERDICT_STATUS[f.from]" decorative /> {{ f.from }} → <StatusIcon :status="VERDICT_STATUS[f.to]" decorative /> {{ f.to }}</li>
         <li v-if="!c.flips.length" class="muted">No flips.</li>
       </ul>
       <ul v-if="c.warns.length" class="warns">
@@ -66,7 +66,7 @@ const tone = (c: Comparison) => ({ REGRESSION: 'fail', IMPROVEMENT: 'pass', 'NO 
         <tr v-for="c in cases" :key="c">
           <th class="mono">{{ c }}</th>
           <td v-for="cfg in configs" :key="cfg" :data-cell="`${c}@${cfg}`">
-            <template v-if="cell(c, cfg)"><StatusIcon :status="VERDICT_STATUS[cell(c, cfg)!.verdict]" /> {{ cell(c, cfg)!.verdict }}</template>
+            <template v-if="cell(c, cfg)"><StatusIcon :status="VERDICT_STATUS[cell(c, cfg)!.verdict]" decorative /> {{ cell(c, cfg)!.verdict }}</template>
             <span v-else class="muted">—</span>
           </td>
         </tr>

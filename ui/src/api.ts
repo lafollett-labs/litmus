@@ -33,10 +33,15 @@ export const api = {
 // stream is closed on the last event, or EventSource would reconnect forever;
 // an error closes it too (the server is local: an error means it is gone, or
 // the run's record ends without a last event).
+// A stream that fails outright (a 204 for a run with nothing left to send,
+// or any error status) is CLOSED before its error fires, so the end is
+// tracked here, never read back from readyState.
 export function follow(id: string, on: (e: RunEvent) => void, end: () => void): () => void {
   const source = new EventSource(`/api/runs/${id}/events`)
+  let ended = false
   const stop = () => {
-    if (source.readyState === EventSource.CLOSED) return
+    if (ended) return
+    ended = true
     source.close()
     end()
   }

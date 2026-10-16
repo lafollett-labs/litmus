@@ -809,10 +809,13 @@ false_positives, decoy_hits, duplicates, nits, findings   # counts
 claims_correct    = confirmed / matched               # only with confirm
 ```
 
-Its result's `details` hold every outcome, uncapped, for the UI's Findings tab:
+Its result's `details` hold the outcomes for the UI's Findings tab:
 `matched` (file, line, title, bug), `missed` (bug ids), and `unmatched`
 (file, line, title, and `as`: decoy_hit, duplicate, nit or false_positive,
-with `near`, the decoy or bug it fell within reach of). The UI reads these,
+with `near`, the decoy or bug it fell within reach of). They stay bounded, so
+`trial.json` stays readable: a file or title is clipped at 500 characters,
+and `unmatched` lists the first 500, with `omitted` counting the rest, which
+the metrics still count. The UI reads these,
 never the rationale: a title is the subject's text, and prose parsed back out
 of a rationale would let a title forge a line of its own.
 
@@ -1158,9 +1161,10 @@ API and nothing else.
   - The tree is a WAI-ARIA tree: arrows move, Right and Left open and close,
     Home and End jump, Space checks a row and Enter opens it.
   - A text filter and status chips narrow the tree.
-  - Status icons: queued (hollow), running (spinner), pass (green), fail
-    (red), flaky (amber), error (grey), inconclusive (outlined), cancelled
-    (struck through).
+  - Status icons: queued (hollow), running (spinner), pass (a green circle),
+    fail (a red square), flaky (an amber diamond), error (a grey triangle),
+    inconclusive (outlined), cancelled (struck through). The shape carries the
+    status as well as the colour.
 - **Detail pane** for a trial:
   - **Transcript:** a timeline of messages, tool calls and refusals, modelled
     on Playwright's UI mode.

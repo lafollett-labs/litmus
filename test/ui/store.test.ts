@@ -24,6 +24,12 @@ class FakeSource {
   fail() {
     this.onerror?.()
   }
+  // A real EventSource refused outright (a 204, or any error status) is
+  // CLOSED before its error fires.
+  refused() {
+    this.readyState = FakeSource.CLOSED
+    this.onerror?.()
+  }
 }
 type Route = (body: unknown) => unknown
 let routes: Record<string, Route> = {}
@@ -169,4 +175,13 @@ test('trial keys run with a trial count: the count is said to apply only to case
   await runSelected()
   assert.deepEqual(posts.at(-1), { select: ['s/a@fake#1', 's/a@fake#2'], configs: ['fake'], trials: 3 })
   assert.match(state.message ?? '', /applied only to case and suite rows/)
+})
+
+test('a stream refused outright (CLOSED before its error, as a 204 is) still settles the run', async () => {
+  routes = { 'GET /api/runs/r9': stored('running'), 'GET /api/suites': () => suites }
+  watchRun('r9')
+  last().refused()
+  await tick()
+  await tick()
+  assert.equal(state.run?.done, 'elsewhere')
 })

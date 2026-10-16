@@ -188,14 +188,22 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
   lines.push(...unconfirmed)
   for (const f of failed) lines.push(`failed: ${f}`)
   lines.push(...na)
-  const at = (j: number) => ({ file: findings[j]!.file, line: findings[j]!.line, title: findings[j]!.title })
+  // Bounded, so trial.json stays readable by the server however much a
+  // review said: titles and paths are clipped, and the unmatched list stops at
+  // DETAILS_MAX with a count of the rest (the metrics count every one).
+  const at = (j: number) => ({ file: clip(findings[j]!.file), line: findings[j]!.line, title: clip(findings[j]!.title) })
   const details: ReviewDetails = {
     matched: s.pairs.map(p => ({ bug: truth.bugs[p.bug]!.id, ...at(p.finding) })),
     missed,
-    unmatched: s.unmatched.map(u => ({ as: u.as, ...at(u.finding), ...(u.near ? { near: u.near } : {}) })),
+    unmatched: s.unmatched.slice(0, DETAILS_MAX).map(u => ({ as: u.as, ...at(u.finding), ...(u.near ? { near: u.near } : {}) })),
+    ...(s.unmatched.length > DETAILS_MAX ? { omitted: s.unmatched.length - DETAILS_MAX } : {}),
   }
   return { grader: 'review-match', pass: !('error' in read) && failed.length === 0, metrics: m, rationale: lines.join('\n'), details, ...(spent.length ? { usage: sumUsage(spent) } : {}) }
 }
+
+const DETAILS_MAX = 500
+const CLIP = 500
+const clip = (t: string) => (t.length > CLIP ? `${t.slice(0, CLIP - 1)}…` : t)
 
 function readFindings(trial: TrialResult, name: string): { findings: Finding[] } | { error: string } {
   const art = readArtifact(trial, name)

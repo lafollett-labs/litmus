@@ -21,6 +21,7 @@ const shown = computed<Tab>(() => (tabs.value.includes(tab.value) ? tab.value : 
 
 <template>
   <section class="detail" aria-label="Trial">
+    <p class="sr-only" role="status">{{ state.detail?.error ?? (state.detail?.waiting ? 'Running… its record appears here when it finishes.' : (state.detail?.note ?? '')) }}</p>
     <p v-if="!state.detail" class="muted hint">Open a trial (the <code>#n</code> rows) to see its transcript, graders, findings and usage.</p>
     <template v-else>
       <header>
@@ -29,8 +30,8 @@ const shown = computed<Tab>(() => (tabs.value.includes(tab.value) ? tab.value : 
         <span v-if="data" class="muted">{{ data.record.exit }}<template v-if="data.record.reason"> · {{ data.record.reason }}</template></span>
       </header>
       <p v-if="state.detail.error" class="error">{{ state.detail.error }}</p>
-      <p v-else-if="state.detail.waiting" class="muted hint" role="status">Running… its record appears here when it finishes.</p>
-      <p v-else-if="state.detail.note" class="muted hint" role="status">{{ state.detail.note }}</p>
+      <p v-else-if="state.detail.waiting" class="muted hint">Running… its record appears here when it finishes.</p>
+      <p v-else-if="state.detail.note" class="muted hint">{{ state.detail.note }}</p>
       <p v-else-if="!data" class="muted hint">Loading…</p>
       <template v-else>
         <div role="tablist" aria-label="Trial views" class="tabs">
@@ -80,7 +81,7 @@ const shown = computed<Tab>(() => (tabs.value.includes(tab.value) ? tab.value : 
 
         <ul v-else-if="shown === 'graders'" class="graders">
           <li v-for="(g, i) in data.record.graders" :key="i">
-            <header><StatusIcon :status="g.pass ? 'pass' : 'fail'" /> <strong>{{ g.grader }}</strong> <span class="muted">{{ g.pass ? 'passed' : 'failed' }}</span></header>
+            <header><StatusIcon :status="g.pass ? 'pass' : 'fail'" decorative /> <strong>{{ g.grader }}</strong> <span class="muted">{{ g.pass ? 'passed' : 'failed' }}</span></header>
             <pre v-if="g.rationale">{{ g.rationale }}</pre>
             <dl v-if="g.metrics" class="metrics">
               <template v-for="(v, k) in g.metrics" :key="k"><dt>{{ k }}</dt><dd class="mono">{{ v === null ? 'n/a' : Number.isInteger(v) ? v : v.toFixed(3) }}</dd></template>
@@ -92,10 +93,11 @@ const shown = computed<Tab>(() => (tabs.value.includes(tab.value) ? tab.value : 
         <div v-else-if="shown === 'findings' && findings" class="findings">
           <section><h3>Matched bugs <span class="n">{{ findings.matched.length }}</span></h3><ul><li v-for="m in findings.matched" :key="m.bug"><code>{{ m.bug }}</code> ← {{ where(m) }}</li></ul></section>
           <section><h3>Missed bugs <span class="n">{{ findings.missed.length }}</span></h3><ul><li v-for="m in findings.missed" :key="m"><code>{{ m }}</code></li></ul></section>
-          <section><h3>False positives <span class="n">{{ findings.falsePositives.length }}</span></h3><ul><li v-for="(f, i) in findings.falsePositives" :key="i">{{ where(f) }}</li></ul></section>
-          <section><h3>Decoy hits <span class="n">{{ findings.decoyHits.length }}</span></h3><ul><li v-for="(f, i) in findings.decoyHits" :key="i">{{ where(f) }} <span class="muted">(decoy {{ f.near }})</span></li></ul></section>
-          <section><h3>Duplicates <span class="n">{{ findings.duplicates.length }}</span></h3><ul><li v-for="(f, i) in findings.duplicates" :key="i">{{ where(f) }} <span class="muted">(again {{ f.near }})</span></li></ul></section>
-          <section><h3>Nits <span class="n">{{ findings.nits.length }}</span></h3><ul><li v-for="(f, i) in findings.nits" :key="i">{{ where(f) }}</li></ul></section>
+          <section><h3>False positives <span class="n">{{ findings.counts.falsePositives }}</span></h3><ul><li v-for="(f, i) in findings.falsePositives" :key="i">{{ where(f) }}</li></ul></section>
+          <section><h3>Decoy hits <span class="n">{{ findings.counts.decoyHits }}</span></h3><ul><li v-for="(f, i) in findings.decoyHits" :key="i">{{ where(f) }} <span class="muted">(decoy {{ f.near }})</span></li></ul></section>
+          <section><h3>Duplicates <span class="n">{{ findings.counts.duplicates }}</span></h3><ul><li v-for="(f, i) in findings.duplicates" :key="i">{{ where(f) }} <span class="muted">(again {{ f.near }})</span></li></ul></section>
+          <section><h3>Nits <span class="n">{{ findings.counts.nits }}</span></h3><ul><li v-for="(f, i) in findings.nits" :key="i">{{ where(f) }}</li></ul></section>
+          <p v-if="findings.omitted" class="muted">{{ findings.omitted }} more unmatched findings are counted but not listed.</p>
         </div>
 
         <dl v-else-if="shown === 'usage'" class="usage">

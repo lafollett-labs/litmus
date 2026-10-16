@@ -43,6 +43,7 @@ export type ReviewDetails = {
   matched: (ReviewFinding & { bug: string })[]
   missed: string[] // bug ids
   unmatched: (ReviewFinding & { as: 'decoy_hit' | 'duplicate' | 'nit' | 'false_positive'; near?: string })[]
+  omitted?: number // unmatched findings past the first 500, counted in the metrics but not listed
 }
 
 export type TrialStatus = 'pass' | 'fail' | 'error' | 'cancelled'

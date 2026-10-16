@@ -80,7 +80,9 @@ onMounted(() => load().catch(e => (failed.value = (e as Error).message)))
       <button class="theme" :aria-label="`switch to ${theme === 'dark' ? 'light' : 'dark'} theme`" @click="theme = theme === 'dark' ? 'light' : 'dark'">{{ theme === 'dark' ? '☀' : '☾' }}</button>
     </header>
     <p v-if="failed" class="banner error" role="alert">Could not reach litmus: {{ failed }}</p>
-    <p v-if="state.message" class="banner" role="status">{{ state.message }}</p>
+    <p v-if="state.message" class="banner">{{ state.message }}</p>
+    <!-- Always present, so a message that appears is announced: a live region inserted with its text often is not. -->
+    <p class="sr-only" role="status" data-live="app">{{ state.message }}</p>
     <p v-if="state.run" ref="runline" tabindex="-1" class="runline muted" role="status" :data-run="state.run.id" :data-done="state.run.done">
       run <code>{{ state.run.id }}</code> · {{ DONE[state.run.done] }}
     </p>
