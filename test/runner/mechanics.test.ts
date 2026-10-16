@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ConfigError, InfraError } from '../../src/core/errors.ts'
 import type { ExecutorResult, RunEvent } from '../../src/core/types.ts'
@@ -298,10 +298,11 @@ test('a workdir the subject made read-only is still removed, and the trial keeps
   assert.deepEqual(workLeft(root, r.id), [])
 })
 
-test('a workdir that cannot be removed at all is a note, never the trial\'s outcome', async () => {
+test('a workdir that cannot be removed at all is a redacted note, never the trial\'s outcome', async () => {
   const root = project(harness('c', 1))
   let parent = ''
-  const r = await run(options(root, { executors: { harness: async job => {
+  // A "key" that is part of every workdir path, so the note must be redacted.
+  const r = await run(options(root, { env: { ANTHROPIC_API_KEY: 'wd/litmus/' }, executors: { harness: async job => {
     // Its parent is read-only, so no chmod inside the workdir can free it.
     parent = dirname(job.workdir.root)
     chmodSync(parent, 0o555)
@@ -310,7 +311,8 @@ test('a workdir that cannot be removed at all is a note, never the trial\'s outc
   const [t] = readTrials(runs(root), r.id)
   assert.deepEqual([t!.status, r.verdicts.map(v => v.verdict)], ['pass', ['PASS']])
   assert.equal(r.notes.length, 1)
-  assert.match(r.notes[0]!, /^workdir .* was not removed: /)
+  assert.match(r.notes[0]!, /^workdir .*\[REDACTED\].* was not removed: /)
+  assert.ok(!r.notes[0]!.includes('wd/litmus/'))
 })
 
 test('when the store itself fails, the listener still hears run.failed', async () => {
@@ -460,4 +462,39 @@ test('a credential only in process.env is scrubbed too, since the harness reads 
     if (saved === undefined) delete process.env.ANTHROPIC_API_KEY
     else process.env.ANTHROPIC_API_KEY = saved
   }
+})
+
+test('freeing a read-only workdir never follows a link out of it', async () => {
+  const root = project(harness('c', 1))
+  const outside = join(root, 'outside')
+  mkdirSync(join(outside, 'sub'), { recursive: true })
+  writeFileSync(join(outside, 'sub/keep.txt'), 'keep\n')
+  chmodSync(join(outside, 'sub'), 0o555)
+  chmodSync(outside, 0o555)
+  try {
+    const r = await run(options(root, { executors: { harness: async job => {
+      const locked = join(job.workdir.home, 'locked')
+      mkdirSync(locked)
+      symlinkSync(outside, join(locked, 'out'))
+      chmodSync(locked, 0o555)
+      return done(job)
+    } } }))
+    assert.deepEqual([readTrials(runs(root), r.id)[0]!.status, r.notes, workLeft(root, r.id)], ['pass', [], []])
+    assert.deepEqual([statSync(outside).mode & 0o777, statSync(join(outside, 'sub')).mode & 0o777, readFileSync(join(outside, 'sub/keep.txt'), 'utf8')], [0o555, 0o555, 'keep\n'])
+  } finally {
+    chmodSync(outside, 0o755)
+    chmodSync(join(outside, 'sub'), 0o755)
+  }
+})
+
+test('an extraction\'s spend is part of the trial\'s grading usage', async () => {
+  const root = project({
+    'suites/e2e/cases/x/case.yaml': 'name: x\nexecutor: { kind: harness, harness: claude-code, prompt: go }\nextract: { from: out.txt, to: findings.json, with: j }\ngraders: [{ kind: regex, target: out.txt, pattern: done }]\ntrials: 1\n',
+    'suites/e2e/cases/x/fixture/a.txt': 'x\n',
+  })
+  const finding = '{"findings":[{"file":"a.txt","line":1,"severity":"high","category":"bug","title":"t","explanation":"e"}]}'
+  const provider = { id: 'anthropic', complete: async () => reply(finding, { input_tokens: 11, output_tokens: 5 }) } as unknown as Provider
+  const r = await run(options(root, { executors: { harness: async job => done(job) }, judgeProvider: () => provider }))
+  const [t] = readTrials(runs(root), r.id)
+  assert.deepEqual(t!.grading_usage, { input_tokens: 11, output_tokens: 5 })
 })

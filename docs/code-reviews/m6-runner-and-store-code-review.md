@@ -106,6 +106,7 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | Round | Reviewed SHA | Found | Outcome |
 | - | - | - | - |
 | 1 | `df46fab` | 1 HIGH, 3 MEDIUM, 5 LOW, 1 INFO | All fixed, as below |
+| 2 | `7388ed2` | 0 at MEDIUM or above; 3 LOW, 1 INFO | **Clean.** All 10 round-1 findings are RESOLVED, and 36 of 38 mutants are killed. The LOWs are fixed below |
 
 | ID | Finding | Disposition |
 | - | - | - |
@@ -121,6 +122,16 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | INFO-001 | The pool, cancel and fault paths, store atomicity and redaction to disk were verified sound | None needed |
 
 21 mutants, one for each fix and each survivor the review named, are all killed.
+
+Round 2:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-001 | No test pinned that freeing a read-only workdir never follows a link out of it | Tested: a link to a 0555 directory outside the workdir, inside a 0555 workdir directory. The outside directory keeps its modes and its file, and the workdir is gone. The mutant that follows links is killed |
+| LOW-002 | The leak note skipped the redactor | Fixed: the note is redacted. Tested with a planted value that is part of every workdir path; the mutant is killed |
+| LOW-003 | No test covered an extraction's spend in `grading_usage` | Tested; the mutant is killed |
+| INFO-001 | `writable()` has an lstat-then-chmod window, and leak notes are lost when the run fails | Accepted. Only a detached child racing cleanup could reach the window, and closing it fully needs `openat`, which Node does not expose |
+
 
 ## Merge Eligibility (latest)
 

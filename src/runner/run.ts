@@ -234,7 +234,7 @@ function release(w: Workdir | undefined, x: Ctx): void {
   try {
     w?.cleanup()
   } catch (e) {
-    x.leaks.push(`workdir ${w!.root} was not removed: ${(e as Error).message}`)
+    x.leaks.push(x.redact.text(`workdir ${w!.root} was not removed: ${(e as Error).message}`))
   }
 }
 
