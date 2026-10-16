@@ -56,12 +56,12 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
   // with ENOENT and creates nothing.
   mkdirSync(parent, { recursive: true })
   const root = join(realpathSync.native(parent), name)
-  rmSync(root, { recursive: true, force: true }) // fresh on every attempt, never reused
+  removeTree(root) // fresh on every attempt, never reused
   const dir = join(root, 'work')
   const home = join(root, 'home')
   const claudeConfig = join(root, 'claude')
   for (const d of [dir, home, claudeConfig]) mkdirSync(d, { recursive: true })
-  const cleanup = () => rmSync(root, { recursive: true, force: true })
+  const cleanup = () => removeTree(root)
 
   try {
     // Claude Code loads CLAUDE.md, CLAUDE.local.md and AGENTS.md from every
@@ -95,6 +95,29 @@ export function buildWorkdir(c: LoadedCase, where: { run: string; key: string; a
     cleanup()
     throw e
   }
+}
+
+// A subject can leave directories it cannot write: Go's module cache under
+// HOME is 0555, as is anything after `chmod -R a-w`. rm then fails, so every
+// directory is made writable (links are not followed) and rm tries once more.
+export function removeTree(root: string): void {
+  try {
+    rmSync(root, { recursive: true, force: true })
+    return
+  } catch {
+    writable(root)
+  }
+  rmSync(root, { recursive: true, force: true })
+}
+
+function writable(dir: string): void {
+  try {
+    if (!lstatSync(dir).isDirectory()) return
+    chmodSync(dir, 0o700)
+  } catch {
+    return
+  }
+  for (const name of readdirSync(dir)) writable(join(dir, name))
 }
 
 // Only regular files and directories are copied, and anything else is refused.

@@ -335,7 +335,7 @@ proof runs.
 
 ```
 run = select(cases) × configs × trials(case)
-write run.json                           # resolved configs (no secrets), hashes of every suite, case, subject, judge and extractor
+write run.json                           # resolved configs (no secrets); case, subject, judge and plugin hashes
 
 for each job, at most `concurrency` at once:
     for attempt in 1 .. 1 + retries:
@@ -352,8 +352,8 @@ for each job, at most `concurrency` at once:
         result.exit == cancelled,
           or the run's cancel aborted this trial    -> cancelled   # checked first, so a cancel can never pass
         result.exit == infra_error                  -> error       # never graded
+        result.exit == model_failure                -> fail        # graders ran for metrics only; a grading error goes in the reason
         grading raised InfraError after retries     -> error
-        result.exit == model_failure                -> fail        # graders ran for metrics only
         every grader passed                         -> pass
         else                                        -> fail
     write trial.json, transcript.jsonl, artifacts/   # usage summed over every attempt
@@ -362,8 +362,8 @@ for each job, at most `concurrency` at once:
 
 on finish or cancel:
     write verdicts.json                  # settled cases only
-    if the run has more than one config, or --baseline was given:
-        write comparison.json
+on finish, if the run has more than one config, or --baseline was given:
+    write comparison.json                # a cancelled run compares nothing
 ```
 
 | How the executor stopped | `exit` | Retried | Trial status |
@@ -373,6 +373,11 @@ on finish or cancel:
 | A model-executor timeout, throttling (408, 409, 429), 5xx or network | `infra_error` (retryable) | Up to `retries`, with backoff | `error` once the retries run out |
 | Auth failure, another 4xx, or a missing key | `infra_error` (not retryable) | Never | `error` |
 | The operator cancelled | `cancelled` | Never | `cancelled` |
+| The workdir could not be built (a patch that no longer applies), or an executor threw | none | Only a retryable `InfraError` | `error`, with the reason; the run goes on |
+| The trial threw outside its attempts (the store could not move its files) | none | Never | `error`, with the reason; the run goes on |
+
+A trial with no executor result records `exit: infra_error`, whatever the
+reason says.
 
 A review loop that never converges is exactly what litmus is meant to catch, so
 a harness timeout or max-turns stop is a model failure, and it is never
@@ -383,6 +388,30 @@ confused. An answer that arrives after either has fired is classified by it,
 never accepted: a provider or SDK that answers late did not answer in time.
 The model executor races the call against the clock, so a provider that
 ignores its signal and never settles still times out.
+
+Retries back off exponentially with jitter (1 s, 2 s, 4 s ... up to 30 s), and
+a cancel cuts a backoff short. Once a run is cancelled no new trial starts, the
+ones in flight end `cancelled`, and no further case settles. The run writes the
+verdicts of the cases that settled before it stopped.
+
+A grading retry emits `trial.retry` too, with its reason prefixed `grading:`.
+A listener that throws is ignored, so a closed SSE socket never stops a run.
+If litmus cannot record even an error trial (the store cannot be written),
+every worker stops, `run.failed` is emitted, `run.json` is marked `failed`,
+and the run rejects with the error. The listener hears every event whether or
+not the store could record it, so a live view sees `run.failed` even when the
+store is what failed. A run that names one config twice is refused before it
+starts.
+
+A workdir is removed when its attempt ends. A subject can leave directories it
+cannot write (Go's module cache under `HOME` is read-only), so when the first
+removal fails every directory in the workdir is made writable, without
+following links, and removal is tried again. A workdir that still will not go
+is reported in the run's notes. It never changes the trial's status or
+record.
+
+What a case's hash covers, and which trials WARN's medians use, is in
+§ Comparison.
 
 **Effective `min_trials`.** A run can ask for fewer trials than the case
 defines, through `--trials`, a trial-key selector, the UI, or a rerun. The
@@ -859,10 +888,16 @@ the cases both of them scored.
   - its **case hash** differs between the sides
 
   The case hash covers `case.yaml`, `truth.yaml`, `fixture/`, `change.patch`,
-  `proof/`, `fix/`, and the grader and extractor hashes. An edit to ground
-  truth would otherwise be blamed on the model. A difference in a subject or
-  plugin hash does not exclude a case, because comparing subject versions is a
-  real use. It is listed in the comparison's `notes` instead.
+  `proof/`, `fix/`, the resolved prompt, every `json-schema` file its graders
+  read (inside the case or not), and the grader and extractor hashes. An edit
+  to ground truth would otherwise be blamed on the model. A `command`
+  grader's script outside the case is not covered, since litmus cannot tell
+  what it reads. A difference in a subject or plugin hash does not exclude a
+  case, because comparing subject versions is a real use. It is listed in the
+  comparison's `notes` instead: `<case>: subject changed (<old> → <new>)`,
+  `plugin <root>: changed`, or `plugin <root>: loaded only by <side>`. A
+  plugin is known by its absolute root, so a baseline recorded from another
+  checkout reads as two `loaded only by` notes rather than one `changed`.
 - **Flips.** Every case whose verdict changed is listed with its old and new
   verdicts. This is the headline of the comparison, not a footnote.
 - **Suite verdict.** D is the mean over paired cases of B's observed success
@@ -930,8 +965,12 @@ the cases both of them scored.
   could not score is excluded from the interval but still flips, since a case
   that stopped scoring is news. When neither side carries case hashes, the
   comparison's `notes` say that changed cases were not detected.
-- **WARN.** Raised for a metric when the ratio of B's per-trial median to A's
-  falls outside [1/`warn_ratio`, `warn_ratio`]. The metrics are total tokens,
+- **WARN.** Raised for a metric when the ratio of B's median to A's falls
+  outside [1/`warn_ratio`, `warn_ratio`]. A side's median is the median over
+  the paired cases of each case's median over its scored trials (an errored
+  or cancelled trial did no work). Every case counts once, so neither a
+  baseline that ran more cases nor a case that scored more trials on one side
+  can raise a WARN on its own. The metrics are total tokens,
   cost, wall-clock time, tool calls, and findings. A metric is skipped when
   A's median is 0 or missing, or B's is missing, or either is not finite. A WARN never changes an exit code.
 
@@ -947,7 +986,7 @@ the cases both of them scored.
 - `litmus run --config a,b` compares every later config against the first.
 - `litmus run --baseline <name>` compares each config against the config of
   the same name in the baseline run. A config missing from the baseline is
-  reported and skipped.
+  reported (in the run's outcome, for the CLI to print) and skipped.
 - A rerun (`--rerun <run> --only …`) selects (case, config) pairs whose verdict
   is in the set. Its jobs are those pairs, not the cross product of their
   cases and configs.
@@ -960,8 +999,9 @@ the cases both of them scored.
 .litmus/
 ├── baselines.json                        # { "<name>": "<run id>" }
 └── runs/<run id>/
-    ├── run.json                          # manifest: id, parent, status, started/finished, litmus version,
-    │                                     #   selection, configs (no secrets), hashes
+    ├── run.json                          # manifest: id, parent, status (running, finished, cancelled, failed),
+    │                                     #   started/finished, litmus version,
+    │                                     #   selection, configs (no secrets), case, subject, judge and plugin hashes
     ├── events.jsonl                      # every event, in order; the UI can replay a run from it
     ├── verdicts.json                     # Verdict[]
     ├── comparison.json                   # Comparison[], when there are any
@@ -971,13 +1011,25 @@ the cases both of them scored.
         └── artifacts/
 ```
 
-The record shapes are the types in `src/core/types.ts`. Runs are append-only.
+The record shapes are the types in `src/core/types.ts`. Runs are append-only,
+and each JSON file is written to a temporary name and renamed into place, so
+a reader never sees half of one. A `run.json` that does not parse is skipped
+when runs are listed.
+Each attempt writes under the trial's `.attempts/<n>/`, so a retry never
+appends to the transcript of the attempt before it. Only the kept attempt
+becomes the trial's `transcript.jsonl` and `artifacts/`, and the others are
+removed. `trial.json` records the subject's usage summed over every attempt,
+and, separately, `grading_usage`: the judge, confirm and extract calls, each
+priced by its judge's model. It also records the extractor's reason when an
+extraction yielded nothing.
 A rerun is a new run, and its `run.json` names the parent run it came from.
 `run.json` also records each case's case hash, and a hash of each plugin root
 the run loaded.
 
 **Redaction.** Before anything is written to disk or printed by a reporter, the
-exact values of these environment variables are replaced with `[REDACTED]`:
+exact values of these environment variables are replaced with `[REDACTED]`.
+The values are read from the process environment and from any environment the
+run is given, because the harness reads its credentials from the process:
 
 - `ANTHROPIC_API_KEY`
 - `OPENROUTER_API_KEY`
@@ -1012,6 +1064,7 @@ type RunEvent =
   | { type: 'trial.finished'; key: string; status: 'pass' | 'fail' | 'error' | 'cancelled'; graders: { grader: string; pass: boolean }[] }
   | { type: 'case.settled'; case: string; config: string; verdict: Verdict }
   | { type: 'run.finished' | 'run.cancelled'; run: string; summary: Record<VerdictKind, number> }
+  | { type: 'run.failed'; run: string; error: string }   // litmus itself broke; best effort
 ```
 
 ## Server
