@@ -128,6 +128,7 @@ Copilot is out of quota, so a fresh PE-Vue with no prior context stood in for it
 | Round | Reviewed SHA | Found | Outcome |
 | - | - | - | - |
 | 1 | `44fe147` | 1 MEDIUM, 5 LOW, 4 INFO | Fixed, as below |
+| 2 | `861150a` | 2 LOW, 2 INFO | ✅ APPROVED: every round-1 finding is RESOLVED, and the release pass over the whole PR found nothing at MEDIUM or above. Nothing follows this PR, so its findings are fixed here before the tag, as the round-2 table below shows |
 
 | ID | Finding | Disposition |
 | - | - | - |
@@ -141,6 +142,15 @@ Copilot is out of quota, so a fresh PE-Vue with no prior context stood in for it
 | INFO-002 | The env-allowlist summary said the AWS files pass only when set | Fixed: with `AWS_PROFILE`, they default to the operator's `~/.aws` files |
 | INFO-003 | PLAN M11 is ticked before the tag exists | Accepted: the tag goes on the merge commit right after this PR merges, and the release is checked before this is called done |
 | INFO-004 | Verified correct | None needed |
+
+Round 2:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-R2-001 | `--reporter json` was the one output without the error reason | Fixed: an errored pair's verdict carries `error_reason` in the JSON document. Tested; the mutant is killed |
+| LOW-R2-002 | The CHANGELOG did not list `--version` or the error reasons | Fixed |
+| INFO-R2-001 | The `blocks` line's reason was untested (M29 survived) | Tested with a FLAKY pair holding an errored trial; M29 is killed |
+| INFO-R2-002 | A cut at 200 UTF-16 units could leave half a surrogate pair, which XML 1.0 cannot hold | Fixed twice over: reasons are cut by code point, and `xml()` scrubs any lone surrogate. Each is tested on its own, and both mutants are killed |
 
 ## Merge Eligibility (latest)
 

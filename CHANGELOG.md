@@ -47,8 +47,9 @@ models.
   - Runs on disk, redacted by value.
   - Reruns by verdict, and named baselines.
 - **CLI.** `list`, `run`, `compare`, `baseline`, `validate` and `serve`, with
-  exit codes CI can act on. Reporters: `pretty` (live on a TTY), `json`, CTRF
-  and JUnit.
+  exit codes CI can act on, and `--version`. Reporters: `pretty` (live on a
+  TTY), `json`, CTRF and JUnit. A pair whose trials errored says why in each
+  (`ANTHROPIC_API_KEY is not set`, say).
 - **Server.** A local HTTP API with server-sent events, on 127.0.0.1 only,
   with exact Host and Origin checks.
 - **UI.** A runner in the browser:

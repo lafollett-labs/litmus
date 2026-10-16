@@ -137,6 +137,21 @@ test('an errored pair says why, on its infra line and in CTRF and JUnit: the fir
   const ctrf = JSON.parse(render('ctrf', r)) as { results: { tests: { message?: string }[] } }
   assert.match(ctrf.results.tests[0]!.message!, / — ANTHROPIC_API_KEY is not set$/)
   assert.match(render('junit', r), /message="ERROR s\/c@sonnet-5 [^"]* — ANTHROPIC_API_KEY is not set"/)
+  const json = JSON.parse(render('json', r)) as { verdicts: { config: string; error_reason?: string }[] }
+  assert.deepEqual(json.verdicts.map(v => v.error_reason), ['ANTHROPIC_API_KEY is not set', 'timeout after 600s (and 2 other reasons)'])
+  // A blocking pair with an errored trial says why too.
+  const flaky = verdict({ config: 'sonnet-5', verdict: 'FLAKY', errors: 1, passes: 1, successes: 1 })
+  let blocks = ''
+  pretty({ write: t => (blocks += t), tty: false }, plain).finish(report({ verdicts: [flaky], trials: [trial(1, 'HTTP 529 overloaded')], exit: 1 }))
+  assert.ok(blocks.includes('  blocks  s/c@sonnet-5 FLAKY — HTTP 529 overloaded\n'), blocks)
+  // Cut by code point: an emoji across the cut is kept whole or dropped, and JUnit stays well-formed.
+  const long = report({ verdicts: [errored], trials: [trial(1, `${'x'.repeat(199)}😀 tail`)], exit: 3 })
+  const junit = render('junit', long)
+  assert.ok(junit.includes(`${'x'.repeat(199)}😀"`), junit.slice(-300))
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(junit))
+  // A reason that arrives holding half a surrogate pair is scrubbed from the XML.
+  const broken = render('junit', report({ verdicts: [errored], trials: [trial(1, 'bad \uD800 byte')], exit: 3 }))
+  assert.ok(broken.includes('bad \uFFFD byte'), broken.slice(-300))
   // No reason recorded: the line is as it was.
   let bare = ''
   pretty({ write: t => (bare += t), tty: false }, plain).finish(report({ verdicts: [errored], trials: [trial(1)], exit: 3 }))

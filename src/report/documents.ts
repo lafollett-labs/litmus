@@ -18,7 +18,12 @@ export function render(format: DocumentFormat, r: RunReport): string {
 
 // litmus's own shape: the run's manifest and everything it decided.
 function json(r: RunReport) {
-  return { run: r.manifest, verdicts: r.verdicts, comparisons: r.comparisons, notes: r.notes, exit: r.exit }
+  // An errored pair carries why, as CTRF's and JUnit's messages do.
+  const verdicts = r.verdicts.map(v => {
+    const reason = errorReason(r.trials, v)
+    return reason === undefined ? v : { ...v, error_reason: reason }
+  })
+  return { run: r.manifest, verdicts, comparisons: r.comparisons, notes: r.notes, exit: r.exit }
 }
 
 const id = (v: Verdict) => `${v.case}@${v.config}`
@@ -119,6 +124,8 @@ const xml = (s: string) =>
   s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!)
     // XML 1.0 has no escape for these; a control character would make the file unreadable.
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, '�')
+    // Nor for half a surrogate pair.
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '�')
 
 // JUnit XML, one testsuite per suite and one testcase per (case, config).
 // Blocking verdicts are failures, infrastructure trouble is an error, and a

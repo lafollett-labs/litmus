@@ -1343,7 +1343,7 @@ set`, say.
 
 | Document | One test per | Status |
 | - | - | - |
-| `json` | (none: the manifest, verdicts, comparisons, notes and exit) | |
+| `json` | (none: the manifest, verdicts, comparisons, notes and exit; an errored pair's verdict carries `error_reason`) | |
 | `ctrf` (spec 0.0.0, validated against `src/report/vendor/ctrf.schema.json`) | (case, config) verdict | the gate below decides it: blocking is `failed`, infra is `other`, and anything let through is `passed`, with `flaky: true` for an allowed FLAKY |
 | `junit` | (case, config) verdict, plus one per comparison, in a testsuite named `litmus:comparisons` (no suite can have that name) | blocking is a `<failure>`, infra an `<error>`, and a comparison's REGRESSION a `<failure>` |
 
