@@ -1,0 +1,5 @@
+kind: seeded
+bugs:
+  - { id: nil-token, file: a.go, lines: [10, 12], severity: high, category: correctness, summary: a nil token is dereferenced, proof: go test ./..., fix: fix/nil-token.patch }
+  - { id: off-by-one, file: a.go, lines: [40, 41], severity: medium, category: correctness, summary: the loop skips the last item, proof: go test ./..., fix: fix/off-by-one.patch }
+decoys: []

@@ -1,0 +1,7 @@
+suites: [./suites]
+results: ./.litmus/runs
+concurrency: 4
+retries: 0
+configs:
+  fake: { provider: fake }
+  fake-b: { provider: fake }

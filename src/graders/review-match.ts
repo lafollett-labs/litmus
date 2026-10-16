@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs'
 import { ConfigError } from '../core/errors.ts'
-import type { Usage } from '../core/types.ts'
+import type { ReviewDetails, Usage } from '../core/types.ts'
 import { Findings, type Finding, type Grader as GraderSpec, type TruthFile } from '../suite/schema.ts'
 import { normPath, readArtifact, unread } from './common.ts'
 import { askJudge, sumUsage } from './judges.ts'
@@ -176,7 +176,11 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
 
   const m = metrics(truth, findings, s, confirmed)
   const { failed, na } = checkBounds(spec.pass, m)
-  const where = (j: number) => `${findings[j]!.file}:${findings[j]!.line} "${findings[j]!.title}"`
+  // A file or title is the subject's text: redacted first, then clipped, since
+  // a clip through a secret would leave a prefix no redactor matches. Clipped
+  // in the rationale and the details alike, so trial.json stays readable.
+  const safe = (t: string) => clip(ctx.redact.text(t))
+  const where = (j: number) => `${safe(findings[j]!.file)}:${findings[j]!.line} "${safe(findings[j]!.title)}"`
   const lines: string[] = 'error' in read ? [read.error] : []
   lines.push(truth.bugs.length ? `matched ${s.pairs.length}/${truth.bugs.length} bugs` : `clean case: ${findings.length} finding(s)`)
   for (const p of s.pairs) lines.push(`  ${truth.bugs[p.bug]!.id} <- ${where(p.finding)}`)
@@ -188,8 +192,22 @@ export const reviewMatch: Grader<'review-match'> = async (spec, trial, ctx) => {
   lines.push(...unconfirmed)
   for (const f of failed) lines.push(`failed: ${f}`)
   lines.push(...na)
-  return { grader: 'review-match', pass: !('error' in read) && failed.length === 0, metrics: m, rationale: lines.join('\n'), ...(spent.length ? { usage: sumUsage(spent) } : {}) }
+  // Bounded, so trial.json stays readable by the server however much a
+  // review said: the unmatched list stops at DETAILS_MAX with a count of the
+  // rest (the metrics count every one).
+  const at = (j: number) => ({ file: safe(findings[j]!.file), line: findings[j]!.line, title: safe(findings[j]!.title) })
+  const details: ReviewDetails = {
+    matched: s.pairs.map(p => ({ bug: truth.bugs[p.bug]!.id, ...at(p.finding) })),
+    missed,
+    unmatched: s.unmatched.slice(0, DETAILS_MAX).map(u => ({ as: u.as, ...at(u.finding), ...(u.near ? { near: u.near } : {}) })),
+    ...(s.unmatched.length > DETAILS_MAX ? { omitted: s.unmatched.length - DETAILS_MAX } : {}),
+  }
+  return { grader: 'review-match', pass: !('error' in read) && failed.length === 0, metrics: m, rationale: lines.join('\n'), details, ...(spent.length ? { usage: sumUsage(spent) } : {}) }
 }
+
+const DETAILS_MAX = 500
+const CLIP = 500
+const clip = (t: string) => (t.length > CLIP ? `${t.slice(0, CLIP - 1)}…` : t)
 
 function readFindings(trial: TrialResult, name: string): { findings: Finding[] } | { error: string } {
   const art = readArtifact(trial, name)

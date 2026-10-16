@@ -33,6 +33,17 @@ export type GraderResult = {
   metrics?: Record<string, number | null> // null when a ratio's denominator is 0
   rationale?: string
   usage?: Usage // judge or confirm calls this grade made
+  details?: ReviewDetails // review-match only: every outcome as data, for a UI to render without parsing the rationale
+}
+
+// A finding's text is the subject's output, so it travels as data, never
+// spliced into prose a reader would have to parse.
+export type ReviewFinding = { file: string; line: number; title: string }
+export type ReviewDetails = {
+  matched: (ReviewFinding & { bug: string })[]
+  missed: string[] // bug ids
+  unmatched: (ReviewFinding & { as: 'decoy_hit' | 'duplicate' | 'nit' | 'false_positive'; near?: string })[]
+  omitted?: number // unmatched findings past the first 500, counted in the metrics but not listed
 }
 
 export type TrialStatus = 'pass' | 'fail' | 'error' | 'cancelled'
