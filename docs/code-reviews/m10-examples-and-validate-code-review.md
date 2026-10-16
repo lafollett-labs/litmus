@@ -125,6 +125,7 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | - | - | - | - |
 | 1 | `98064a9` | 2 MEDIUM, 2 LOW, 2 INFO | Fixed, as below |
 | 2 | `b82685d` | 1 MEDIUM, 3 LOW, 1 INFO | All round-1 findings RESOLVED (CI: Go 1.26.9, `GOTOOLCHAIN=local` reaches proofs and credentials do not). New findings fixed, as below |
+| 3 | `52697d8` | 1 MEDIUM, 1 LOW | All round-2 findings RESOLVED (a disk comparison catches a rename, a delete and a file becoming a directory, which `--numstat` would miss). New findings fixed, as below |
 
 PE-Vue checked the ground truth independently:
 - Each truth range matches the post-change file.
@@ -150,6 +151,13 @@ Round 2:
 | LOW-002 | `B.TXT` passed on a case-insensitive volume; `.git/HEAD` passed; an empty file counted as 1 line | Fixed. Each segment must match its directory entry exactly, a `.git` segment is refused, and an empty file has 0 lines. Each is tested; the case-folding, `.git`, empty-file and directory mutants are killed |
 | LOW-003 | A fix could neuter its proof without editing a proof file: by adding to a directory only the proof made, or with a Go `TestMain` | Fixed in two ways. A file added under a directory that only `proof/` made counts as a change to the proof (an error). A fix that leaves the bug's own `file` unchanged gets a warning. Both are tested, and both mutants are killed |
 | INFO-001 | The snapshot kept every proof file body in memory | Fixed: a mode and sha256 per file |
+
+Round 3:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | `validate` printed a suite-load error unredacted. A YAML error quotes its line, so a secret there reached stdout, and so CI's public log; `list` redacts it | Fixed: the message is redacted with the config's redact list, as `main` redacts every other ConfigError. Tested through the CLI with a secret on the failing line; the unredacted print, as a mutant, fails |
+| LOW-001 | A fix that replaced a proof-only directory with a file threw ENOTDIR (exit 3) | Fixed. A proof-only directory that is no longer a directory is recorded as a change to the proof, and a path under a parent that is now a file reads as absent. Tested; ignoring the change, as a mutant, fails |
 
 ## Merge Eligibility (latest)
 

@@ -254,12 +254,17 @@ test('a proof that changes its own files during its first run does not blame an 
 test('a fix that adds to a directory only the proof made changes the proof; one that leaves the bug\'s file alone is warned of', async () => {
   const skip = 'diff --git a/t/00-skip.sh b/t/00-skip.sh\nnew file mode 100644\n--- /dev/null\n+++ b/t/00-skip.sh\n@@ -0,0 +1 @@\n+exit 0\n'
   const elsewhere = FIX.replaceAll('a.txt', 'b.txt')
+  const dirToFile = 'diff --git a/t/check.sh b/t/check.sh\ndeleted file mode 100644\n--- a/t/check.sh\n+++ /dev/null\n@@ -1 +0,0 @@\n-grep -qx fixed a.txt\ndiff --git a/t b/t\nnew file mode 100644\n--- /dev/null\n+++ b/t\n@@ -0,0 +1 @@\n+x\n'
   const ps = await check(
     project({
       adds: seeded('adds', { proof: 'sh t/run.sh' }, { 'proof/t/run.sh': 'for f in t/0*.sh; do [ -f "$f" ] && . "./$f"; done\ngrep -qx fixed a.txt\n', 'fix/b1.patch': skip }),
       elsewhere: seeded('elsewhere', { proof: 'grep -qx fixed b.txt' }, { 'fixture/b.txt': 'broken\n', 'fix/b1.patch': elsewhere }),
+      todir: seeded('todir', { proof: 'test -f t || sh t/check.sh' }, { 'proof/t/check.sh': 'grep -qx fixed a.txt\n', 'fix/b1.patch': `${FIX}${dirToFile}` }),
+      fine: seeded('fine'),
     }),
   )
+  assert.deepEqual(only(ps, 's/todir'), ["error: bug b1: fix fix/b1.patch changes proof/t; a fix may change only the subject's tree, never its proof"])
+  assert.deepEqual(only(ps, 's/fine'), [])
   assert.deepEqual(only(ps, 's/adds'), [
     "error: bug b1: fix fix/b1.patch changes proof/t/00-skip.sh; a fix may change only the subject's tree, never its proof",
   ])
@@ -342,4 +347,12 @@ test('litmus validate: SIGTERM cancels with 143 and kills the proof; a suite tha
   const r = spawnSync(process.execPath, [MAIN, 'validate', '--config-file', broken], { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1' } })
   assert.equal(r.status, 1, r.stderr)
   assert.match(r.stdout, /invalid: the suites do not load\n$/)
+
+  // A YAML error quotes its line: a secret there is redacted.
+  const secret = 'sk-litmus-probe-7'
+  const leaky = project({ bad: { 'case.yaml': `name: bad\nexecutor: { kind: model, prompt: "use ${secret} here }\n` } })
+  const q = spawnSync(process.execPath, [MAIN, 'validate', '--config-file', leaky], { encoding: 'utf8', env: { ...process.env, NO_COLOR: '1', LITMUS_TEST_SECRET: secret } })
+  assert.equal(q.status, 1, q.stderr)
+  assert.ok(!q.stdout.includes(secret), q.stdout)
+  assert.match(q.stdout, /\[REDACTED\]/)
 })

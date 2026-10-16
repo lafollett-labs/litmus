@@ -245,7 +245,8 @@ export async function validateCommand(f: { configFile: string; selectors: string
     project = loadProject(f.configFile)
   } catch (e) {
     if (!(e instanceof ConfigError)) throw e
-    io.out(`${paint('fail', '✗')} ${e.message}`)
+    // A YAML error quotes the line it failed on, so redacted as main's would be.
+    io.out(`${paint('fail', '✗')} ${redactor(secretValues(config.redact)).text(e.message)}`)
     io.out('invalid: the suites do not load')
     return 1
   }

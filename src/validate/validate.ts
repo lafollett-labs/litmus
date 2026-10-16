@@ -217,8 +217,12 @@ function proofTree(c: LoadedCase, proofDir: string, work: string): string[] {
 
 // A file's or directory's state, compared before and after a fix is applied.
 function state(path: string): string {
-  const st = lstatSync(path, { throwIfNoEntry: false })
-  if (!st) return 'none'
+  let st
+  try {
+    st = lstatSync(path) // ENOTDIR as well as ENOENT: a parent is no longer a directory
+  } catch {
+    return 'none'
+  }
   if (!st.isFile()) return st.isDirectory() ? 'dir' : 'other'
   return `${st.mode}:${sha256(readFileSync(path))}`
 }
@@ -227,8 +231,15 @@ function state(path: string): string {
 // in a directory only the proof made.
 function ownedState(work: string, owned: { files: string[]; dirs: string[] }): Map<string, string> {
   const rels = new Set(owned.files)
-  for (const d of owned.dirs) if (existsSync(join(work, d))) for (const rel of files(join(work, d))) rels.add(`${d}/${rel}`)
-  return new Map([...rels].map(rel => [rel, state(join(work, rel))]))
+  const out = new Map<string, string>()
+  for (const d of owned.dirs) {
+    const st = lstatSync(join(work, d), { throwIfNoEntry: false })
+    // No longer a directory (a fix made it a file, say): that is a change too.
+    if (st && !st.isDirectory()) out.set(d, state(join(work, d)))
+    else if (st) for (const rel of files(join(work, d))) rels.add(`${d}/${rel}`)
+  }
+  for (const rel of rels) out.set(rel, state(join(work, rel)))
+  return out
 }
 
 // The regular file a ground-truth `file` names in the tree, spelled exactly as
