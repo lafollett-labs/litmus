@@ -129,6 +129,7 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | Round | Reviewed SHA | Found | Outcome |
 | - | - | - | - |
 | 1 | `7ae327e` | 1 MEDIUM, 5 LOW, 2 INFO | Fixed, as below |
+| 2 | `0d29e4c` | 0 at MEDIUM or above; 1 LOW, 4 INFO | **Clean.** All round-1 findings are RESOLVED; 10 of 11 mutants are killed, and the survivor is the accepted compare late-write gap, closed below |
 
 | ID | Finding | Disposition |
 | - | - | - |
@@ -140,6 +141,16 @@ Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for i
 | LOW-005 | A rerun with nothing to rerun, or a failed run, left an old file at `--out` in place | Documented. `--out` is written only when a run finishes, and anything already there is left untouched. Deleting a file litmus did not write would be the bigger surprise |
 | INFO-001 | CTRF duration sums trial wall-clocks, so it can exceed stop minus start | Accepted: it is schema-valid, and the sum is the work done |
 | INFO-002 | A suite named `comparisons` collided with JUnit's comparisons testsuite | Adopted: the testsuite is `litmus:comparisons`, which is not a NAME. Tested; the mutant is killed |
+
+Round 2:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| NEW-LOW-001 | Only `listRuns` checked a record's shape. By id, a shapeless `run.json` reached `compare` (exit 3 with a message naming no file) and `baseline set` (recorded) | Fixed. `readRun` checks configs, cases, judges and plugins and throws a ConfigError that names the file (exit 2), and `listRuns` uses the same predicate. Tested by id for `compare` and `baseline set`, and for a record missing only `plugins`; all three mutants are killed |
+| NEW-INFO-001 | Exit-2 lines printed absolute paths unredacted | Adopted: a usage or config error goes through the same redactor. Tested; the mutant is killed |
+| NEW-INFO-002 | The catch-all can turn a blocking post-run result into 3 if reading the trials back throws | Accepted: those files were just written by this process |
+| NEW-INFO-003 | "Written only when a run finishes" misread a cancelled run | Fixed: `--out` is written whenever a run ends, finished or cancelled |
+| NEW-INFO-004 | compare's late-write branch is testable on Linux through `/dev/full` | Adopted: a Linux-only test (CI runs Linux) checks that INCONCLUSIVE keeps exit 1 and an allowed one becomes 3 |
 
 ## Merge Eligibility (latest)
 

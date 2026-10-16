@@ -122,7 +122,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
       return 2
     }
     if (e instanceof ConfigError) {
-      io.err(e.message)
+      io.err(redactFor(argv).text(e.message))
       return 2
     }
     // Anything else (a results directory that cannot be read, a run record of

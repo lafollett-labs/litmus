@@ -363,6 +363,32 @@ test('a run record without its configs or cases is skipped, so config:<name> sti
   const r = at('compare', 'config:fake', 'config:fake', '--allow-inconclusive')
   assert.equal(r.status, 0, r.stderr)
   assert.equal(at('list').status, 0)
+  // Named by id, the same record is a config error that names its file.
+  for (const args of [['compare', id, id], ['baseline', 'set', 'x', id]]) {
+    const named = at(...args)
+    assert.equal(named.status, 2, `${args.join(' ')}: ${named.stderr}`)
+    assert.match(named.stderr, new RegExp(`${id}/run\\.json lacks its configs, cases, judges or plugins`))
+  }
+  // Every field counts: comparisons read the plugins too.
+  writeFileSync(join(root, '.litmus/runs', id, 'run.json'), JSON.stringify({ id, status: 'finished', started_at: '2099-01-01T00:00:00.000Z', configs: { fake: {} }, cases: [], judges: {} }))
+  assert.equal(at('compare', id, id).status, 2)
+})
+
+test('a usage or config error prints its paths redacted, as exit 3 does', () => {
+  const root = project()
+  const r = spawnSync(process.execPath, [MAIN, 'compare', '2026-01-01T00-00-00Z-ffff', '2026-01-01T00-00-00Z-ffff'], { cwd: root, encoding: 'utf8', env: { ...ENV, MY_TOKEN: basename(root) } })
+  assert.equal(r.status, 2)
+  assert.match(r.stderr, /^no run 2026-01-01T00-00-00Z-ffff under .*\[REDACTED\]/)
+  assert.ok(!r.stderr.includes(basename(root)))
+})
+
+test('compare keeps a blocking exit when its --out write fails, and turns a clean one into 3', { skip: process.platform !== 'linux' && '/dev/full is Linux only' }, () => {
+  const root = project()
+  const at = (...args: string[]) => spawnSync(process.execPath, [MAIN, ...args], { cwd: root, encoding: 'utf8', env: ENV })
+  assert.equal(at('run', 'e2e/passes', '--config', 'fake').status, 0)
+  // One case against itself is INCONCLUSIVE: 1 unless allowed, and then 0.
+  assert.equal(at('compare', 'config:fake', 'config:fake', '--out', '/dev/full').status, 1)
+  assert.equal(at('compare', 'config:fake', 'config:fake', '--allow-inconclusive', '--out', '/dev/full').status, 3)
 })
 
 function chmodRecursive(dir: string, dirs: number, files: number): void {

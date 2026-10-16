@@ -138,6 +138,12 @@ const parse = <T>(path: string): T | undefined => {
 
 // ── readers ──────────────────────────────────────────────────────────────────
 
+// What every reader of a manifest leans on. A record without it was edited by
+// hand or written by something else, and reading on would crash far from here.
+const isObject = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v)
+const whole = (m: unknown): m is RunManifest =>
+  isObject(m) && ['configs', 'judges', 'plugins'].every(k => isObject((m as Record<string, unknown>)[k])) && Array.isArray((m as RunManifest).cases)
+
 export function readRun(resultsDir: string, id: string): StoredRun {
   if (!RUN_ID.test(id)) throw new ConfigError(`"${id}" is not a run id`)
   const dir = join(resultsDir, id)
@@ -148,13 +154,15 @@ export function readRun(resultsDir: string, id: string): StoredRun {
     if (value === undefined) throw new ConfigError(`${join(dir, name)} does not parse; the run's record is damaged`)
     return value
   }
-  return { manifest: read<RunManifest>('run.json', undefined as never), verdicts: read<Verdict[]>('verdicts.json', []), comparisons: read<Comparison[]>('comparison.json', []) }
+  const manifest = read<RunManifest>('run.json', undefined as never)
+  if (!whole(manifest)) throw new ConfigError(`${join(dir, 'run.json')} lacks its configs, cases, judges or plugins; the run's record is damaged`)
+  return { manifest, verdicts: read<Verdict[]>('verdicts.json', []), comparisons: read<Comparison[]>('comparison.json', []) }
 }
 
 // Newest first, by start time to the millisecond: a run id sorts only to the
 // second, and two runs started in that second would otherwise come back in
 // the order of their random suffixes. A run whose run.json does not parse, or
-// lacks the configs and cases every reader needs (written by hand, or by an
+// lacks the fields every reader needs (written by hand, or by an
 // older litmus without atomic writes), is skipped, so one bad run cannot hide
 // the others.
 export function listRuns(resultsDir: string): RunManifest[] {
@@ -168,7 +176,7 @@ export function listRuns(resultsDir: string): RunManifest[] {
     .filter(d => RUN_ID.test(d))
     .flatMap(d => {
       const m = parse<RunManifest>(join(resultsDir, d, 'run.json'))
-      return m && typeof m === 'object' && typeof m.configs === 'object' && m.configs !== null && Array.isArray(m.cases) ? [m] : []
+      return whole(m) ? [m] : []
     })
     .sort((a, b) => at(b) - at(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
 }

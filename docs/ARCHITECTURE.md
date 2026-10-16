@@ -1168,10 +1168,11 @@ be written is exit 2. If the write still fails after the run (a full disk, a
 directory removed meanwhile), the run is already recorded, and a `run` or
 `compare` that would have exited 0 exits 3; a blocking result keeps its code.
 A `run.json` or `verdicts.json` that does not parse (hand-edited, or a disk
-fault) is a config error wherever a command must read that run. Listing runs,
-and picking one for `config:<name>`, skips such a run, as it skips a `run.json`
-without its configs and cases. A `trial.json` that does not parse is skipped.
-`--out` is written only when a run finishes: a rerun with nothing to rerun,
+fault), or a `run.json` without its configs, cases, judges or plugins, is a
+config error wherever a command must read that run, and the message names the
+file. Listing runs, and picking one for `config:<name>`, skips such a run. A
+`trial.json` that does not parse is skipped. `--out` is written whenever a run
+ends, finished or cancelled: a rerun with nothing to rerun,
 or a run litmus could not finish, leaves any file already there untouched. A reader
 that closes early (`litmus run | head`) stops the output, not the run: it
 finishes, is written, and exits with its real code.
