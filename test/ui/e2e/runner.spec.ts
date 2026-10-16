@@ -116,6 +116,12 @@ test('cancel stops a run: its trials end cancelled and nothing settles', async (
   await tick(page, 'slow')
   await page.getByRole('button', { name: 'Run selected' }).click()
   await done(page, 'running')
+  // A trial opened while it runs says so in the header, not "queued".
+  await expand(page, 'slow/waits', 'slow/waits@fake')
+  await expect(row(page, 'slow/waits@fake#1')).toHaveAttribute('data-status', 'running')
+  await row(page, 'slow/waits@fake#1').locator('.label').click()
+  await expect(page.locator('.detail h2')).toHaveText('slow/waits@fake#1')
+  await expect(page.locator('.detail header [role="img"]')).toHaveAttribute('aria-label', 'running')
   await page.getByRole('button', { name: 'Cancel' }).click()
   await done(page, 'cancelled')
   // Cancel disabled itself; the focus it held lands on the run line, not the page.

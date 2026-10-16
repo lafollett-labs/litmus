@@ -100,6 +100,15 @@ M10 merged as approved in Gate 2 round 4. That round's one LOW is fixed here, so
 
 M11 also merges M10's Gate 2 rules into the ARCHITECTURE re-read: ground truth, the proof-edit check, `GOTOOLCHAIN`, and three warnings. A case `validate` cannot read (EACCES while hashing) is an error for that case alone, matching M10's per-case rule.
 
+## Carried from PR #15 (issue #13) Gate 2
+
+#15 merged as approved. Its LOW and one INFO are fixed here, so M11's Gate 2 reviews them:
+
+| ID | Finding | Disposition |
+| - | - | - |
+| PR15-LOW-001 | A queued trial of a cancelled run showed the server's 404 as a red error, though it never ran | Fixed. An unfinished trial of a cancelled run gets a neutral note, "not run: the run was cancelled before this trial started", both when it is opened after the cancel and when it was already open as the stream ended. A record that exists is still shown. Tested on both paths and with a record present. Dropping the note in either path, as a mutant, fails |
+| PR15-INFO-001 | The pane's header icon fell back to "queued" for a running trial with no record | Fixed: it falls back to the trial's state in its own run. An e2e assertion opens a running trial and expects "running"; the old fallback, as a mutant, fails it |
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `8aa848b`. The PR opens once M5 through M10 merge. It carries the post-approval commit `bf4188e` (LOW and INFO fixes only), and Gate 2 reviews it.

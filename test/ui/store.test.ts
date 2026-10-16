@@ -279,13 +279,28 @@ test('a finished trial whose record is missing shows the error, not the still-ru
   assert.match(state.detail?.error ?? '', /no route/)
 })
 
-test('a queued trial of a cancelled run is looked up, and its error shown', async () => {
+test('a queued trial of a cancelled run, opened after or before the cancel, says it never ran', async () => {
   routes = { 'GET /api/runs/p9': stored('cancelled'), 'GET /api/suites': () => suites }
   watchRun('p9'); last().send({ type: 'trial.queued', key } as RunEvent); last().send({ type: 'run.cancelled', run: 'p9' } as RunEvent); await tick(); await tick()
   assert.equal(state.run?.done, 'cancelled')
   openTrial(key); await tick()
   assert.equal(state.detail?.waiting, false)
-  assert.match(state.detail?.error ?? '', /no route/)
+  assert.equal(state.detail?.error, null)
+  assert.equal(state.detail?.note, 'not run: the run was cancelled before this trial started')
+  // Open while queued; the cancel and the stream's end settle it the same way.
+  routes = { 'GET /api/runs/p10': stored('cancelled'), 'GET /api/suites': () => suites }
+  watchRun('p10'); last().send({ type: 'trial.queued', key } as RunEvent)
+  openTrial(key)
+  assert.equal(state.detail?.waiting, true)
+  last().send({ type: 'run.cancelled', run: 'p10' } as RunEvent); last().fail(); await tick(); await tick(); await tick()
+  assert.equal(state.detail?.waiting, false)
+  assert.equal(state.detail?.note, 'not run: the run was cancelled before this trial started')
+  // A record that exists is shown, note or no note.
+  routes = { 'GET /api/runs/p11': stored('cancelled'), 'GET /api/suites': () => suites, [tk('p11')]: () => ({ record: { status: 'cancelled' }, transcript: [], artifacts: [] }) }
+  watchRun('p11'); last().send({ type: 'trial.started', key }); last().send({ type: 'run.cancelled', run: 'p11' } as RunEvent); await tick(); await tick()
+  openTrial(key); await tick()
+  assert.equal(state.detail?.data?.record.status, 'cancelled')
+  assert.equal(state.detail?.note, null)
 })
 
 test('a bad trial count or a refused selection starts nothing and says why', async () => {
