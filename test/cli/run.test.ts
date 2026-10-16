@@ -36,6 +36,7 @@ function project(): string {
   add('drift', 'trials: 10\n', '[{ text_file: ../../../../answer.txt }]')
   add('slow', 'trials: 2\n', '[{ text: LGTM, delay_ms: 20000 }]')
   add('slowish', 'trials: 1\n', '[{ text: LGTM, delay_ms: 1500 }]')
+  add('slowfails', 'trials: 1\n', '[{ text: nope, delay_ms: 1500 }]')
   return tree(files)
 }
 
@@ -323,6 +324,45 @@ test('when the store fails mid-run, the live view says so and exits 3, and the r
   assert.match(stderr, /^litmus: the run failed: .*\[REDACTED\]/m)
   assert.ok(!stdout.includes(basename(ROOT)) && !stderr.includes(basename(ROOT)), `${stdout}\n${stderr}`)
   assert.ok(!readFileSync(join(runDir, 'events.jsonl'), 'utf8').includes('run.failed'), 'the store could not have written it')
+})
+
+test('an --out that goes away keeps a blocking result\'s own exit: a FAIL stays 1', async () => {
+  const dir = join(ROOT, 'vanishing-fail')
+  mkdirSync(dir, { recursive: true })
+  const { code } = await runUntil(['e2e/slowfails', '--config', 'fake', '--out', join(dir, 'x.txt')], 'litmus run ', () => rmSync(dir, { recursive: true }))
+  assert.equal(code, 1)
+})
+
+test('compare and list exit 3 when the store cannot be read: one redacted line, no stack trace', () => {
+  const root = project()
+  const env = { ...ENV, MY_TOKEN: basename(root) }
+  const at = (...args: string[]) => spawnSync(process.execPath, [MAIN, ...args], { cwd: root, encoding: 'utf8', env })
+  assert.equal(at('run', 'e2e/passes', '--config', 'fake').status, 0)
+  const runs = join(root, '.litmus/runs')
+  chmodSync(runs, 0o000)
+  try {
+    for (const args of [['compare', 'config:fake', 'config:fake'], ['list']]) {
+      const r = at(...args)
+      assert.equal(r.status, 3, `${args.join(' ')}: ${r.stderr}`)
+      assert.match(r.stderr, /^litmus: EACCES.*\[REDACTED\]/)
+      assert.equal(r.stderr.trim().split('\n').length, 1, r.stderr)
+      assert.ok(!r.stderr.includes(basename(root)))
+    }
+  } finally {
+    chmodSync(runs, 0o700)
+  }
+})
+
+test('a run record without its configs or cases is skipped, so config:<name> still finds the newest real run', () => {
+  const root = project()
+  const at = (...args: string[]) => spawnSync(process.execPath, [MAIN, ...args], { cwd: root, encoding: 'utf8', env: ENV })
+  assert.equal(at('run', 'e2e/passes', '--config', 'fake').status, 0)
+  const id = '2099-01-01T00-00-00Z-abcd'
+  mkdirSync(join(root, '.litmus/runs', id), { recursive: true })
+  writeFileSync(join(root, '.litmus/runs', id, 'run.json'), JSON.stringify({ id, status: 'finished', started_at: '2099-01-01T00:00:00.000Z' }))
+  const r = at('compare', 'config:fake', 'config:fake', '--allow-inconclusive')
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(at('list').status, 0)
 })
 
 function chmodRecursive(dir: string, dirs: number, files: number): void {

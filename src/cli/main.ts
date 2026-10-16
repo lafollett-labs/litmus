@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
 import { ConfigError } from '../core/errors.ts'
+import { redactor, secretValues } from '../core/redact.ts'
+import { loadConfig } from '../suite/load.ts'
 import { baselineCommand, compareCommand, runCommand } from './commands.ts'
 import { list } from './list.ts'
 
@@ -23,7 +25,9 @@ options:
   -h, --help            this text
 
 exit codes (run): 0 ok, 1 a blocking verdict or a REGRESSION, 2 a usage or
-config error, 3 infrastructure trouble only, 130 cancelled`
+config error, 3 infrastructure trouble only, 130 cancelled by SIGINT, 143 by SIGTERM
+exit codes (compare): 0 ok, 1 a REGRESSION (or INCONCLUSIVE), 2 a usage or
+config error, 3 infrastructure trouble`
 
 // Every command takes these (docs/ARCHITECTURE.md § CLI). --config is not one
 // of them: under run it names the configurations to compare.
@@ -121,8 +125,25 @@ export async function main(argv: string[], io: Io): Promise<number> {
       io.err(e.message)
       return 2
     }
-    throw e
+    // Anything else (a results directory that cannot be read, a run record of
+    // the wrong shape) is infrastructure trouble, never a REGRESSION: one
+    // redacted line and exit 3, with no stack trace and its absolute paths.
+    io.err(`litmus: ${redactFor(argv).text(e instanceof Error ? e.message : String(e))}`)
+    return 3
   }
+}
+
+// The config's own redact list when it still loads, and the credential
+// variables always.
+function redactFor(argv: string[]) {
+  let names: readonly string[] = []
+  try {
+    const { values } = parseArgs({ args: argv.slice(1), options: COMMON, strict: false, allowPositionals: true })
+    names = loadConfig(String(values['config-file'] ?? 'litmus.config.yaml')).redact
+  } catch {
+    // the credential variables alone
+  }
+  return redactor(secretValues(names))
 }
 
 function help(io: Io): number {

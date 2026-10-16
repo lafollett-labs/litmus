@@ -122,6 +122,25 @@ PE-Vue marked all 9 round-2 findings RESOLVED:
 
 The fix commit `1e52749` passed all 477 tests but **did not typecheck**: compare's `final` kept the `0 | 1` type of `compareExit`. My check step printed nothing, and I missed that it had not passed. It is fixed in the next commit, and at that commit `npm run check` is clean, which I have verified, and 477 tests pass with 4 (live) skipped.
 
+## Gate 2 (PR #10)
+
+Copilot is out of quota, so a fresh PE-Vue with no Gate 1 context stood in for it.
+
+| Round | Reviewed SHA | Found | Outcome |
+| - | - | - | - |
+| 1 | `7ae327e` | 1 MEDIUM, 5 LOW, 2 INFO | Fixed, as below |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | `compare` and `list` exited 1 with a raw stack trace on any store I/O error, or on a `run.json` of the wrong shape, so CI read infrastructure trouble as a REGRESSION | Fixed. `main()` turns any error that is not a usage or config error into one redacted line on stderr and exit 3; the config's redact list is used when it still loads. `listRuns` skips a `run.json` without its configs and cases, as it skips a torn one. Tested: a results directory at mode 000 makes `compare` and `list` exit 3 with one redacted line; a shapeless record no longer breaks `config:<name>`. Both mutants are killed |
+| LOW-001 | On a TTY, a failed run's `exit 3` landed on the stale status line | Fixed. After `run.failed` or `run.cancelled` the live view draws no status line. Tested for both; the mutant is killed |
+| LOW-002 | ARCHITECTURE said any run record that does not parse is a config error, but a torn `trial.json` is skipped | Fixed: the docs name `run.json` and `verdicts.json` as the config errors, say that listing skips shapeless and torn runs, and that a torn `trial.json` is skipped |
+| LOW-003 | Five reporter and exit mutants survived | Tested: a FAIL whose `--out` vanishes keeps exit 1; a CTRF FLAKY that is blocked is failed with no `flaky` key and a message; JUnit replaces every XML 1.0 control character and U+FFFE/U+FFFF. Four of the five are killed. `compare`'s late-write branch has no test: compare's `--out` is checked first and written at once, so no test can make it fail between the check and the write. It shares its rule with `run`'s, which is tested |
+| LOW-004 | `--help` listed 130 but not 143 | Fixed: "130 cancelled by SIGINT, 143 by SIGTERM", and compare's exit codes are listed too |
+| LOW-005 | A rerun with nothing to rerun, or a failed run, left an old file at `--out` in place | Documented. `--out` is written only when a run finishes, and anything already there is left untouched. Deleting a file litmus did not write would be the bigger surprise |
+| INFO-001 | CTRF duration sums trial wall-clocks, so it can exceed stop minus start | Accepted: it is schema-valid, and the sum is the work done |
+| INFO-002 | A suite named `comparisons` collided with JUnit's comparisons testsuite | Adopted: the testsuite is `litmus:comparisons`, which is not a NAME. Tested; the mutant is killed |
+
 ## Merge Eligibility (latest)
 
 **Locked to SHA:** `b6bf84e`. The PR opens once M5 and M6 merge and this branch is rebased onto main. It carries the post-approval commit (LOW and INFO fixes only), and Gate 2 reviews it.

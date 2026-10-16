@@ -153,9 +153,10 @@ function junit(r: RunReport): string {
     out.push('  </testsuite>')
   }
   if (r.comparisons.length) {
-    out.push(`  <testsuite name="comparisons" tests="${r.comparisons.length}" failures="${regressions.length}" errors="0" skipped="0" time="0.000">`)
+    // Not a NAME, so no suite of that name can share it.
+    out.push(`  <testsuite name="litmus:comparisons" tests="${r.comparisons.length}" failures="${regressions.length}" errors="0" skipped="0" time="0.000">`)
     for (const c of r.comparisons) {
-      const head = `    <testcase classname="comparisons" name="${xml(`${c.a} → ${c.b}`)}" time="0.000"`
+      const head = `    <testcase classname="litmus:comparisons" name="${xml(`${c.a} → ${c.b}`)}" time="0.000"`
       if (c.verdict !== 'REGRESSION') out.push(`${head}/>`)
       else out.push(`${head}>`, `      <failure message="${xml(`REGRESSION: Δ ${c.delta?.toFixed(2)} over ${c.cases} cases`)}" type="REGRESSION"/>`, '    </testcase>')
     }

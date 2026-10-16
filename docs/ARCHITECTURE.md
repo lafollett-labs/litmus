@@ -1158,7 +1158,7 @@ verdict or comparison that decided the exit code, and `exit <n>`.
 | - | - | - |
 | `json` | (none: the manifest, verdicts, comparisons, notes and exit) | |
 | `ctrf` (spec 0.0.0, validated against `src/report/vendor/ctrf.schema.json`) | (case, config) verdict | the gate below decides it: blocking is `failed`, infra is `other`, and anything let through is `passed`, with `flaky: true` for an allowed FLAKY |
-| `junit` | (case, config) verdict, plus one per comparison | blocking is a `<failure>`, infra an `<error>`, and a comparison's REGRESSION a `<failure>` |
+| `junit` | (case, config) verdict, plus one per comparison, in a testsuite named `litmus:comparisons` (no suite can have that name) | blocking is a `<failure>`, infra an `<error>`, and a comparison's REGRESSION a `<failure>` |
 
 A cancelled run's CTRF and JUnit also list each (case, config) it stopped
 before it settled, as skipped, so a cancelled run never reads as a clean one.
@@ -1167,8 +1167,12 @@ a directory, a parent that is not an existing directory, or a path that cannot
 be written is exit 2. If the write still fails after the run (a full disk, a
 directory removed meanwhile), the run is already recorded, and a `run` or
 `compare` that would have exited 0 exits 3; a blocking result keeps its code.
-A run record that does not parse (hand-edited, or a disk fault) is a config
-error wherever a command must read it. A reader
+A `run.json` or `verdicts.json` that does not parse (hand-edited, or a disk
+fault) is a config error wherever a command must read that run. Listing runs,
+and picking one for `config:<name>`, skips such a run, as it skips a `run.json`
+without its configs and cases. A `trial.json` that does not parse is skipped.
+`--out` is written only when a run finishes: a rerun with nothing to rerun,
+or a run litmus could not finish, leaves any file already there untouched. A reader
 that closes early (`litmus run | head`) stops the output, not the run: it
 finishes, is written, and exits with its real code.
 
@@ -1211,4 +1215,7 @@ exits 1 on INCONCLUSIVE, unless `--allow-inconclusive` is passed.
 `validate` exits 0 when every case is valid and 1 otherwise. Warnings don't
 affect its exit code.
 
-Both exit 2 on a usage or config error.
+Both exit 2 on a usage or config error. Any command exits 3 on any other
+failure (a results directory litmus cannot read, say), with one redacted line
+on stderr and no stack trace, so infrastructure trouble never reads as a
+REGRESSION.

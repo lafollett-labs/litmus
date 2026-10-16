@@ -14,6 +14,7 @@ export function pretty(sink: Sink, paint: Paint): { event: (e: RunEvent) => void
   let width = 0
   const running = new Set<string>()
   let status = false
+  let ended = false // a cancelled or failed run draws no status line under its last words
 
   const line = (text: string) => {
     clear()
@@ -25,7 +26,7 @@ export function pretty(sink: Sink, paint: Paint): { event: (e: RunEvent) => void
     status = false
   }
   const draw = () => {
-    if (!sink.tty || total === 0 || finished === total) return
+    if (!sink.tty || ended || total === 0 || finished === total) return
     sink.write(paint('dim', `${finished}/${total} trials · ${running.size} running`))
     status = true
   }
@@ -59,9 +60,11 @@ export function pretty(sink: Sink, paint: Paint): { event: (e: RunEvent) => void
           line(verdictLine(e.verdict, paint, width))
           break
         case 'run.cancelled':
+          ended = true
           line(paint('unsure', `cancelled: ${completed}/${total} trials completed; cases it stopped were not settled`))
           break
         case 'run.failed':
+          ended = true
           line(paint('error', `litmus failed: ${e.error}`))
           break
         case 'run.finished':

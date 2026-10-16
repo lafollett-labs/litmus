@@ -153,9 +153,10 @@ export function readRun(resultsDir: string, id: string): StoredRun {
 
 // Newest first, by start time to the millisecond: a run id sorts only to the
 // second, and two runs started in that second would otherwise come back in
-// the order of their random suffixes. A run whose run.json does not parse
-// (written by hand, or by an older litmus without atomic writes) is skipped,
-// so one bad run cannot hide the others.
+// the order of their random suffixes. A run whose run.json does not parse, or
+// lacks the configs and cases every reader needs (written by hand, or by an
+// older litmus without atomic writes), is skipped, so one bad run cannot hide
+// the others.
 export function listRuns(resultsDir: string): RunManifest[] {
   if (!existsSync(resultsDir)) return []
   // A start time that does not parse (a hand-edited file) sorts oldest.
@@ -165,7 +166,10 @@ export function listRuns(resultsDir: string): RunManifest[] {
   }
   return readdirSync(resultsDir)
     .filter(d => RUN_ID.test(d))
-    .flatMap(d => parse<RunManifest>(join(resultsDir, d, 'run.json')) ?? [])
+    .flatMap(d => {
+      const m = parse<RunManifest>(join(resultsDir, d, 'run.json'))
+      return m && typeof m === 'object' && typeof m.configs === 'object' && m.configs !== null && Array.isArray(m.cases) ? [m] : []
+    })
     .sort((a, b) => at(b) - at(a) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
 }
 

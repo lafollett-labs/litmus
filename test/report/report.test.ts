@@ -104,3 +104,32 @@ test('a cancelled run lists every pair it stopped as skipped, trial or no trial,
   assert.match(xml, /<testsuites name="litmus" tests="3" failures="0" errors="0" skipped="2">/)
   assert.match(xml, /<testsuite name="t" tests="1" failures="0" errors="0" skipped="1"/)
 })
+
+test('on a TTY a run that fails or is cancelled leaves no status line under its last words', () => {
+  for (const end of [{ type: 'run.failed', run: manifest.id, error: 'disk full' }, { type: 'run.cancelled', run: manifest.id, summary: { PASS: 0, FAIL: 0, FLAKY: 0, ERROR: 0, INCONCLUSIVE: 0 } }] as const) {
+    let out = ''
+    const view = pretty({ write: t => (out += t), tty: true }, plain)
+    view.event({ type: 'run.started', run: manifest.id, jobs: 2 })
+    view.event({ type: 'trial.started', key: 's/c@fake#1' })
+    view.event(end)
+    assert.ok(out.endsWith('\n'), JSON.stringify(out))
+    assert.ok(!out.slice(out.lastIndexOf('\x1b[2K')).includes('running'), JSON.stringify(out))
+  }
+})
+
+test('CTRF: a FLAKY the gate lets through is passed and flaky; one it blocks is failed, not flaky, with a message', () => {
+  const tests = (allowFlaky: boolean) => (JSON.parse(render('ctrf', report({ verdicts: [verdict({ verdict: 'FLAKY', passes: 2, successes: 2, success_rate: 2 / 3 })], gate: { allowFlaky, allowInconclusive: false } }))) as { results: { tests: { status: string; flaky?: true; message?: string }[] } }).results.tests
+  const [allowed] = tests(true)
+  const [blocked] = tests(false)
+  assert.deepEqual([allowed!.status, allowed!.flaky, allowed!.message], ['passed', true, undefined])
+  assert.deepEqual([blocked!.status, blocked!.flaky], ['failed', undefined])
+  assert.match(blocked!.message!, /^FLAKY s\/c@fake/)
+})
+
+test('JUnit replaces every character XML 1.0 cannot hold, and comparisons get a suite no suite can be named', () => {
+  const odd = `a\u000b\u000c\u000e\u001b\u001f\uFFFE\uFFFFz`
+  const xml = render('junit', report({ verdicts: [verdict({})], comparisons: [comparison({ a: odd, b: 'b' })] }))
+  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\uFFFE\uFFFF]/.test(xml), JSON.stringify(xml))
+  assert.ok(xml.includes('name="a\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFD\uFFFDz → b"'), xml)
+  assert.match(xml, /<testsuite name="litmus:comparisons" /)
+})
