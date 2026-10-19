@@ -31,24 +31,29 @@ const refused = (keys: string[], who: string) => ({
   path: ['params'],
 })
 
-export const ConfigDef = z.discriminatedUnion('provider', [
-  z.strictObject({ provider: z.literal('anthropic'), ...modelConfig }).refine(fallbackParams(['fallbacks']), refused(['fallbacks'], 'Anthropic')),
-  z
-    .strictObject({ provider: z.literal('bedrock'), ...modelConfig, region: z.string().min(1).optional() })
-    .refine(fallbackParams(['fallbacks']), refused(['fallbacks'], 'Anthropic')),
-  z
-    .strictObject({ provider: z.literal('openrouter'), ...modelConfig })
-    .refine(fallbackParams(['models', 'route']), refused(['models', 'route'], 'OpenRouter'))
-    // A router picks a different model per request, so it measures nothing in particular.
-    .refine(d => d.model !== 'openrouter/auto', { message: 'openrouter/auto picks a model per request; name the model to measure', path: ['model'] }),
-  z.strictObject({ provider: z.literal('fake'), model: z.string().default('fake') }),
-])
+const anthropic = z.strictObject({ provider: z.literal('anthropic'), ...modelConfig }).refine(fallbackParams(['fallbacks']), refused(['fallbacks'], 'Anthropic'))
+const bedrock = z
+  .strictObject({ provider: z.literal('bedrock'), ...modelConfig, region: z.string().min(1).optional() })
+  .refine(fallbackParams(['fallbacks']), refused(['fallbacks'], 'Anthropic'))
+const openrouter = z
+  .strictObject({ provider: z.literal('openrouter'), ...modelConfig })
+  .refine(fallbackParams(['models', 'route']), refused(['models', 'route'], 'OpenRouter'))
+  // A router picks a different model per request, so it measures nothing in particular.
+  .refine(d => d.model !== 'openrouter/auto', { message: 'openrouter/auto picks a model per request; name the model to measure', path: ['model'] })
+const fake = z.strictObject({ provider: z.literal('fake'), model: z.string().default('fake') })
+// The operator's own Claude subscription, through the token `claude setup-token`
+// mints. Only Claude Code takes it, so it runs harness cases and nothing else;
+// no params, since the harness passes none through.
+const claudeSubscription = z.strictObject({ provider: z.literal('claude-subscription'), model: z.string().min(1), effort: effort.optional() })
+
+export const ConfigDef = z.discriminatedUnion('provider', [anthropic, bedrock, openrouter, fake, claudeSubscription])
 export type ConfigDef = z.infer<typeof ConfigDef>
 
 // Judges and extractors are models too, and take exactly what a config takes:
 // a key that is wrong for the provider is refused, not silently ignored and
-// still folded into the judge's hash.
-export const JudgeDef = ConfigDef
+// still folded into the judge's hash. A subscription is not among them: a
+// judge is a Messages API call, which the token cannot make.
+export const JudgeDef = z.discriminatedUnion('provider', [anthropic, bedrock, openrouter, fake])
 export type JudgeDef = z.infer<typeof JudgeDef>
 
 export const ConfigFile = z.strictObject({

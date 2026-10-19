@@ -46,6 +46,16 @@ test('a judge is held to the same per-provider shape as a config', () => {
   assert.equal(judge({ provider: 'anthropic', model: 'm', region: 'us-east-1' }), false)
   assert.equal(judge({ provider: 'fake', effort: 'max' }), false)
   assert.equal(judge({ provider: 'anthropic' }), false)
+  // A judge is a Messages API call, which a subscription token cannot make.
+  assert.equal(judge({ provider: 'claude-subscription', model: 'claude-haiku-4-5' }), false)
+})
+
+test('claude-subscription takes a model and an effort, and no params, since the harness passes none through', () => {
+  const cfg = (c: Record<string, unknown>) => ConfigFile.safeParse({ suites: ['./s'], configs: { c } }).success
+  assert.equal(cfg({ provider: 'claude-subscription', model: 'claude-opus-5-5', effort: 'high' }), true)
+  assert.equal(cfg({ provider: 'claude-subscription' }), false)
+  assert.equal(cfg({ provider: 'claude-subscription', model: 'm', params: { temperature: 0 } }), false)
+  assert.equal(cfg({ provider: 'claude-subscription', model: 'm', region: 'us-east-1' }), false)
 })
 
 test('findings from a model may carry extra keys, but not miss or mistype required ones', () => {

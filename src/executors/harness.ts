@@ -213,7 +213,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   }
 
   if (!result) return done('infra_error', { reason: 'harness ended without a result message', retryable: true })
-  const usage = usageOf(result)
+  const usage = usageOf(result, job.config.provider !== 'claude-subscription')
   tx.usage(usage)
   // A turn that ended on an API error ("API Error: 529 ...") arrives as a
   // success result with is_error set, and its result text is the error, not
@@ -240,22 +240,25 @@ const FAILS_AGAIN_TEXT = /authentication|invalid (x-)?api[ -]key|permission|cred
 
 // Tokens from modelUsage, which covers every model call in the session:
 // subagents included. `usage` is the main loop only, and a review skill that
-// fans out to reviewers spends most of its tokens outside it.
-function usageOf(result: Extract<SDKMessage, { type: 'result' }>): Usage {
+// fans out to reviewers spends most of its tokens outside it. A subscription
+// is not billed per token, so its trials carry tokens and no cost: the SDK's
+// figure is an API price nobody paid.
+function usageOf(result: Extract<SDKMessage, { type: 'result' }>, billed: boolean): Usage {
+  const cost = billed ? { cost_usd: result.total_cost_usd } : {}
   const models = Object.values(result.modelUsage ?? {})
   if (models.length === 0) {
     const u = result.usage
     return {
       input_tokens: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0),
       output_tokens: u.output_tokens ?? 0,
-      cost_usd: result.total_cost_usd,
+      ...cost,
     }
   }
   const sum = (f: (m: (typeof models)[number]) => number) => models.reduce((n, m) => n + (f(m) ?? 0), 0)
   return {
     input_tokens: sum(m => m.inputTokens + m.cacheReadInputTokens + m.cacheCreationInputTokens),
     output_tokens: sum(m => m.outputTokens),
-    cost_usd: result.total_cost_usd,
+    ...cost,
   }
 }
 
@@ -285,14 +288,21 @@ function collect(job: ExecJob, final: string): Record<string, string> {
   return artifacts
 }
 
-// The one credential the harness's provider needs, or why there is none. A
-// claude.ai login is never used: an eval run on a subscription is billed and
-// rate-limited differently from the API runs it gets compared against.
-function credentials(job: ExecJob): Record<string, string> | string {
-  const env = process.env
+// The one credential the harness's provider needs, or why there is none. The
+// stored claude.ai login is never used: CLAUDE_CONFIG_DIR and HOME are the
+// attempt's own, so it is out of reach. A subscription comes in only as the
+// token the operator put in the environment, and only on claude-subscription,
+// so a run's config always says how it was billed.
+export function credentials(job: Pick<ExecJob, 'config'>, env: NodeJS.ProcessEnv = process.env): Record<string, string> | string {
   switch (job.config.provider) {
     case 'anthropic':
-      return env['ANTHROPIC_API_KEY'] ? { ANTHROPIC_API_KEY: env['ANTHROPIC_API_KEY'] } : 'the claude-code harness needs ANTHROPIC_API_KEY (a claude.ai login is never used)'
+      return env['ANTHROPIC_API_KEY'] ? { ANTHROPIC_API_KEY: env['ANTHROPIC_API_KEY'] } : 'the claude-code harness needs ANTHROPIC_API_KEY (for a Claude subscription, use provider claude-subscription)'
+    // Only the token: the scrubbed environment leaves ANTHROPIC_API_KEY out,
+    // which Claude Code would otherwise prefer to it.
+    case 'claude-subscription':
+      return env['CLAUDE_CODE_OAUTH_TOKEN']
+        ? { CLAUDE_CODE_OAUTH_TOKEN: env['CLAUDE_CODE_OAUTH_TOKEN'] }
+        : 'the claude-subscription provider needs CLAUDE_CODE_OAUTH_TOKEN (make one with `claude setup-token`)'
     case 'bedrock': {
       const out: Record<string, string> = { CLAUDE_CODE_USE_BEDROCK: '1' }
       const region = bedrockRegion(job.config, env)

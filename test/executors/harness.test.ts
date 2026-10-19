@@ -244,6 +244,31 @@ test('on bedrock, an empty AWS_REGION counts as unset and AWS_DEFAULT_REGION is 
   assert.equal(calls[0]?.env?.['CLAUDE_CODE_USE_BEDROCK'], '1')
 })
 
+test('on claude-subscription the session gets the token and never ANTHROPIC_API_KEY, which Claude Code would prefer; tokens carry no cost', async () => {
+  const { query, calls } = scripted([result()])
+  process.env['CLAUDE_CODE_OAUTH_TOKEN'] = 'sk-ant-oat-test'
+  let r
+  try {
+    r = await runHarness(job(HARNESS(), {}, { provider: 'claude-subscription', model: 'claude-opus-5-5' }), query)
+  } finally {
+    delete process.env['CLAUDE_CODE_OAUTH_TOKEN']
+  }
+  const env = calls[0]!.env!
+  assert.equal(env['CLAUDE_CODE_OAUTH_TOKEN'], 'sk-ant-oat-test')
+  assert.equal(process.env['ANTHROPIC_API_KEY'], 'sk-ant-test')
+  assert.equal(env['ANTHROPIC_API_KEY'], undefined)
+  assert.notEqual(env['CLAUDE_CONFIG_DIR'], undefined)
+  assert.deepEqual(r.usage, { input_tokens: 115, output_tokens: 20 })
+})
+
+test('on claude-subscription without CLAUDE_CODE_OAUTH_TOKEN nothing runs, and the reason says how to make one', async () => {
+  const { query, calls } = scripted([result()])
+  const r = await runHarness(job(HARNESS(), {}, { provider: 'claude-subscription', model: 'claude-opus-5-5' }), query)
+  assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
+  assert.match(r.reason ?? '', /needs CLAUDE_CODE_OAUTH_TOKEN \(make one with `claude setup-token`\)/)
+  assert.equal(calls.length, 0)
+})
+
 test('without an API key, or on a provider the harness cannot use, nothing runs', async () => {
   const { query, calls } = scripted([result()])
   delete process.env['ANTHROPIC_API_KEY']

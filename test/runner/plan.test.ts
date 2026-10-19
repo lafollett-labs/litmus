@@ -16,6 +16,7 @@ configs:
   anth: { provider: anthropic, model: claude-sonnet-5 }
   br: { provider: bedrock, model: anthropic.claude-sonnet-5 }
   br-here: { provider: bedrock, model: anthropic.claude-sonnet-5, region: us-east-1 }
+  sub: { provider: claude-subscription, model: claude-sonnet-5 }
 judges:
   jb: { provider: bedrock, model: anthropic.claude-sonnet-5 }
 `
@@ -56,10 +57,17 @@ test('a config or judge named like an Object property is unknown, not Object\'s'
   assert.equal(plan(['s/h'], ['constructor']), 'run')
 })
 
-test('a harness case runs on anthropic or bedrock, and is refused on any other provider', () => {
+test('a harness case runs on anthropic, bedrock or claude-subscription, and is refused on any other provider', () => {
   assert.equal(plan(['s/h'], ['anth']), 'run')
   assert.equal(plan(['s/h'], ['br-here']), 'run')
-  refused(['s/h'], ['fake'], {}, /s\/h is a harness case, which cannot run on config "fake" \(provider fake\)/)
+  assert.equal(plan(['s/h'], ['sub']), 'run')
+  refused(['s/h'], ['fake'], {}, /s\/h is a harness case, which cannot run on config "fake" \(provider fake\); the harness runs on anthropic, bedrock or claude-subscription$/)
+})
+
+test('a model case on claude-subscription is refused before the run: the token makes no Messages API call', () => {
+  refused(['s/m'], ['sub'], {}, /s\/m is a model case, which cannot run on config "sub" \(provider claude-subscription\); a subscription token runs only harness cases/)
+  refused(['s/h@sub#1', 's/m@sub#1'], ['sub'], {}, /s\/m is a model case/)
+  assert.equal(plan(['s/h@sub#1', 's/m@fake#1'], ['sub', 'fake']), 'run')
 })
 
 test('only the pairs the run would run are checked: a trial key pins its own config', () => {
