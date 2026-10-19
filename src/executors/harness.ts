@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { isMap, isScalar, parseDocument } from 'yaml'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
@@ -43,18 +43,21 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const creds = credentials(job)
   if (typeof creds === 'string') return refuse(creds)
 
-  const refused = harnessPreflight(job.case, job.workdir.dir, job.suiteRoots)
+  const refused = harnessPreflight(job.case, job.workdir.dir, job.suiteRoots, job.resultsDir)
   if (refused) return refuse(refused)
   const plugins = job.case.plugins
   const project = exec.setting_sources.includes('project')
   const subjectRoot = subjectRootOf(job.case)
   const { real, denyRoots, trapped } = roots(job.case, job.suiteRoots)
+  const store = storeRoots(job.resultsDir)
   const policy: GatePolicy = {
     workdir: realpathSync.native(job.workdir.dir),
     // A subject root inside a deny root is only a version for the harness, so
     // it simply is not readable.
     readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]).filter(r => !trapped(r)),
-    denyRoots: [...denyRoots, ...storeRoots(job.resultsDir)],
+    denyRoots,
+    storeRoots: store,
+    argMentions: plugins.some(p => pluginMentions(p, store).argFed),
     // Written mid-session, these would overwrite an artifact litmus writes
     // itself, or be read back as the session's own MCP config.
     protect: ['final_message.txt', ...(project ? ['.mcp.json'] : [])],
@@ -77,15 +80,22 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     return d
   }
 
-  // Every tool call the hook judged. A call that came back with a result the
-  // hook never saw ran past the gate: an SDK change, say. That voids the trial
-  // rather than grading it. A call refused before it ran (a tool not in the
-  // session) comes back as an error without asking the hook, and is fine.
-  const seen = new Set<string>()
+  // Every tool call the hook allowed. A call that came back with a result the
+  // hook never allowed ran past the gate: an SDK change, say. That voids the
+  // trial rather than grading it. A call refused before it ran (a tool not in
+  // the session, or one the hook denied) comes back as an error, and is fine.
+  const allowed = new Set<string>()
   const names = new Map<string, string>()
   let ungated: string | undefined
+  let breach: string | undefined
 
-  const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch)
+  const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch, { defuseMentions: true })
+  // What is left is the case author's own text, and Claude Code reads its @
+  // mentions too: one Read could not make is refused, not sent.
+  for (const mm of prompt.matchAll(MENTION)) {
+    const d = decide('Read', { file_path: mm[1] ?? mm[2]! }, policy)
+    if (!d.allow) return refuse(`the case prompt @-mentions ${mm[1] ?? mm[2]!}, which Claude Code would read past the gate (${d.reason})`)
+  }
   const clock = deadline(job.signal, job.case.settings.timeout_s * 1000)
   const options: Options = {
     cwd: job.workdir.dir,
@@ -126,8 +136,8 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
           hooks: [
             async input => {
               const i = input as { tool_name: string; tool_input: unknown; tool_use_id?: string }
-              if (i.tool_use_id) seen.add(i.tool_use_id)
               const d = gate(i.tool_name, (i.tool_input ?? {}) as Record<string, unknown>)
+              if (i.tool_use_id && d.allow) allowed.add(i.tool_use_id)
               return {
                 hookSpecificOutput: {
                   hookEventName: 'PreToolUse' as const,
@@ -169,16 +179,31 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
             names.set(block.id, block.name)
           }
         }
-      } else if (m.type === 'user' && Array.isArray(m.message.content)) {
+      }
+      if (m.type === 'user' && Array.isArray(m.message.content)) {
         for (const block of m.message.content) {
           if (typeof block === 'object' && block.type === 'tool_result') {
             // Redacted before it is stringified: escaping would hide a value holding " or \.
             const text = typeof block.content === 'string' ? block.content : JSON.stringify(job.redact.json(block.content ?? ''))
             tx.toolResult(block.tool_use_id, text, block.is_error === true)
-            if (block.is_error !== true && !seen.has(block.tool_use_id)) ungated ??= `${names.get(block.tool_use_id) ?? 'a tool'} (${block.tool_use_id})`
+            if (block.is_error !== true && !allowed.has(block.tool_use_id)) ungated ??= `${names.get(block.tool_use_id) ?? 'a tool'} (${block.tool_use_id})`
           }
         }
         if (ungated) break
+      }
+      // What Claude Code expanded into the session (a skill or command body)
+      // arrives as user text. An @ mention there that Read could not make was
+      // read anyway, past the gate: whatever expanded it, the trial is the
+      // subject's failure, never scored as a pass.
+      if (m.type === 'user') {
+        const content = m.message.content
+        for (const text of typeof content === 'string' ? [content] : content.flatMap(b => (typeof b === 'object' && b.type === 'text' ? [b.text] : []))) {
+          for (const mm of text.matchAll(MENTION)) {
+            const d = decide('Read', { file_path: mm[1] ?? mm[2]! }, policy)
+            if (!d.allow) breach ??= `@${mm[1] ?? mm[2]!} (${d.reason})`
+          }
+        }
+        if (breach) break
       } else if (m.type === 'result') {
         result = m
         resultAfterStop = clock.stopped() !== undefined
@@ -192,6 +217,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     clock.clear()
   }
   if (ungated) return done('infra_error', { reason: `the gate never saw ${ungated}, which ran anyway; the trial is void`, retryable: false })
+  if (breach) return done('model_failure', { reason: `the session read an @ mention outside the gate: ${breach}` })
   // The SDK may end the stream quietly, with an error result, or even with a
   // success after an abort: the clock's reason still decides, unless the
   // session had finished cleanly before it stopped.
@@ -345,7 +371,7 @@ function storeRoots(resultsDir: string): string[] {
 // Everything a harness case must pass before the SDK loads a thing, on the
 // workdir it would run in; `litmus validate` runs the same checks. Returns
 // why the case is refused, and what would fix it, or undefined.
-export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: string[]): string | undefined {
+export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: string[], resultsDir?: string): string | undefined {
   const exec = c.spec.executor
   if (exec.kind !== 'harness') return undefined
   const project = exec.setting_sources.includes('project')
@@ -353,8 +379,11 @@ export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: str
   // case has to say it accepts that (allow_hooks) before any of them load. The
   // scan runs either way: what allow_hooks waives is only those process
   // signals, never the gate's own checks (isolation, links, unparseable keys).
-  const found = [...c.plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks)), project ? fixtureRunsProcesses(workdir, exec.allow_hooks) : undefined].find(x => x !== undefined)
+  const store = resultsDir ? storeRoots(resultsDir) : []
+  const found = [...c.plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks, store)), project ? fixtureRunsProcesses(workdir, exec.allow_hooks) : undefined].find(x => x !== undefined)
   if (found) return `${found.reason}; ${found.fix}`
+  const mention = c.plugins.map(p => pluginMentions(p, store).refusal).find(x => x !== undefined)
+  if (mention) return mention
   if (project) {
     const bad = fixtureSettings(workdir)
     if (bad) return bad
@@ -373,7 +402,7 @@ export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: str
   return undefined
 }
 
-export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | undefined {
+export function pluginRunsProcesses(dir: string, allowHooks = false, store: string[] = []): Refusal | undefined {
   // The walk lstats everything below the root; the root itself is checked here.
   if (lstatSync(dir).isSymbolicLink()) return blocks(`plugin ${dir} is a symlink`, 'name the directory it points at')
   if (!allowHooks) for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return runs(`plugin ${dir} has ${f}`)
@@ -409,10 +438,67 @@ export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | 
       if (!paths) return blocks(`plugin ${dir}'s plugin.json ${key} is not a path or a list of paths`, 'give it paths inside the plugin')
       const outside = paths.find(p => !inside(resolve(dir, p), resolve(dir)))
       if (outside !== undefined) return blocks(`plugin ${dir}'s plugin.json points ${key} at ${outside}, outside the plugin`, 'keep every component inside the plugin directory')
+      const stored = paths.find(p => storeRel(dir, store).some(s => inside(resolve(dir, p), resolve(dir, s))))
+      if (stored !== undefined) return blocks(`plugin ${dir}'s plugin.json points ${key} at ${stored}, inside the run store`, 'keep components out of the results directory')
     }
   }
   // A plugin's .git is walked too: its manifest can point a component there.
-  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks)
+  // A run store inside it is not: the gate denies it, Claude Code never loads
+  // from it, and its artifacts are what subjects wrote.
+  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks, storeRel(dir, store))
+}
+
+// The store roots that lie inside dir, relative to it.
+function storeRel(dir: string, store: string[]): string[] {
+  const real = existsSync(dir) ? realpathSync.native(dir) : resolve(dir)
+  return store.filter(s => inside(s, real)).map(s => relative(real, s).split(sep).join('/'))
+}
+
+// Claude Code expands an @ mention in a skill, command or agent body by
+// reading the path itself, past the gate. A mention fixed in the body must
+// stay inside the plugin and never climb; one built from the skill's args
+// ("Review @$ARGUMENTS") makes the gate judge those args as a path; one
+// through any other variable is refused, since litmus cannot know where it
+// lands. Every markdown file in the plugin is read, as the process scan does.
+const MENTION = /(?:^|[\s([{'"`])@(?:"([^"\n]+)"|([^\s"'`]+))/g
+const ARGS = /\$(?:ARGUMENTS\b|\{ARGUMENTS\}|\d)/g
+
+export function pluginMentions(dir: string, store: string[] = []): { refusal?: string; argFed: boolean } {
+  const root = realpathSync.native(dir)
+  const skip = storeRel(dir, store)
+  let argFed = false
+  const visit = (d: string): string | undefined => {
+    for (const name of readdirSync(d).sort()) {
+      const path = join(d, name)
+      const rel = relative(root, path).split(sep).join('/')
+      if (skip.some(s => rel === s || rel.startsWith(`${s}/`))) continue
+      const st = lstatSync(path)
+      if (st.isDirectory()) {
+        const found = visit(path)
+        if (found) return found
+      } else if (st.isFile() && /\.md$/i.test(name)) {
+        for (const m of readFileSync(path, 'utf8').matchAll(MENTION)) {
+          const raw = m[1] ?? m[2]!
+          const t = raw.replace(/\$\{CLAUDE_PLUGIN_ROOT\}|\$CLAUDE_PLUGIN_ROOT\b/g, root)
+          const fixed = t.split('$')[0]!
+          const why = t.startsWith('~')
+            ? 'names a home path'
+            : t.split(/[\\/]/).includes('..')
+              ? 'climbs with ..'
+              : isAbsolute(fixed) && !inside(resolve(fixed), root)
+                ? 'names a path outside the plugin'
+                : t.replace(ARGS, '').includes('$')
+                  ? 'goes through a variable litmus cannot judge'
+                  : undefined
+          if (why) return `plugin ${dir}: ${rel} has an @ mention (@${raw}) that ${why}, and Claude Code reads it without asking the gate; mention a path inside the plugin, or have the skill Read it`
+          if (t.replace(ARGS, '') !== t) argFed = true
+        }
+      }
+    }
+    return undefined
+  }
+  const refusal = visit(root)
+  return refusal ? { refusal, argFed } : { argFed }
 }
 
 // Under project settings Claude Code discovers .claude/skills, agents and
@@ -423,12 +509,13 @@ function fixtureRunsProcesses(dir: string, allowHooks: boolean): Refusal | undef
   return treeRunsProcesses(dir, 'the fixture', rel => rel.split('/').some(seg => fold(seg) === '.claude'), true, allowHooks)
 }
 
-function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean, skipGit: boolean, allowHooks: boolean): Refusal | undefined {
+function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean, skipGit: boolean, allowHooks: boolean, skip: string[] = []): Refusal | undefined {
   const visit = (d: string): Refusal | undefined => {
     for (const name of readdirSync(d).sort()) {
       if (skipGit && fold(name) === '.git') continue
       const path = join(d, name)
       const rel = relative(root, path).split(sep).join('/')
+      if (skip.some(s => rel === s || rel.startsWith(`${s}/`))) continue
       const st = lstatSync(path)
       if (st.isSymbolicLink()) return blocks(`${who}: ${rel} is a symlink, which could point a component at a file this check never reads`, 'replace the link with the files it points at')
       // A FIFO or device named like a component would block whatever reads it.

@@ -69,6 +69,27 @@ test('a Skill call may carry no @: Claude Code reads an @ mention itself, withou
   }
 })
 
+test('when a loaded plugin feeds a skill\'s args into an @ mention, the args are judged as Read would judge the path', () => {
+  const p = { ...base, argMentions: true }
+  assert.ok(allowed('Skill', { skill: 'rev:files', args: 'src/a.ts' }, p))
+  assert.ok(allowed('Skill', { skill: 'rev:files', args: `${join(root, 'plugin/skills/review/SKILL.md')}` }, p))
+  for (const args of [join(root, 'case/truth.yaml'), '../case/truth.yaml', 'src/a.ts /etc/hosts', '"/etc/hosts"', '~/.aws/credentials']) {
+    const d = decide('Skill', { skill: 'rev:files', args }, p)
+    assert.equal(d.allow, false, args)
+    assert.match(!d.allow ? d.reason : '', /Skill args become an @ mention in a loaded plugin/)
+  }
+  // Without such a plugin, args are free text.
+  assert.ok(allowed('Skill', { skill: 'rev:files', args: '/etc/hosts' }))
+})
+
+test('the run store is denied with its own reason, even inside a read root', () => {
+  const p = { ...base, storeRoots: [join(root, 'plugin/skills')] }
+  const d = decide('Read', { file_path: join(root, 'plugin/skills/review/SKILL.md') }, p)
+  assert.match(!d.allow ? d.reason : '', /may not reach the run store/)
+  const g = decide('Grep', { pattern: 'x', path: join(root, 'plugin') }, p)
+  assert.match(!g.allow ? g.reason : '', /may not reach the run store/)
+})
+
 test('the session is given only the built-in tools the gate can allow, shell and network only when the case allows them', () => {
   const none = sessionTools({ allowShell: false, allowNetwork: false })
   assert.deepEqual(none.sort(), ['Agent', 'Edit', 'Glob', 'Grep', 'LS', 'MultiEdit', 'NotebookEdit', 'Read', 'Skill', 'Task', 'TodoWrite', 'Write'])
@@ -76,7 +97,7 @@ test('the session is given only the built-in tools the gate can allow, shell and
     const d = decide(t, {}, base)
     assert.ok(d.allow || !/not a tool litmus allows/.test(d.reason), t)
   }
-  assert.deepEqual(sessionTools({ allowShell: true, allowNetwork: true }).filter(t => !none.includes(t)).sort(), ['Bash', 'BashOutput', 'KillBash', 'KillShell', 'WebFetch', 'WebSearch'])
+  assert.deepEqual(sessionTools({ allowShell: true, allowNetwork: true }).filter(t => !none.includes(t)).sort(), ['Bash', 'BashOutput', 'KillBash', 'KillShell', 'TaskOutput', 'TaskStop', 'WebFetch', 'WebSearch'])
 })
 
 test('a pattern is judged from the tool\'s own search path', () => {

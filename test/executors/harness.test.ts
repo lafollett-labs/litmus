@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } fro
 import { dirname, join } from 'node:path'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
-import { runHarness, type Query } from '../../src/executors/harness.ts'
+import { pluginMentions, runHarness, type Query } from '../../src/executors/harness.ts'
 import { sessionTools } from '../../src/executors/gate.ts'
 import type { ExecJob } from '../../src/executors/types.ts'
 import { redactor, secretValues } from '../../src/core/redact.ts'
@@ -149,7 +149,7 @@ test('messages map onto the transcript, and the result onto usage, cost, final m
 })
 
 test('a key the subject prints or writes is redacted in the transcript, the live steps and every artifact', async () => {
-  const j = job(HARNESS())
+  const j = job(HARNESS('  allow_shell: true\n'))
   const steps: string[] = []
   j.emit = e => {
     if (e.type === 'trial.step') steps.push(e.step.summary)
@@ -297,7 +297,7 @@ test('the session sets permissionMode default and removes the tool classes the c
   const { query, calls } = scripted([result()])
   await runHarness(job(HARNESS()), query)
   assert.equal(calls[0]!.permissionMode, 'default')
-  assert.deepEqual(calls[0]!.disallowedTools, ['Bash', 'BashOutput', 'KillShell', 'KillBash', 'WebFetch', 'WebSearch'])
+  assert.deepEqual(calls[0]!.disallowedTools, ['Bash', 'BashOutput', 'KillShell', 'KillBash', 'TaskOutput', 'TaskStop', 'WebFetch', 'WebSearch'])
   await runHarness(job(HARNESS('  allow_shell: true\n')), query)
   assert.deepEqual(calls[1]!.disallowedTools, ['WebFetch', 'WebSearch'])
 })
@@ -341,6 +341,83 @@ test('the run store and its baselines are never readable, even inside a plugin r
   j.resultsDir = join(plugin, '.litmus/runs')
   await runHarness(j, query)
   assert.deepEqual(verdicts, ['allow', 'deny', 'deny', 'deny'])
+})
+
+const SKILL = (body: string) => `---\nname: s\ndescription: s\n---\n${body}\n`
+const plug = (body: string, extra: Record<string, string> = {}) => pluginTree({ '.claude-plugin/plugin.json': '{"name":"rev"}', 'skills/s/SKILL.md': SKILL(body), ...extra })
+
+test('an @ mention in a plugin body must stay inside the plugin; one built from args is marked, any other variable refused', () => {
+  for (const body of ['Read @/etc/hosts', 'see @~/.aws/credentials', 'ctx @../evals/s/cases/c/truth.yaml', 'ctx @${CLAUDE_PLUGIN_ROOT}/../evals/truth.yaml', 'ctx @$HOME/x', 'ctx @"/etc/a b"']) {
+    const r = pluginMentions(plug(body))
+    assert.match(r.refusal ?? '', /has an @ mention .* Claude Code reads it without asking the gate/, body)
+  }
+  for (const body of ['Review @$ARGUMENTS', 'Review @${ARGUMENTS}', 'Review @$1 and @$2', 'Review @${CLAUDE_PLUGIN_ROOT}/refs/$1']) {
+    assert.deepEqual(pluginMentions(plug(body)), { argFed: true }, body)
+  }
+  const p = plug('See @refs/guide.md and @${CLAUDE_PLUGIN_ROOT}/refs/guide.md; mail a@b.c; @Injectable()')
+  assert.deepEqual(pluginMentions(p), { argFed: false })
+  assert.deepEqual(pluginMentions(plug('x', { 'refs/abs.md': `@${join('/', 'tmp')}` })).refusal !== undefined, true, 'every markdown file is read')
+})
+
+test('a plugin whose body @-mentions outside it is refused before the session; one fed by args makes the gate judge Skill args', async () => {
+  const { query, calls } = scripted([result()])
+  const refused = await runHarness(job(HARNESS(`  plugins: [${plug('Read @/etc/hosts')}]\n`)), query)
+  assert.deepEqual([refused.exit, refused.retryable], ['infra_error', false])
+  assert.match(refused.reason ?? '', /@\/etc\/hosts\) that names a path outside the plugin/)
+  assert.equal(calls.length, 0)
+  const verdicts: string[] = []
+  const j = job(HARNESS(`  plugins: [${plug('Review @$ARGUMENTS')}]\n`))
+  const ask = scripted([result()], async o => {
+    const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
+    for (const args of ['a.go', join(j.case.dir, 'truth.yaml')]) {
+      const out = (await hook({ tool_name: 'Skill', tool_input: { skill: 'rev:s', args } } as never, undefined, { signal: new AbortController().signal })) as { hookSpecificOutput: { permissionDecision: string } }
+      verdicts.push(out.hookSpecificOutput.permissionDecision)
+    }
+  })
+  await runHarness(j, ask.query)
+  assert.deepEqual(verdicts, ['allow', 'deny'])
+})
+
+test('an @ mention Claude Code expanded into the session that Read could not make fails the trial', async () => {
+  const said = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] }, parent_tool_use_id: null }) as unknown as SDKMessage
+  const breached = await runHarness(job(HARNESS()), scripted([said('Base directory for this skill: /x\n\nReview the file @/etc/hosts'), result()]).query)
+  assert.equal(breached.exit, 'model_failure')
+  assert.match(breached.reason ?? '', /the session read an @ mention outside the gate: @\/etc\/hosts/)
+  const inside = await runHarness(job(HARNESS()), scripted([said('Review the file @a.go'), result()]).query)
+  assert.equal(inside.exit, 'ok')
+})
+
+test('a case prompt that @-mentions outside the gate is refused; @ in a rendered file is defused, never refused', async () => {
+  const { query, calls } = scripted([result()])
+  const own = await runHarness(job(HARNESS().replace('prompt: /review', 'prompt: "/review @/etc/hosts"')), query)
+  assert.match(own.reason ?? '', /the case prompt @-mentions \/etc\/hosts, which Claude Code would read past the gate/)
+  assert.equal(calls.length, 0)
+  const prompts: string[] = []
+  const q: Query = ({ prompt, options }) => (prompts.push(prompt), scripted([result()]).query({ prompt, options }))
+  const rendered = await runHarness(job(HARNESS().replace('prompt: /review', 'prompt: "{{fixture}}"'), { 'fixture/App.vue': "import X from '@/components/X.vue'\n" }), q)
+  assert.equal(rendered.exit, 'ok')
+  assert.ok(prompts[0]!.includes("'@\u2060/components/X.vue'"))
+})
+
+test('a hook denial that Claude Code ran anyway voids the trial: only allowed calls count as gated', async () => {
+  const call = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu9', name: 'Read', input: { file_path: '/etc/hosts' } }] }, parent_tool_use_id: null } as unknown as SDKMessage
+  const back = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu9', content: 'root', is_error: false }] }, parent_tool_use_id: null } as unknown as SDKMessage
+  const r = await runHarness(job(HARNESS()), scripted([call, back, result()]).query)
+  assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
+  assert.match(r.reason ?? '', /the gate never saw Read \(tu9\)/)
+})
+
+test('a run store inside a plugin is neither scanned nor a home for components: a subject\'s artifact there cannot refuse the plugin', async () => {
+  const store = '.litmus/runs/2026-10-19T00-00-00Z-a1b2/trials/s/c/opus/1/artifacts/notes.md'
+  const p = plug('x', { [store]: '---\nisolation: worktree\n---\nsee @/etc/hosts\n' })
+  const { query } = scripted([result()])
+  const j = job(HARNESS(`  plugins: [${p}]\n`))
+  j.resultsDir = join(p, '.litmus/runs')
+  assert.equal((await runHarness(j, query)).exit, 'ok')
+  const k = job(HARNESS(`  plugins: [${p}]\n`))
+  assert.match((await runHarness(k, query)).reason ?? '', /declares isolation/, 'the same file outside the store is refused')
+  writeFileSync(join(p, '.claude-plugin/plugin.json'), '{"name":"rev","skills":".litmus/runs"}')
+  assert.match((await runHarness(j, query)).reason ?? '', /points skills at \.litmus\/runs, inside the run store/)
 })
 
 test('the harness prompt is rendered with the model prompt\'s placeholders', async () => {

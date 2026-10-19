@@ -6,6 +6,8 @@ export type GatePolicy = {
   workdir: string // realpath'd by the caller once
   readRoots: string[] // plugin and subject roots: readable, never writable
   denyRoots: string[] // suite roots: never readable, even inside a read root
+  storeRoots?: string[] // the run store and its baselines: denied like a suite root, with their own reason
+  argMentions?: boolean // a loaded plugin puts a skill's args into an @ mention, so Skill args are judged as paths
   protect?: string[] // workdir-relative names never written, beside .git (final_message.txt, .mcp.json)
   protectSegments?: string[] // names that may not appear at any depth of a written path (.claude under project settings)
   allowShell: boolean
@@ -32,7 +34,8 @@ const ALWAYS = new Set(['TodoWrite'])
 // only in this session, so `isolation` (a git worktree mid-session, or a remote
 // agent outside the local gate) is refused.
 const SUBAGENT = new Set(['Agent', 'Task'])
-export const SHELL_TOOLS = ['Bash', 'BashOutput', 'KillShell', 'KillBash']
+// TaskOutput and TaskStop are what BashOutput and KillShell became.
+export const SHELL_TOOLS = ['Bash', 'BashOutput', 'KillShell', 'KillBash', 'TaskOutput', 'TaskStop']
 export const NETWORK_TOOLS = ['WebFetch', 'WebSearch']
 const SHELL = new Set(SHELL_TOOLS)
 const NETWORK = new Set(NETWORK_TOOLS)
@@ -62,8 +65,19 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
   // Claude Code expands an @path mention in a skill's arguments by reading
   // the path itself: no Read call, no hook, so the gate never sees it. A Skill
   // call may carry no @ at all; the subject can Read the file instead.
+  // A skill body can put the @ there itself ("Review @$ARGUMENTS"): when a
+  // loaded plugin does, args are judged as Read would judge the path they
+  // become, whole and word by word.
   if (tool === 'Skill') {
-    return JSON.stringify(input).includes('@') ? deny('Skill may not carry @: Claude Code reads an @ mention without asking the gate; Read the file instead') : { allow: true }
+    if (JSON.stringify(input).includes('@')) return deny('Skill may not carry @: Claude Code reads an @ mention without asking the gate; Read the file instead')
+    const args = typeof input['args'] === 'string' ? input['args'].trim() : ''
+    if (p.argMentions && args) {
+      for (const word of new Set([args, ...args.split(/\s+/)])) {
+        const d = judge('Read', { file_path: word.replace(/^(["'])(.*)\1$/, '$2') }, p)
+        if (!d.allow) return deny(`Skill args become an @ mention in a loaded plugin, so they are judged as a path: ${d.reason}`)
+      }
+    }
+    return { allow: true }
   }
   if (SUBAGENT.has(tool)) {
     return input['isolation'] === undefined || input['isolation'] === null ? { allow: true } : deny(`${tool} with isolation "${String(input['isolation'])}" runs outside this session's gate`)
@@ -107,7 +121,9 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
     if (!roots.some(r => inside(real, r))) {
       return deny(`${tool} may only ${writes ? 'write inside the workdir' : 'read the workdir or its plugin and subject roots'}: ${raw}`)
     }
-    if (p.denyRoots.some(r => inside(real, r) || (RECURSIVE.has(tool) && inside(r, real)))) return deny(`${tool} may not reach a suite root: ${raw}`)
+    const reach = (rs: string[] | undefined) => (rs ?? []).some(r => inside(real, r) || (RECURSIVE.has(tool) && inside(r, real)))
+    if (reach(p.denyRoots)) return deny(`${tool} may not reach a suite root: ${raw}`)
+    if (reach(p.storeRoots)) return deny(`${tool} may not reach the run store: ${raw}`)
     // Folded: a protected name may not exist yet, so realpath cannot supply its
     // on-disk case, and on a case-insensitive volume .CLAUDE is .claude.
     const guarded = writes ? protectedPaths.find(g => inside(fold(real), fold(g))) : undefined

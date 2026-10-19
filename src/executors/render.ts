@@ -7,21 +7,29 @@ import { walk } from '../sandbox/snapshot.ts'
 // Line numbers are part of the render because findings cite lines: a model
 // that has to count lines itself gets them wrong, and review-match then
 // scores a correct finding as a miss.
-export function renderPrompt(template: string, workdir: string, changePatch?: string): string {
-  return template.replace(/\{\{\s*(fixture|diff|file:([^}]+?))\s*\}\}/g, (_all, what: string, path?: string) => {
-    if (what === 'fixture') return [...walk(workdir)].map(f => numbered(relative(workdir, f).split(sep).join('/'), f)).join('\n')
-    if (what === 'diff') return changePatch ? readFileSync(changePatch, 'utf8') : ''
-    const abs = resolve(workdir, path!.trim())
-    // A template may only name files inside the workdir; "../truth.yaml" is
-    // exactly the leak the sandbox exists to prevent. Either mistake is the
-    // case author's, so it is a config error, not a crash.
-    if (abs !== workdir && !abs.startsWith(workdir + sep)) throw new ConfigError(`{{file:${path}}} points outside the workdir`)
-    try {
-      return numbered(path!.trim(), abs)
-    } catch (e) {
-      throw new ConfigError(`{{file:${path}}}: ${(e as Error).message}`)
-    }
-  })
+//
+// Claude Code reads any path the prompt @-mentions before the session starts,
+// past the gate, so for the harness the files rendered in are defused: a word
+// joiner after each @ that starts a word keeps it from reading as a mention
+// (Vue's "@/components" alias is everywhere) and is invisible to the model.
+export function renderPrompt(template: string, workdir: string, changePatch?: string, opts: { defuseMentions?: boolean } = {}): string {
+  const out = (s: string) => (opts.defuseMentions ? s.replace(/(^|[\s([{'"`])@/gm, '$1@\u2060') : s)
+  return template.replace(/\{\{\s*(fixture|diff|file:([^}]+?))\s*\}\}/g, (_all, what: string, path?: string) => out(render(what, workdir, changePatch, path)))
+}
+
+function render(what: string, workdir: string, changePatch: string | undefined, path: string | undefined): string {
+  if (what === 'fixture') return [...walk(workdir)].map(f => numbered(relative(workdir, f).split(sep).join('/'), f)).join('\n')
+  if (what === 'diff') return changePatch ? readFileSync(changePatch, 'utf8') : ''
+  const abs = resolve(workdir, path!.trim())
+  // A template may only name files inside the workdir; "../truth.yaml" is
+  // exactly the leak the sandbox exists to prevent. Either mistake is the
+  // case author's, so it is a config error, not a crash.
+  if (abs !== workdir && !abs.startsWith(workdir + sep)) throw new ConfigError(`{{file:${path}}} points outside the workdir`)
+  try {
+    return numbered(path!.trim(), abs)
+  } catch (e) {
+    throw new ConfigError(`{{file:${path}}}: ${(e as Error).message}`)
+  }
 }
 
 function numbered(name: string, path: string): string {

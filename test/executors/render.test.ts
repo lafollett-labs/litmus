@@ -15,6 +15,14 @@ test('{{fixture}} renders every file but .git, with paths and line numbers', () 
   assert.doesNotMatch(out, /secret/)
 })
 
+test('for the harness, every @ that starts a word in a rendered file is defused, and the template\'s own text is left alone', () => {
+  const dir = tree({ 'App.vue': "import X from '@/components/X.vue'\nsee @../truth.yaml\nmail a@b.c\n" })
+  const out = renderPrompt('Review @src/app {{fixture}}', dir, undefined, { defuseMentions: true })
+  assert.ok(out.startsWith('Review @src/app '))
+  assert.ok(out.includes("'@\u2060/components/X.vue'") && out.includes(' @\u2060../truth.yaml') && out.includes('a@b.c'))
+  assert.ok(!renderPrompt('{{fixture}}', dir).includes('\u2060'), 'the model executor renders files as they are')
+})
+
 test('{{diff}} renders the change, and {{file:...}} a single file', () => {
   const patch = join(tree({ 'change.patch': '+added' }), 'change.patch')
   assert.equal(renderPrompt('{{diff}}', dir, patch), '+added')
