@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { isMap, isScalar, parseDocument } from 'yaml'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
@@ -8,7 +8,8 @@ import { scrubbedEnv } from '../sandbox/env.ts'
 import { digest, readRegular, snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
 import { fold, inside } from '../core/paths.ts'
-import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
+import { baselinesFile } from '../store/store.ts'
+import { decide, NETWORK_TOOLS, SHELL_TOOLS, sessionTools, type GatePolicy } from './gate.ts'
 import { bedrockRegion } from '../providers/index.ts'
 import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
@@ -53,7 +54,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     // A subject root inside a deny root is only a version for the harness, so
     // it simply is not readable.
     readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]).filter(r => !trapped(r)),
-    denyRoots,
+    denyRoots: [...denyRoots, ...storeRoots(job.resultsDir)],
     // Written mid-session, these would overwrite an artifact litmus writes
     // itself, or be read back as the session's own MCP config.
     protect: ['final_message.txt', ...(project ? ['.mcp.json'] : [])],
@@ -76,6 +77,14 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     return d
   }
 
+  // Every tool call the hook judged. A call that came back with a result the
+  // hook never saw ran past the gate: an SDK change, say. That voids the trial
+  // rather than grading it. A call refused before it ran (a tool not in the
+  // session) comes back as an error without asking the hook, and is fine.
+  const seen = new Set<string>()
+  const names = new Map<string, string>()
+  let ungated: string | undefined
+
   const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch)
   const clock = deadline(job.signal, job.case.settings.timeout_s * 1000)
   const options: Options = {
@@ -84,6 +93,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     // case has not allowed are removed from the model's context as well as
     // refused by the gate.
     permissionMode: 'default',
+    tools: sessionTools(policy),
     disallowedTools: [...(exec.allow_shell ? [] : SHELL_TOOLS), ...(exec.allow_network ? [] : NETWORK_TOOLS)],
     model: 'model' in job.config ? job.config.model : 'fake',
     ...('effort' in job.config && job.config.effort ? { effort: job.config.effort } : {}),
@@ -115,7 +125,8 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
         {
           hooks: [
             async input => {
-              const i = input as { tool_name: string; tool_input: unknown }
+              const i = input as { tool_name: string; tool_input: unknown; tool_use_id?: string }
+              if (i.tool_use_id) seen.add(i.tool_use_id)
               const d = gate(i.tool_name, (i.tool_input ?? {}) as Record<string, unknown>)
               return {
                 hookSpecificOutput: {
@@ -155,6 +166,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
             final = block.text
           } else if (block.type === 'tool_use') {
             tx.toolCall(block.id, block.name, block.input)
+            names.set(block.id, block.name)
           }
         }
       } else if (m.type === 'user' && Array.isArray(m.message.content)) {
@@ -163,8 +175,10 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
             // Redacted before it is stringified: escaping would hide a value holding " or \.
             const text = typeof block.content === 'string' ? block.content : JSON.stringify(job.redact.json(block.content ?? ''))
             tx.toolResult(block.tool_use_id, text, block.is_error === true)
+            if (block.is_error !== true && !seen.has(block.tool_use_id)) ungated ??= `${names.get(block.tool_use_id) ?? 'a tool'} (${block.tool_use_id})`
           }
         }
+        if (ungated) break
       } else if (m.type === 'result') {
         result = m
         resultAfterStop = clock.stopped() !== undefined
@@ -177,6 +191,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   } finally {
     clock.clear()
   }
+  if (ungated) return done('infra_error', { reason: `the gate never saw ${ungated}, which ran anyway; the trial is void`, retryable: false })
   // The SDK may end the stream quietly, with an error result, or even with a
   // success after an abort: the clock's reason still decides, unless the
   // session had finished cleanly before it stopped.
@@ -316,6 +331,15 @@ function roots(c: LoadedCase, suiteRoots: string[]) {
   const denyRoots = real([...suiteRoots, c.dir, suiteDir, dirname(suiteDir)])
   const trapped = (r: string) => denyRoots.find(d => inside(r, d))
   return { real, denyRoots, trapped }
+}
+
+// The run store and the baselines file beside it: a trial.json there names
+// every bug an earlier trial matched. Denied by the gate rather than refused
+// like a suite root, since a plugin repo keeping its runs in .litmus/ is the
+// layout the docs suggest. A path not made yet is judged where it will be.
+function storeRoots(resultsDir: string): string[] {
+  const at = (p: string) => (existsSync(p) ? realpathSync.native(p) : existsSync(dirname(p)) ? join(realpathSync.native(dirname(p)), basename(p)) : resolve(p))
+  return [at(resultsDir), at(baselinesFile(resultsDir))]
 }
 
 // Everything a harness case must pass before the SDK loads a thing, on the

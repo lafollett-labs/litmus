@@ -22,7 +22,7 @@ test('claude-code writes a file in its workdir and nowhere else', { skip, timeou
   try {
     const r = await runHarness({
       key: 's/c@haiku#1', case: c, configName: 'haiku', config: { provider: 'anthropic', model: 'claude-haiku-4-5' },
-      trial: 1, attempt: 1, workdir, suiteRoots: [], out: { artifacts: join(out, 'a'), transcript: join(out, 't.jsonl') },
+      trial: 1, attempt: 1, workdir, suiteRoots: [], resultsDir: join(out, 'runs'), out: { artifacts: join(out, 'a'), transcript: join(out, 't.jsonl') },
       pricing: {}, emit: () => {}, redact: redactor(secretValues([])), signal: new AbortController().signal,
     })
     assert.equal(r.exit, 'ok', r.reason ?? 'no reason')

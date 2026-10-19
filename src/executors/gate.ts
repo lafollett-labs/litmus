@@ -26,7 +26,7 @@ const MAGIC = /[*?[{(]/
 const RECURSIVE = new Set(['Glob', 'Grep'])
 const WRITE: Record<string, string[]> = { Write: ['file_path'], Edit: ['file_path'], MultiEdit: ['file_path'], NotebookEdit: ['notebook_path'] }
 // Bookkeeping tools that take no path and start nothing.
-const ALWAYS = new Set(['TodoWrite', 'Skill'])
+const ALWAYS = new Set(['TodoWrite'])
 // Subagents are allowed because a subject's fan-out is part of what is being
 // measured, and their tool calls come back through this same gate. That holds
 // only in this session, so `isolation` (a git worktree mid-session, or a remote
@@ -36,6 +36,13 @@ export const SHELL_TOOLS = ['Bash', 'BashOutput', 'KillShell', 'KillBash']
 export const NETWORK_TOOLS = ['WebFetch', 'WebSearch']
 const SHELL = new Set(SHELL_TOOLS)
 const NETWORK = new Set(NETWORK_TOOLS)
+
+// The built-in tools a session is given at all, which is what the gate can
+// allow: every other tool Claude Code ships is left out of the session, so a
+// path inside Claude Code that skips the hook has nothing to reach.
+export function sessionTools(p: Pick<GatePolicy, 'allowShell' | 'allowNetwork'>): string[] {
+  return [...Object.keys(READ), ...Object.keys(WRITE), ...ALWAYS, 'Skill', ...SUBAGENT, ...(p.allowShell ? SHELL_TOOLS : []), ...(p.allowNetwork ? NETWORK_TOOLS : [])]
+}
 
 // Default-deny (docs/ARCHITECTURE.md § Executor). A tool this function does
 // not name is refused: a new tool Claude Code ships next month has to be
@@ -52,6 +59,12 @@ export function decide(tool: string, input: Record<string, unknown>, p: GatePoli
 
 function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Decision {
   if (ALWAYS.has(tool)) return { allow: true }
+  // Claude Code expands an @path mention in a skill's arguments by reading
+  // the path itself: no Read call, no hook, so the gate never sees it. A Skill
+  // call may carry no @ at all; the subject can Read the file instead.
+  if (tool === 'Skill') {
+    return JSON.stringify(input).includes('@') ? deny('Skill may not carry @: Claude Code reads an @ mention without asking the gate; Read the file instead') : { allow: true }
+  }
   if (SUBAGENT.has(tool)) {
     return input['isolation'] === undefined || input['isolation'] === null ? { allow: true } : deny(`${tool} with isolation "${String(input['isolation'])}" runs outside this session's gate`)
   }

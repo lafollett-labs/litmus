@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { decide, type GatePolicy } from '../../src/executors/gate.ts'
+import { decide, sessionTools, type GatePolicy } from '../../src/executors/gate.ts'
 import { tree } from '../helpers/tmp.ts'
 
 const root = realpathSync(tree({ 'work/src/a.ts': 'x', 'plugin/skills/review/SKILL.md': 'y', 'case/truth.yaml': 'secret' }))
@@ -58,6 +58,25 @@ test('subagents and bookkeeping tools are allowed; a tool the gate does not know
   const d = decide('SomeNewTool', {}, base)
   assert.equal(d.allow, false)
   assert.match(!d.allow ? d.reason : '', /not a tool litmus allows/)
+})
+
+test('a Skill call may carry no @: Claude Code reads an @ mention itself, without asking the gate', () => {
+  assert.ok(allowed('Skill', { skill: 'p:review', args: 'src/a.ts' }))
+  for (const input of [{ skill: 'loop', args: `@${root}/case/` }, { skill: 'run', args: 'look at @"a b.txt"' }, { skill: 'x', args: ['@/etc/hosts'] }, { skill: '@x' }]) {
+    const d = decide('Skill', input, base)
+    assert.equal(d.allow, false, JSON.stringify(input))
+    assert.match(!d.allow ? d.reason : '', /Skill may not carry @/)
+  }
+})
+
+test('the session is given only the built-in tools the gate can allow, shell and network only when the case allows them', () => {
+  const none = sessionTools({ allowShell: false, allowNetwork: false })
+  assert.deepEqual(none.sort(), ['Agent', 'Edit', 'Glob', 'Grep', 'LS', 'MultiEdit', 'NotebookEdit', 'Read', 'Skill', 'Task', 'TodoWrite', 'Write'])
+  for (const t of none) {
+    const d = decide(t, {}, base)
+    assert.ok(d.allow || !/not a tool litmus allows/.test(d.reason), t)
+  }
+  assert.deepEqual(sessionTools({ allowShell: true, allowNetwork: true }).filter(t => !none.includes(t)).sort(), ['Bash', 'BashOutput', 'KillBash', 'KillShell', 'WebFetch', 'WebSearch'])
 })
 
 test('a pattern is judged from the tool\'s own search path', () => {

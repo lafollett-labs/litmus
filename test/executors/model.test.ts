@@ -26,6 +26,7 @@ function job(yaml: string, files: Record<string, string>, signal = new AbortCont
     attempt: 1,
     workdir: buildWorkdir(c, { run: '2026-09-24T12-00-00Z-a1b2', key: 's/c@fake#1', attempt: 1 }, base),
     suiteRoots: [],
+    resultsDir: '/nonexistent/litmus-runs',
     out: { artifacts: join(out, 'artifacts'), transcript: join(out, 'transcript.jsonl') },
     pricing: {},
     emit: e => events.push(e),
