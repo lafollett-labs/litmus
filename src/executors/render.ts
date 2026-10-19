@@ -38,13 +38,13 @@ function numbered(name: string, path: string): string {
 // last; with no fence, the whole response if it is one JSON object. An earlier
 // fence is never fallen back to: it is a draft, or an example echoed from the
 // prompt ("pass": true), and a broken final answer is no answer. The fence
-// closes at a ``` that starts a line, as in CommonMark; JSON cannot hold a raw
+// closes at a ``` that starts a line, at any indent and whatever follows it; JSON cannot hold a raw
 // newline inside a string, so a code block quoted in a finding's fix or a
 // judge's rationale never ends it early, and the scan stays linear. A ``` at
 // the end of the JSON's own last line closes it too. Anything else is no
 // object at all, and the graders decide what that means.
 const OPENER = /```json[ \t]*\r?\n/g
-const CLOSER = /^[ \t]{0,3}```[ \t]*$/gm
+const CLOSER = /^[ \t]*```/gm
 
 export function extractJson(text: string): Record<string, unknown> | undefined {
   const opens = [...text.matchAll(OPENER)]

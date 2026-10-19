@@ -49,6 +49,10 @@ test('a json fence closes at the ``` that ends valid JSON, so a code block insid
   assert.deepEqual(extractJson('```json\n{"a":1}```'), { a: 1 })
   // Prose after the fence may hold braces of its own.
   assert.deepEqual(extractJson('```json\n{"a":1}\n```\nDone {ok}'), { a: 1 })
+  // A closer with prose after it, or indented deep in a list, still closes the fence.
+  assert.deepEqual(extractJson('```json\n{"a":1}\n``` see {x}'), { a: 1 })
+  assert.deepEqual(extractJson('- verdict:\n      ```json\n      {"a":1}\n      ```\nDone {ok}'), { a: 1 })
+  assert.deepEqual(extractJson('```json\n{"a":1}\n\t\t\t\t```'), { a: 1 })
 })
 
 test('a judge that echoes the prompt\'s example and then gives a broken verdict has said no', () => {

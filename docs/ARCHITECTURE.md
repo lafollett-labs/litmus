@@ -675,8 +675,8 @@ type ExecutorResult = {
   fenced block, otherwise, with no fence at all, the whole response if that
   parses as a JSON object. An earlier fence is never used: it is a draft or
   an example echoed from the prompt. The fence closes at a ```` ``` ```` that
-  starts a line, as in CommonMark (or one right after the JSON on its last
-  line). JSON cannot hold a raw newline inside a string, so a code block
+  starts a line, at any indent and with anything after it (or one right
+  after the JSON on its last line). JSON cannot hold a raw newline inside a string, so a code block
   quoted in a value does not cut the answer short. Extraction and judge
   replies are parsed the same way. When neither exists, `findings.json` is not written. A
   `json-schema` grader then fails the trial; it is not a model failure.
@@ -943,8 +943,8 @@ pairs = a maximum-cardinality one-to-one matching over candidates
         # then earliest bugs in truth order, then earliest findings
 
 for each unmatched finding:
-    if it overlaps a bug's window but is too wide to point at it:
-                                                 false positive  # it located nothing
+    if it is too wide to point at any bug whose window it overlaps,
+       and it covers no decoy:                   false positive  # it located nothing
     elif it is within window of a decoy:         decoy hit       # any severity
     elif it is within window of a matched bug:   duplicate       # a second report of a found bug
     elif truth.kind == seeded and its severity is info or low:
