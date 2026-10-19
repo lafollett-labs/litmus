@@ -80,6 +80,29 @@ Receipts at `51b4daa`:
 - `validate` reports 11 cases: 0 invalid, 1 warning.
 - 5 mutants were killed. One, decoy *window* in place of decoy *overlap*, first survived and was killed by a new test.
 
+## Review Round 3
+
+**Verdict:** 🔁 CHANGES REQUESTED at `ed168eb`. All findings are fixed in `a566cfb`, which round 4 reviews.
+
+| | |
+| - | - |
+| **Reviewer** | PE-Vue |
+| **Reviewed SHA** | `ed168eb` |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-004 | The decoy exception compared line numbers only, so a decoy in another file kept a too-wide finding out of `max_false_positives` | Fixed. `covers()` requires the same file. Test: an `x.go [1,60]` finding with the decoy in `y.go` is a false positive |
+| LOW-005 | `gap() === 0` counts a range that only touches the decoy | Fixed. The check is real overlap. Test: a range ending the line before the decoy is a false positive |
+| LOW-006 | `^` with the `m` flag starts a line after U+2028 or U+2029, which JSON allows raw in a string | Fixed. `CLOSER = /(?<![^\n])[ \t]*```/g`. Tests: both separators, and CRLF |
+| INFO-004 | Round-2 continuity | All resolved |
+
+Receipts at `a566cfb`:
+
+- `npm run check` exit 0.
+- `npm test` tests 605, pass 600, fail 0, skipped 5.
+- `validate` reports 11 cases: 0 invalid, 1 warning.
+- 4 of 4 new mutants were killed.
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
