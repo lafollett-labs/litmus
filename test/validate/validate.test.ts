@@ -119,7 +119,8 @@ test('a seeded review-match with no max_findings is a warning: a grid of finding
 })
 
 test('a decoy within review-match\'s window of a bug is a warning: a finding on the decoy would be credited to the bug', async () => {
-  const truth = (decoyLine: number) => `kind: seeded\nbugs:\n  - { id: b1, file: a.txt, lines: [1, 1], severity: high, category: correctness, summary: s, proof: "grep -qx fixed a.txt", fix: fix/b1.patch }\ndecoys:\n  - { id: d1, file: a.txt, lines: [${decoyLine}, ${decoyLine}], summary: s }\n`
+  // The decoy spells its file ./a.txt: scoring normalizes paths, so the check does too.
+  const truth = (decoyLine: number) => `kind: seeded\nbugs:\n  - { id: b1, file: a.txt, lines: [1, 1], severity: high, category: correctness, summary: s, proof: "grep -qx fixed a.txt", fix: fix/b1.patch }\ndecoys:\n  - { id: d1, file: ./a.txt, lines: [${decoyLine}, ${decoyLine}], summary: s }\n`
   const lines = 'broken\n' + 'x\n'.repeat(20)
   const fix = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-broken\n+fixed\n x\n'
   const at = (decoyLine: number) => ({ 'truth.yaml': truth(decoyLine), 'fixture/a.txt': lines, 'fix/b1.patch': fix })
