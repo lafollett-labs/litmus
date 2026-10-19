@@ -91,6 +91,9 @@ configs:
   sonnet-5-or:
     provider: openrouter
     model: anthropic/claude-sonnet-5
+  opus-5.5-sub:
+    provider: claude-subscription    # your own Claude plan; harness cases only
+    model: claude-opus-5-5
   fake:
     provider: fake
 
@@ -146,6 +149,18 @@ then `AWS_DEFAULT_REGION`, and an empty value counts as unset. With none of
 them set, a run that would use the config, or a judge on bedrock that a
 selected case calls, is refused with a config error (exit 2) before it
 starts. A config the run only names, with no trial on it, is not checked.
+
+`claude-subscription` runs harness cases on the operator's own Claude plan
+(Pro, Max, Team or Enterprise). It reads `CLAUDE_CODE_OAUTH_TOKEN`, the token
+`claude setup-token` prints, from the environment and nothing else: litmus has
+no login flow, stores no token, and never reads the stored claude.ai login.
+The token can't make a Messages API call, so a model case on this provider is
+refused with a config error (exit 2) before the run starts. A judge can't use
+it either, and its config takes only `model` and `effort`. Its trials record
+tokens and no cost, since a plan is not billed per token. The provider is in
+`run.json`, so a subscription run is never mistaken for one billed through the
+API. Plan limits are meant for individual use: keep `concurrency` low, since a
+rate-limited trial is an ERROR.
 
 ## Suite and case files
 
@@ -533,7 +548,8 @@ subject wrote into `.git/` ever runs.
   `go` runs in `command` graders and proofs (`GOTOOLCHAIN=local` makes a case
   that needs a newer Go fail instead of downloading one).
 - For the harness only: the credential variables its provider needs (for
-  `anthropic`, `ANTHROPIC_API_KEY`; for `bedrock`, the region as `AWS_REGION`,
+  `anthropic`, `ANTHROPIC_API_KEY`; for `claude-subscription`,
+  `CLAUDE_CODE_OAUTH_TOKEN` and never `ANTHROPIC_API_KEY`; for `bedrock`, the region as `AWS_REGION`,
   `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
   `AWS_BEARER_TOKEN_BEDROCK`, whichever are set, and with `AWS_PROFILE`, also
   `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`, defaulting to the
@@ -751,20 +767,23 @@ scrubbed environment and these settings:
     way, since they are the gate's own checks.
   - A plugin that lies inside a suite root is refused before the session
     starts: the gate would deny every read of its own files.
-- Credentials: `anthropic` requires `ANTHROPIC_API_KEY`, and a claude.ai login
-  is never used. `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS
+- Credentials: `anthropic` requires `ANTHROPIC_API_KEY`. `claude-subscription`
+  requires `CLAUDE_CODE_OAUTH_TOKEN` and leaves `ANTHROPIC_API_KEY` out, since
+  Claude Code would prefer the key to the token. The stored claude.ai login is
+  never used: `HOME` and `CLAUDE_CONFIG_DIR` are the attempt's own. `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS
   credential variables, including `AWS_BEARER_TOKEN_BEDROCK`. With
   `AWS_PROFILE`, it points `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`
   at the operator's own files, because `HOME` is redirected. A run that pairs
   a harness case with a config on any other provider (`openrouter`, `fake`)
-  is refused with a config error before it starts.
+  is refused with a config error before it starts, as is a model case on
+  `claude-subscription`.
 - `maxTurns` comes from the case, and the trial's timeout aborts the session.
 - **Result.** A turn that ends on an API error arrives as a `success` result
   with `is_error` set, and its text is the error. It is an `infra_error`,
   classified by `api_error_status` like any provider error, and never graded.
   Tokens come from `modelUsage`, which covers every model call in the session,
   subagents included; `usage` covers the main loop only. Cost is
-  `total_cost_usd`.
+  `total_cost_usd`, except on `claude-subscription`, where there is none.
 
 Every tool call passes through a default-deny gate. The gate is a PreToolUse
 hook, not only `canUseTool`: Claude Code approves read-only tools, and tools
@@ -1228,6 +1247,7 @@ run is given, because the harness reads its credentials from the process:
 - `AWS_SECRET_ACCESS_KEY`
 - `AWS_SESSION_TOKEN`
 - `AWS_BEARER_TOKEN_BEDROCK`
+- `CLAUDE_CODE_OAUTH_TOKEN`
 - every variable named in `redact`
 
 Redaction happens once, where events and records are produced, so events.jsonl,
