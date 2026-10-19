@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { isMap, isScalar, parseDocument } from 'yaml'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
@@ -57,7 +57,6 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]).filter(r => !trapped(r)),
     denyRoots,
     storeRoots: store,
-    argMentions: plugins.some(p => pluginMentions(p, store).argFed),
     // Written mid-session, these would overwrite an artifact litmus writes
     // itself, or be read back as the session's own MCP config.
     protect: ['final_message.txt', ...(project ? ['.mcp.json'] : [])],
@@ -87,15 +86,8 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const allowed = new Set<string>()
   const names = new Map<string, string>()
   let ungated: string | undefined
-  let breach: string | undefined
 
-  const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch, { defuseMentions: true })
-  // What is left is the case author's own text, and Claude Code reads its @
-  // mentions too: one Read could not make is refused, not sent.
-  for (const mm of prompt.matchAll(MENTION)) {
-    const d = decide('Read', { file_path: mm[1] ?? mm[2]! }, policy)
-    if (!d.allow) return refuse(`the case prompt @-mentions ${mm[1] ?? mm[2]!}, which Claude Code would read past the gate (${d.reason})`)
-  }
+  const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch)
   const clock = deadline(job.signal, job.case.settings.timeout_s * 1000)
   const options: Options = {
     cwd: job.workdir.dir,
@@ -122,6 +114,12 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
         CLAUDE_CONFIG_DIR: job.workdir.claudeConfig,
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+        // Claude Code reads every @path it expands (in the prompt, in a skill
+        // or command body, in a skill's args) by itself, with no tool call and
+        // no hook, so the gate never sees it. This turns those reads off. It
+        // is not in Claude Code's docs, so harness-e2e.test.ts proves it at
+        // every SDK version: each of those mentions reaches the model unread.
+        CLAUDE_CODE_DISABLE_ATTACHMENTS: '1',
         ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
         ...creds,
       },
@@ -191,20 +189,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
         }
         if (ungated) break
       }
-      // What Claude Code expanded into the session (a skill or command body)
-      // arrives as user text. An @ mention there that Read could not make was
-      // read anyway, past the gate: whatever expanded it, the trial is the
-      // subject's failure, never scored as a pass.
-      if (m.type === 'user') {
-        const content = m.message.content
-        for (const text of typeof content === 'string' ? [content] : content.flatMap(b => (typeof b === 'object' && b.type === 'text' ? [b.text] : []))) {
-          for (const mm of text.matchAll(MENTION)) {
-            const d = decide('Read', { file_path: mm[1] ?? mm[2]! }, policy)
-            if (!d.allow) breach ??= `@${mm[1] ?? mm[2]!} (${d.reason})`
-          }
-        }
-        if (breach) break
-      } else if (m.type === 'result') {
+      if (m.type === 'result') {
         result = m
         resultAfterStop = clock.stopped() !== undefined
       }
@@ -217,7 +202,6 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     clock.clear()
   }
   if (ungated) return done('infra_error', { reason: `the gate never saw ${ungated}, which ran anyway; the trial is void`, retryable: false })
-  if (breach) return done('model_failure', { reason: `the session read an @ mention outside the gate: ${breach}` })
   // The SDK may end the stream quietly, with an error result, or even with a
   // success after an abort: the clock's reason still decides, unless the
   // session had finished cleanly before it stopped.
@@ -382,8 +366,6 @@ export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: str
   const store = resultsDir ? storeRoots(resultsDir) : []
   const found = [...c.plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks, store)), project ? fixtureRunsProcesses(workdir, exec.allow_hooks) : undefined].find(x => x !== undefined)
   if (found) return `${found.reason}; ${found.fix}`
-  const mention = c.plugins.map(p => pluginMentions(p, store).refusal).find(x => x !== undefined)
-  if (mention) return mention
   if (project) {
     const bad = fixtureSettings(workdir)
     if (bad) return bad
@@ -452,53 +434,6 @@ export function pluginRunsProcesses(dir: string, allowHooks = false, store: stri
 function storeRel(dir: string, store: string[]): string[] {
   const real = existsSync(dir) ? realpathSync.native(dir) : resolve(dir)
   return store.filter(s => inside(s, real)).map(s => relative(real, s).split(sep).join('/'))
-}
-
-// Claude Code expands an @ mention in a skill, command or agent body by
-// reading the path itself, past the gate. A mention fixed in the body must
-// stay inside the plugin and never climb; one built from the skill's args
-// ("Review @$ARGUMENTS") makes the gate judge those args as a path; one
-// through any other variable is refused, since litmus cannot know where it
-// lands. Every markdown file in the plugin is read, as the process scan does.
-const MENTION = /(?:^|[\s([{'"`])@(?:"([^"\n]+)"|([^\s"'`]+))/g
-const ARGS = /\$(?:ARGUMENTS\b|\{ARGUMENTS\}|\d)/g
-
-export function pluginMentions(dir: string, store: string[] = []): { refusal?: string; argFed: boolean } {
-  const root = realpathSync.native(dir)
-  const skip = storeRel(dir, store)
-  let argFed = false
-  const visit = (d: string): string | undefined => {
-    for (const name of readdirSync(d).sort()) {
-      const path = join(d, name)
-      const rel = relative(root, path).split(sep).join('/')
-      if (skip.some(s => rel === s || rel.startsWith(`${s}/`))) continue
-      const st = lstatSync(path)
-      if (st.isDirectory()) {
-        const found = visit(path)
-        if (found) return found
-      } else if (st.isFile() && /\.md$/i.test(name)) {
-        for (const m of readFileSync(path, 'utf8').matchAll(MENTION)) {
-          const raw = m[1] ?? m[2]!
-          const t = raw.replace(/\$\{CLAUDE_PLUGIN_ROOT\}|\$CLAUDE_PLUGIN_ROOT\b/g, root)
-          const fixed = t.split('$')[0]!
-          const why = t.startsWith('~')
-            ? 'names a home path'
-            : t.split(/[\\/]/).includes('..')
-              ? 'climbs with ..'
-              : isAbsolute(fixed) && !inside(resolve(fixed), root)
-                ? 'names a path outside the plugin'
-                : t.replace(ARGS, '').includes('$')
-                  ? 'goes through a variable litmus cannot judge'
-                  : undefined
-          if (why) return `plugin ${dir}: ${rel} has an @ mention (@${raw}) that ${why}, and Claude Code reads it without asking the gate; mention a path inside the plugin, or have the skill Read it`
-          if (t.replace(ARGS, '') !== t) argFed = true
-        }
-      }
-    }
-    return undefined
-  }
-  const refusal = visit(root)
-  return refusal ? { refusal, argFed } : { argFed }
 }
 
 // Under project settings Claude Code discovers .claude/skills, agents and

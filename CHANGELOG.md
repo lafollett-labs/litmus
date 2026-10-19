@@ -16,11 +16,9 @@ change the config, the suite format or the CLI.
   `truth.yaml`, or read any file the operator can. The same read happened
   for an `@` mention in a plugin's skill or command body, in a body fed by
   the skill's args (`Review @$ARGUMENTS`), and in a file rendered into a
-  harness prompt. Now a Skill call carrying `@` is refused, a plugin body may
-  mention only paths inside the plugin, arg-fed skills have their args
-  judged as paths, rendered files are defused, and an expanded mention the
-  gate would refuse fails the trial. The session is given only the tools the
-  gate can allow.
+  harness prompt. The trial env now turns those reads off, and a mention
+  reaches the model as text. The session is given only the tools the gate
+  can allow.
 - **The run store is denied.** A plugin or subject root that held the
   results directory let a subject read earlier trials' `trial.json`, which
   names every matched bug. The store and `baselines.json` are now deny roots.

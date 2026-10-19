@@ -60,28 +60,6 @@ test('subagents and bookkeeping tools are allowed; a tool the gate does not know
   assert.match(!d.allow ? d.reason : '', /not a tool litmus allows/)
 })
 
-test('a Skill call may carry no @: Claude Code reads an @ mention itself, without asking the gate', () => {
-  assert.ok(allowed('Skill', { skill: 'p:review', args: 'src/a.ts' }))
-  for (const input of [{ skill: 'loop', args: `@${root}/case/` }, { skill: 'run', args: 'look at @"a b.txt"' }, { skill: 'x', args: ['@/etc/hosts'] }, { skill: '@x' }]) {
-    const d = decide('Skill', input, base)
-    assert.equal(d.allow, false, JSON.stringify(input))
-    assert.match(!d.allow ? d.reason : '', /Skill may not carry @/)
-  }
-})
-
-test('when a loaded plugin feeds a skill\'s args into an @ mention, the args are judged as Read would judge the path', () => {
-  const p = { ...base, argMentions: true }
-  assert.ok(allowed('Skill', { skill: 'rev:files', args: 'src/a.ts' }, p))
-  assert.ok(allowed('Skill', { skill: 'rev:files', args: `${join(root, 'plugin/skills/review/SKILL.md')}` }, p))
-  for (const args of [join(root, 'case/truth.yaml'), '../case/truth.yaml', 'src/a.ts /etc/hosts', '"/etc/hosts"', '~/.aws/credentials']) {
-    const d = decide('Skill', { skill: 'rev:files', args }, p)
-    assert.equal(d.allow, false, args)
-    assert.match(!d.allow ? d.reason : '', /Skill args become an @ mention in a loaded plugin/)
-  }
-  // Without such a plugin, args are free text.
-  assert.ok(allowed('Skill', { skill: 'rev:files', args: '/etc/hosts' }))
-})
-
 test('the run store is denied with its own reason, even inside a read root', () => {
   const p = { ...base, storeRoots: [join(root, 'plugin/skills')] }
   const d = decide('Read', { file_path: join(root, 'plugin/skills/review/SKILL.md') }, p)

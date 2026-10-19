@@ -7,14 +7,8 @@ import { walk } from '../sandbox/snapshot.ts'
 // Line numbers are part of the render because findings cite lines: a model
 // that has to count lines itself gets them wrong, and review-match then
 // scores a correct finding as a miss.
-//
-// Claude Code reads any path the prompt @-mentions before the session starts,
-// past the gate, so for the harness the files rendered in are defused: a word
-// joiner after each @ that starts a word keeps it from reading as a mention
-// (Vue's "@/components" alias is everywhere) and is invisible to the model.
-export function renderPrompt(template: string, workdir: string, changePatch?: string, opts: { defuseMentions?: boolean } = {}): string {
-  const out = (s: string) => (opts.defuseMentions ? s.replace(/(^|[\s([{'"`])@/gm, '$1@\u2060') : s)
-  return template.replace(/\{\{\s*(fixture|diff|file:([^}]+?))\s*\}\}/g, (_all, what: string, path?: string) => out(render(what, workdir, changePatch, path)))
+export function renderPrompt(template: string, workdir: string, changePatch?: string): string {
+  return template.replace(/\{\{\s*(fixture|diff|file:([^}]+?))\s*\}\}/g, (_all, what: string, path?: string) => render(what, workdir, changePatch, path))
 }
 
 function render(what: string, workdir: string, changePatch: string | undefined, path: string | undefined): string {
