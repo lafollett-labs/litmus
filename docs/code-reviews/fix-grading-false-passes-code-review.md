@@ -56,6 +56,30 @@ After the fixes, at `0ea2f2e`:
 - `validate` reports 11 cases: 0 invalid, 1 warning.
 - 6 new mutants were killed. The two that first survived, the line-closer path and the normPath compare, were killed by the tests added in `0ea2f2e`.
 
+## Review Round 2
+
+**Verdict:** 🔁 CHANGES REQUESTED at `5e5f3d9`. All findings are fixed in `51b4daa`, which round 3 reviews.
+
+| | |
+| - | - |
+| **Reviewer** | PE-Vue |
+| **Reviewed SHA** | `5e5f3d9` |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-003 | A wide finding that covered the decoy and reached a bug became a false positive, so it passed `max_decoy_hits: 0` | Fixed. A finding is a false positive for width only when it covers no decoy. Test: go-token-expiry's geometry is a decoy hit and FAILs its bounds |
+| LOW-003 | A duplicate of a wide bug beside a narrower bug became a false positive | Fixed. A finding is too wide only when it is too wide for every bug it is near. Test: it is a duplicate |
+| LOW-004 | The closer rejected deep indents and trailing text | Fixed. `CLOSER = /^[ \t]*```/gm`. Tests cover all three shapes |
+| INFO-002 | A blind grid still fits under `max_findings` in small fixtures | Noted as the documented limit. A confirm judge closes it |
+| INFO-003 | Round-1 continuity | All resolved |
+
+Receipts at `51b4daa`:
+
+- `npm run check` exit 0.
+- `npm test` tests 605, pass 600, fail 0, skipped 5.
+- `validate` reports 11 cases: 0 invalid, 1 warning.
+- 5 mutants were killed. One, decoy *window* in place of decoy *overlap*, first survived and was killed by a new test.
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
