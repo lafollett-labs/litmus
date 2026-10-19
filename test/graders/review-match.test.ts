@@ -110,6 +110,17 @@ test('an absolute path is stripped when graded end to end', async () => {
   assert.equal(r.pass, true, r.rationale ?? '')
 })
 
+test('a finding must point at the bug: one wider than the bug plus the window either side matches nothing', () => {
+  const truth = seeded([bug('b', T, [23, 25])], [decoy('d', T, [48, 50])])
+  // The bug is 3 lines; with window 5 a finding may span up to 13.
+  assert.equal(score(truth, [f(T, 18, 'high', 30)], 5).pairs.length, 1)
+  assert.equal(score(truth, [f(T, 18, 'high', 31)], 5).pairs.length, 0)
+  // A whole-file range used to match every bug and dodge the decoy beside it.
+  const wide = score(truth, [f(T, 1, 'high', 9999), f(T, 1, 'high', 9999)], 5)
+  assert.equal(wide.pairs.length, 0)
+  assert.deepEqual(wide.unmatched.map(u => u.as), ['decoy_hit', 'decoy_hit'])
+})
+
 test('decoy geometry: within the window of a decoy is a decoy hit at any severity; beyond it, a false positive', () => {
   const truth = seeded([bug('b', T, [10, 12])], [decoy('ctc', T, [60, 62])])
   const s = score(truth, [f(T, 66, 'info'), f(T, 70), f('other.go', 61), f(T, 58, 'critical')], 5)

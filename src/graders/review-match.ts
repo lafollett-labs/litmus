@@ -41,6 +41,9 @@ export function score(truth: TruthFile, findings: Finding[], window: number, wor
   const bs: Span[] = truth.bugs.map(b => ({ file: normPath(b.file), start: b.lines[0], end: b.lines[1] }))
   const ds: Span[] = truth.decoys.map(d => ({ file: normPath(d.file), start: d.lines[0], end: d.lines[1] }))
   const near = (f: Span, t: Span) => f.file === t.file && gap(f, t) <= window
+  // A finding has to point at the bug: one no wider than the bug plus the
+  // window either side. A range over the whole file overlaps every bug in it.
+  const points = (f: Span, b: Span) => near(f, b) && f.end - f.start <= b.end - b.start + 2 * window
 
   // The tie-breaks as a cost vector, compared lexicographically:
   //   [total gap, bug i matched (-1) for i in truth order, finding index matched to bug i]
@@ -51,7 +54,7 @@ export function score(truth: TruthFile, findings: Finding[], window: number, wor
   const candidates: Candidate[] = []
   bs.forEach((b, i) =>
     fs.forEach((f, j) => {
-      if (!near(f, b)) return
+      if (!points(f, b)) return
       const cost = new Array<number>(1 + 2 * nb).fill(0)
       cost[0] = gap(f, b)
       cost[1 + i] = -1

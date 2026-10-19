@@ -1,11 +1,11 @@
 Review this change to a TypeScript module. Report every bug the change introduces:
 correctness and security problems, not style.
 
-The package before the change:
+The code after the change, with the line numbers to cite:
 
 {{fixture}}
 
-The change:
+The change that produced it:
 
 {{diff}}
 

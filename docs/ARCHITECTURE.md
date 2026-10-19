@@ -661,7 +661,8 @@ type ExecutorResult = {
 
 - **Prompt.** The prompt can use three placeholders:
   - `{{fixture}}`: every file in the workdir apart from `.git/`, each with its
-    path and line numbers
+    path and line numbers. The workdir is the post-change tree (`fixture/`
+    with `change.patch` applied), so these are the line numbers truth cites
   - `{{diff}}`: the contents of `change.patch`
   - `{{file:<path>}}`: a single file from the workdir
 
@@ -671,8 +672,10 @@ type ExecutorResult = {
 - **System prompt.** The subject's content, when the case has a subject.
 - **Artifacts.** It always writes `response.txt`. It writes `findings.json`
   when the response has a JSON object to extract: the last ```` ```json ````
-  fenced block if there is one, otherwise the whole response if that parses
-  as a JSON object. When neither exists, `findings.json` is not written. A
+  fenced block that holds one, otherwise the whole response if that parses
+  as a JSON object. A fence closes at the first ```` ``` ```` after which its
+  text is valid JSON, so a code block inside a string value does not cut it
+  short. Extraction and judge replies are parsed the same way. When neither exists, `findings.json` is not written. A
   `json-schema` grader then fails the trial; it is not a model failure.
 - **Reason.** When the provider reports a stop reason, an `ok` trial records
   it as `reason: "stop_reason: <x>"`.
@@ -866,7 +869,9 @@ An extraction that yields nothing says why:
 - `to` could not be written, because a subject can plant a directory there.
 
 The graders then fail on the missing artifact, and the reason is recorded with
-the trial. The extracted findings are redacted before
+the trial. This is a FAIL, not an ERROR, on purpose: an ERROR leaves scoring,
+so a subject that could steer its extractor (or a judge) into a capped or
+garbled reply would turn its own failures into unscored trials. The extracted findings are redacted before
 they are written.
 
 ### Grader
@@ -928,6 +933,8 @@ It then pairs findings with bugs:
 
 ```
 candidates = (finding, bug) pairs in the same file (normalized path) with gap <= window
+             and finding width <= bug width + 2 × window   # a finding has to point at the bug,
+                                                          # so a whole-file range matches nothing
 pairs = a maximum-cardinality one-to-one matching over candidates
         # among the maximum matchings: smallest total gap,
         # then earliest bugs in truth order, then earliest findings
@@ -971,12 +978,16 @@ The `pass` bounds are `min_recall`, `max_false_positives`, `max_decoy_hits`,
 that is not set does not apply. Nor does a bound whose metric is null, such as
 `min_recall` on a clean case; its rationale says "n/a". A grade where no bound
 applied has checked nothing, so it fails. At load, a review-match must set a
-bound that can apply to its truth: on a clean case, one other than
-`min_recall` and `min_claims_correct`. More than 1,000 findings fail the grade
+bound that can fail on its truth: on a clean case, `max_false_positives`,
+`max_decoy_hits` or `max_findings`, since a clean case has nothing to recall or
+confirm and no nits or duplicates (validate warns when `max_nits` or
+`max_duplicates` is set there). More than 1,000 findings fail the grade
 rather than being matched. On a seeded case, the load-time rule is stricter:
-some review-match in the case must set `min_recall` above 0 or
-`min_claims_correct`, because with `max_*` bounds alone, or `min_recall: 0`, an
-empty review would pass at recall 0. Matching grows
+some review-match in the case must set `min_recall` above 0, because with
+`max_*` bounds alone, `min_recall: 0`, or `min_claims_correct` (n/a when
+nothing matched), an empty review would pass at recall 0. Validate warns when a
+decoy lies within a review-match's window of a bug: bugs are matched first, so
+a finding on that decoy is credited as finding the bug. Matching grows
 roughly with the cube of the bug count, so a case with dozens of bugs grades
 in seconds rather than milliseconds; the few seeded bugs a case usually has
 cost nothing.

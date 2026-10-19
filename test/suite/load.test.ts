@@ -351,20 +351,25 @@ test('a judge on the fake provider is refused at load: fake.yaml scripts the sub
 test('a review-match with no pass bound that can apply to its truth is refused at load', () => {
   const at = (truth: string, pass: string) =>
     tree({
-      'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\n',
+      'litmus.config.yaml': 'suites: [./suites]\nconfigs: { f: { provider: fake } }\njudges: { j: { provider: anthropic, model: m } }\n',
       'suites/s/suite.yaml': 'name: s\n',
       'suites/s/cases/c/case.yaml': `name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: ${pass} }]\n`,
       'suites/s/cases/c/truth.yaml': truth,
     })
   const seededTruth = 'kind: seeded\nbugs: [{ id: b, file: a.go, lines: [1, 1], severity: high, category: c, summary: s, proof: p, fix: fix/b.patch }]\n'
   const load = (root: string) => loadProject(join(root, 'litmus.config.yaml'))
-  assert.throws(() => load(at('kind: clean\n', '{ min_recall: 1 }')), /no pass bound that applies to a clean case \(set max_false_positives, say\)/)
+  assert.throws(() => load(at('kind: clean\n', '{ min_recall: 1 }')), /no pass bound that applies to a clean case \(set max_false_positives, max_decoy_hits or max_findings\)/)
   assert.throws(() => load(at('kind: clean\n', '{}')), /no pass bound/)
+  // A clean case has no nits and no duplicates, so these bounds can never fail.
+  assert.throws(() => load(at('kind: clean\n', '{ max_nits: 0 }')), /no pass bound/)
+  assert.throws(() => load(at('kind: clean\n', '{ max_duplicates: 0 }')), /no pass bound/)
   assert.doesNotThrow(() => load(at('kind: clean\n', '{ min_recall: 1, max_false_positives: 0 }')))
+  assert.doesNotThrow(() => load(at('kind: clean\n', '{ max_decoy_hits: 0 }')))
+  assert.doesNotThrow(() => load(at('kind: clean\n', '{ max_findings: 0 }')))
   const seeded = at(seededTruth, '{}')
   mkdirSync(join(seeded, 'suites/s/cases/c/fix'), { recursive: true })
   writeFileSync(join(seeded, 'suites/s/cases/c/fix/b.patch'), 'x')
-  assert.throws(() => load(seeded), /no review-match bounds finding the seeded bugs \(set min_recall above 0, or min_claims_correct\)/)
+  assert.throws(() => load(seeded), /no review-match bounds finding the seeded bugs \(set min_recall above 0\)/)
   writeFileSync(join(seeded, 'suites/s/cases/c/case.yaml'), 'name: c\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { max_false_positives: 0 } }]\n')
   assert.throws(() => load(seeded), /finding the seeded bugs/, 'max_* alone would pass an empty review at recall 0')
   const g = (pass: string) => `{ kind: review-match, pass: ${pass} }`
@@ -373,4 +378,7 @@ test('a review-match with no pass bound that can apply to its truth is refused a
   assert.throws(() => load(seeded), /finding the seeded bugs/, 'min_recall: 0 is no bound on finding them')
   graders(g('{ min_recall: 1 }'), g('{ max_decoy_hits: 0 }'))
   assert.doesNotThrow(() => load(seeded), 'recall bounded in one grader is enough')
+  // claims_correct is n/a when nothing matched, so it passes an empty review.
+  graders('{ kind: review-match, confirm: j, pass: { min_claims_correct: 1, max_false_positives: 0 } }')
+  assert.throws(() => load(seeded), /finding the seeded bugs/, 'min_claims_correct alone passes an empty review')
 })

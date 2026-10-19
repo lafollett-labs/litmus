@@ -34,19 +34,28 @@ function numbered(name: string, path: string): string {
   return `=== ${name} ===\n${lines.map((l, i) => `${String(i + 1).padStart(width)} | ${l}`).join('\n')}\n`
 }
 
-// The last ```json fence wins, because models reason first and answer last;
-// failing that, the whole response if it is one JSON object. Anything else is
-// no object at all, and the graders decide what that means.
+// The last ```json fence that holds an object wins, because models reason
+// first and answer last; failing that, the whole response if it is one JSON
+// object. A fence closes at the first ``` that ends valid JSON, not merely the
+// first ```: a finding's fix or a judge's rationale may hold a code block of
+// its own. Anything else is no object at all, and the graders decide what
+// that means.
 export function extractJson(text: string): Record<string, unknown> | undefined {
-  const fences = [...text.matchAll(/```json\s*\n([\s\S]*?)```/g)]
-  const candidates = fences.length ? [fences[fences.length - 1]![1]!] : [text.trim()]
-  for (const c of candidates) {
-    try {
-      const v: unknown = JSON.parse(c)
-      if (v !== null && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
-    } catch {
-      // not JSON: fall through to undefined
+  const opens = [...text.matchAll(/```json[ \t]*\r?\n/g)].map(m => m.index + m[0].length)
+  for (const start of opens.reverse()) {
+    for (let end = text.indexOf('```', start); end >= 0; end = text.indexOf('```', end + 3)) {
+      const v = jsonObject(text.slice(start, end))
+      if (v) return v
     }
   }
-  return undefined
+  return jsonObject(text.trim())
+}
+
+function jsonObject(s: string): Record<string, unknown> | undefined {
+  try {
+    const v: unknown = JSON.parse(s)
+    return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined
+  } catch {
+    return undefined // not JSON
+  }
 }
