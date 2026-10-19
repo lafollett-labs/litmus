@@ -52,7 +52,8 @@ export type ConfigDef = z.infer<typeof ConfigDef>
 // Judges and extractors are models too, and take exactly what a config takes:
 // a key that is wrong for the provider is refused, not silently ignored and
 // still folded into the judge's hash. A subscription is not among them: a
-// judge is a Messages API call, which the token cannot make.
+// judge calls the Messages API directly, and the token is for Claude Code
+// sessions only.
 export const JudgeDef = z.discriminatedUnion('provider', [anthropic, bedrock, openrouter, fake])
 export type JudgeDef = z.infer<typeof JudgeDef>
 

@@ -154,13 +154,19 @@ starts. A config the run only names, with no trial on it, is not checked.
 (Pro, Max, Team or Enterprise). It reads `CLAUDE_CODE_OAUTH_TOKEN`, the token
 `claude setup-token` prints, from the environment and nothing else: litmus has
 no login flow, stores no token, and never reads the stored claude.ai login.
-The token can't make a Messages API call, so a model case on this provider is
-refused with a config error (exit 2) before the run starts. A judge can't use
-it either, and its config takes only `model` and `effort`. Its trials record
+The token is for Claude Code sessions only, while model cases and judges call
+the Messages API directly, so a model case on this provider is refused with a
+config error (exit 2) before the run starts, and a judge can't use it. Its
+config takes only `model` and `effort`. If Claude Code reports that it chose
+an API key over the token (`apiKeySource` in its init message, as when
+managed settings supply one), the trial ends as a non-retried infra error
+rather than run on a key the operator didn't pick. Its trials record
 tokens and no cost, since a plan is not billed per token. The provider is in
 `run.json`, so a subscription run is never mistaken for one billed through the
 API. Plan limits are meant for individual use: keep `concurrency` low, since a
-rate-limited trial is an ERROR.
+rate-limited trial is an ERROR. Using a plan this way is between the operator
+and Anthropic, under the terms of their plan; litmus only hands the token they
+exported to Claude Code.
 
 ## Suite and case files
 

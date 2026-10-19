@@ -64,8 +64,8 @@ test('a harness case runs on anthropic, bedrock or claude-subscription, and is r
   refused(['s/h'], ['fake'], {}, /s\/h is a harness case, which cannot run on config "fake" \(provider fake\); the harness runs on anthropic, bedrock or claude-subscription$/)
 })
 
-test('a model case on claude-subscription is refused before the run: the token makes no Messages API call', () => {
-  refused(['s/m'], ['sub'], {}, /s\/m is a model case, which cannot run on config "sub" \(provider claude-subscription\); a subscription token runs only harness cases/)
+test('a model case on claude-subscription is refused before the run: the token is for Claude Code sessions only', () => {
+  refused(['s/m'], ['sub'], {}, /s\/m is a model case, which cannot run on config "sub" \(provider claude-subscription\); a subscription token is for Claude Code sessions only/)
   refused(['s/h@sub#1', 's/m@sub#1'], ['sub'], {}, /s\/m is a model case/)
   assert.equal(plan(['s/h@sub#1', 's/m@fake#1'], ['sub', 'fake']), 'run')
 })

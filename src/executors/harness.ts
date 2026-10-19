@@ -158,6 +158,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
 
   let final = ''
   let result: Extract<SDKMessage, { type: 'result' }> | undefined
+  let wrongCredential: string | undefined
   let resultAfterStop = false // the SDK can still deliver a success once the abort has fired
   // A harness timeout is the subject's session running long: a model failure,
   // graded for metrics like max_turns, so it keeps what the subject wrote.
@@ -191,6 +192,12 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
         }
         if (ungated) break
       }
+      if (m.type === 'system' && m.subtype === 'init' && job.config.provider === 'claude-subscription' && m.apiKeySource !== 'none') {
+        // Managed settings can hand Claude Code an API key, which it ranks
+        // above the token: the run would bill a key nobody chose.
+        wrongCredential = m.apiKeySource
+        break
+      }
       if (m.type === 'result') {
         result = m
         resultAfterStop = clock.stopped() !== undefined
@@ -204,6 +211,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     clock.clear()
   }
   if (ungated) return done('infra_error', { reason: `the gate never saw ${ungated}, which ran anyway; the trial is void`, retryable: false })
+  if (wrongCredential) return done('infra_error', { reason: `Claude Code chose ${wrongCredential} over CLAUDE_CODE_OAUTH_TOKEN (managed settings?); the trial would not run on your plan`, retryable: false })
   // The SDK may end the stream quietly, with an error result, or even with a
   // success after an abort: the clock's reason still decides, unless the
   // session had finished cleanly before it stopped.

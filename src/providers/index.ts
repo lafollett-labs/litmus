@@ -45,7 +45,7 @@ export function createProvider(def: ConfigDef | JudgeDef, env: NodeJS.ProcessEnv
       return fakeProvider()
     case 'claude-subscription':
       // Refused before a run starts (planRun); this is the backstop.
-      throw new ConfigError(`claude-subscription ${def.model} runs only harness cases: a subscription token cannot make a Messages API call`)
+      throw new ConfigError(`claude-subscription ${def.model} runs only harness cases: a subscription token is for Claude Code sessions only`)
   }
 }
 

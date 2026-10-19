@@ -93,7 +93,7 @@ function runnable(config: Config, configs: string[], selection: Selection, only:
       throw new ConfigError(`${c.id} is a harness case, which cannot run on config "${name}" (provider ${def.provider}); the harness runs on ${HARNESS_PROVIDERS.slice(0, -1).join(', ')} or ${HARNESS_PROVIDERS.at(-1)}`)
     }
     if (def && c.spec.executor.kind !== 'harness' && HARNESS_ONLY.includes(def.provider)) {
-      throw new ConfigError(`${c.id} is a ${c.spec.executor.kind} case, which cannot run on config "${name}" (provider ${def.provider}); a subscription token runs only harness cases`)
+      throw new ConfigError(`${c.id} is a ${c.spec.executor.kind} case, which cannot run on config "${name}" (provider ${def.provider}); a subscription token is for Claude Code sessions only`)
     }
   }
   for (const j of new Set(pairs.flatMap(p => judgesOf(p.c)))) {
