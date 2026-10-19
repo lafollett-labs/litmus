@@ -53,6 +53,9 @@ test('a json fence closes at the ``` that ends valid JSON, so a code block insid
   assert.deepEqual(extractJson('```json\n{"a":1}\n``` see {x}'), { a: 1 })
   assert.deepEqual(extractJson('- verdict:\n      ```json\n      {"a":1}\n      ```\nDone {ok}'), { a: 1 })
   assert.deepEqual(extractJson('```json\n{"a":1}\n\t\t\t\t```'), { a: 1 })
+  assert.deepEqual(extractJson('```json\r\n{"a":1}\r\n```\r\n'), { a: 1 })
+  // JSON may hold a raw U+2028 or U+2029 in a string; a ``` after one is inside it.
+  for (const sep of ['\u2028', '\u2029']) assert.deepEqual(extractJson(`\`\`\`json\n{"r":"a${sep}\`\`\`b"}\n\`\`\``), { r: `a${sep}\`\`\`b` })
 })
 
 test('a judge that echoes the prompt\'s example and then gives a broken verdict has said no', () => {

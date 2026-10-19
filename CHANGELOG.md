@@ -35,7 +35,7 @@ change the config, the suite format or the CLI.
   numbers to cite. The prompts are part of the case hash, so comparisons
   against runs before this change exclude these three cases.
 - A finding too wide to point at any bug it is near is a false positive,
-  unless it covers a decoy, which makes it a decoy hit. The example prompts ask for the narrowest range, and the
+  unless it overlaps a decoy in its file, which makes it a decoy hit. The example prompts ask for the narrowest range, and the
   example seeded cases set `max_findings`.
 - `litmus validate` warns when a decoy lies within a review-match window of
   a bug, when a seeded review-match sets no `max_findings` (a grid of nits

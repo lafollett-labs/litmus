@@ -44,7 +44,9 @@ function numbered(name: string, path: string): string {
 // the end of the JSON's own last line closes it too. Anything else is no
 // object at all, and the graders decide what that means.
 const OPENER = /```json[ \t]*\r?\n/g
-const CLOSER = /^[ \t]*```/gm
+// After \n only: JSON may hold a raw U+2028 or U+2029 in a string, and ^ with
+// the m flag would start a line there.
+const CLOSER = /(?<![^\n])[ \t]*```/g
 
 export function extractJson(text: string): Record<string, unknown> | undefined {
   const opens = [...text.matchAll(OPENER)]

@@ -122,8 +122,12 @@ test('a finding must point at the bug: one wider than the bug plus the window ei
   assert.deepEqual(wide.unmatched.map(u => u.as), ['decoy_hit', 'decoy_hit'])
   // Too wide over the bug and clear of the decoy: a false positive.
   assert.deepEqual(score(truth, [f(T, 1, 'high', 40)], 5).unmatched.map(u => u.as), ['false_positive'])
-  // Within the window of the decoy but not over it: it flagged nothing there either.
+  // Within the window of the decoy but not over it, even ending the line before: it flagged nothing there either.
   assert.deepEqual(score(truth, [f(T, 1, 'high', 44)], 5).unmatched.map(u => u.as), ['false_positive'])
+  assert.deepEqual(score(truth, [f(T, 1, 'high', 47)], 5).unmatched.map(u => u.as), ['false_positive'])
+  // Over the lines of a decoy in another file: still a false positive.
+  const other = seeded([bug('b', 'x.go', [23, 25])], [decoy('d', 'y.go', [48, 50])])
+  assert.deepEqual(score(other, [f('x.go', 23, 'high', 25), f('x.go', 1, 'high', 60)], 5).unmatched.map(u => u.as), ['false_positive'])
   // Too wide, but over no bug: classified as before.
   assert.deepEqual(score(truth, [f(T, 40, 'high', 60)], 5).unmatched.map(u => u.as), ['decoy_hit'])
 })
