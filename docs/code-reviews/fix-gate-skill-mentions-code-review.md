@@ -64,6 +64,35 @@ After the fixes, at `9d2c8e5`:
 - `validate` reports 11 cases: 0 invalid, 1 warning.
 - 16 of 16 new mutants are killed.
 
+## Review Round 2
+
+**Verdict:** 🚫 BLOCKED at `dfc0353`. All findings are fixed in `026f78d`, which round 3 reviews.
+
+| | |
+| - | - |
+| **Reviewer** | PE-Vue |
+| **Reviewed SHA** | `dfc0353` |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| HIGH-101 | An `@` after `。`, `、`, `？` or `！` is expanded, and every layer missed it, in rendered files and plugin bodies alike | Fixed by a redesign. Matching Claude Code's mention grammar can't be won, so the trial env sets `CLAUDE_CODE_DISABLE_ATTACHMENTS=1`, which stops Claude Code reading any mention it expands. Probes on the real binary found no leak with it set, against a leak without it, for: a directory listing, a rendered fixture, the prompt text, a plugin body (absolute path and arg-fed), quoted args and the CJK forms. The skill bodies still reach the model |
+| HIGH-102 | The backstop false-FAILed a subagent prompt naming `@/components` | Fixed: the backstop is removed. Nothing is read, so there is nothing to catch |
+| MEDIUM-101 | Arg judging parsed quotes and `${CLAUDE_PLUGIN_ROOT}/$ARGUMENTS` differently from Claude Code | Fixed: arg judging is removed. Skill is allowed; its args are read as text |
+| MEDIUM-102 | The plugin scan refused Vue aliases, `@~/…` and `@$VAR` that name no real path | Fixed: the plugin mention scan is removed |
+| LOW-101 | Fixture `.claude` skills were not scanned | Fixed by the same switch. A fixture's settings may set only `$schema`, so its `env` cannot turn the switch back on, and `.claude` writes stay refused under project settings |
+| INFO-101 | Round-1 continuity | Noted. The store, allowed-ids and offered-tools fixes stand |
+
+e2e at `026f78d`: three real-binary tests. One covers every way out (Skill `@` args, Read, Glob, a subagent's Read) and adds a listing canary. One checks the offered tools. One shows no mention is read from a plugin body, arg-fed and quoted args, the CJK form, the prompt text, or a rendered fixture.
+
+Receipts at `026f78d`:
+
+- `npm run check` exit 0.
+- `npm test` tests 607, pass 602, fail 0, skipped 5.
+- `node --test test/executors/harness-e2e.test.ts` tests 3, pass 3, fail 0, skipped 0.
+- `validate` reports 11 cases: 0 invalid, 1 warning.
+- Mutant (the switch renamed): 3 tests fail, both mention e2e tests and the env unit test.
+- Mutant (Skill dropped from the allowed set): 3 tests fail.
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
