@@ -13,9 +13,14 @@ change the config, the suite format or the CLI.
   Claude Code expands an `@path` mention in a skill's arguments by reading the
   path itself, without asking the PreToolUse gate. With skills Claude Code
   bundles, a harness subject could list the case directory, read
-  `truth.yaml`, or read any file the operator can. A Skill call that carries
-  `@` is now refused, and the session is given only the tools the gate can
-  allow.
+  `truth.yaml`, or read any file the operator can. The same read happened
+  for an `@` mention in a plugin's skill or command body, in a body fed by
+  the skill's args (`Review @$ARGUMENTS`), and in a file rendered into a
+  harness prompt. Now a Skill call carrying `@` is refused, a plugin body may
+  mention only paths inside the plugin, arg-fed skills have their args
+  judged as paths, rendered files are defused, and an expanded mention the
+  gate would refuse fails the trial. The session is given only the tools the
+  gate can allow.
 - **The run store is denied.** A plugin or subject root that held the
   results directory let a subject read earlier trials' `trial.json`, which
   names every matched bug. The store and `baselines.json` are now deny roots.

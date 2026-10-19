@@ -80,7 +80,7 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
     try {
       // On the tree the harness would get, before proof/ is laid over it: a
       // run never shows the subject proof/.
-      const refused = harnessPreflight(c, wd.dir, config.roots)
+      const refused = harnessPreflight(c, wd.dir, config.roots, config.resultsDir)
       if (refused) say('error', refused)
       for (const m of truthRefs(c, wd.dir)) say('error', m)
       // lstat: a dangling proof link is still a link, and refused as one.

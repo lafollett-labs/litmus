@@ -761,10 +761,10 @@ Every tool call passes through a default-deny gate. The gate is a PreToolUse
 hook, not only `canUseTool`: Claude Code approves read-only tools, and tools
 that settings allow, without ever asking `canUseTool`, while a PreToolUse hook
 fires on every call, subagents' included. The harness checks that this holds:
-a tool call that comes back with a result the hook never judged ends the trial
-as a non-retried `infra_error` ("the gate never saw …"). A call Claude Code
-refused before running it, such as a tool not in the session, comes back as an
-error and is not counted. `test/executors/harness-e2e.test.ts` runs the real
+a tool call that comes back with a result the hook never allowed ends the
+trial as a non-retried `infra_error` ("the gate never saw …"). A call Claude
+Code refused before running it, such as a tool not in the session or one the
+hook denied, comes back as an error and is not counted. `test/executors/harness-e2e.test.ts` runs the real
 Claude Code binary against a local fake Messages API ($0) to prove the gate
 holds, and an Agent SDK bump has to pass it.
 
@@ -774,10 +774,27 @@ holds, and an Agent SDK bump has to pass it.
 | Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` or `final_message.txt`. Under `setting_sources: [project]`, also not `.mcp.json`, and not under a `.claude/` directory at any depth: Claude Code discovers `.claude/` skills, agents and commands between a touched file and the cwd, so the session would load them as its own config |
 | Agent, Task (subagents) | With no `isolation`. Their tool calls pass through the same gate; a worktree or remote agent would not |
 | TodoWrite | Always |
-| Skill | Its input holds no `@` anywhere. Claude Code expands an `@path` mention in a skill's arguments by reading the path itself, which no hook sees, so a subject that wants a file reads it with Read |
+| Skill | Its input holds no `@` anywhere. Claude Code expands an `@path` mention in a skill's arguments by reading the path itself, which no hook sees, so a subject that wants a file reads it with Read. This also refuses args such as `HEAD@{1}` or `@scope/pkg`. When a loaded plugin's body builds an `@` mention from its args (`@$ARGUMENTS`, `@$1`), the args are also judged as Read would judge the path they become, whole and word by word |
 | Bash, BashOutput, KillShell, KillBash | `allow_shell: true` |
 | WebFetch, WebSearch, `mcp__*` | `allow_network: true` (`mcp__*` also needs `allow_hooks: true`) |
 | Anything else | Never |
+
+Claude Code reads every `@path` mention it expands, in the prompt and in a
+skill, command or agent body, before or outside any tool call. So:
+
+- A plugin's markdown may `@`-mention only paths inside the plugin, through
+  `${CLAUDE_PLUGIN_ROOT}` or relative and without `..`, or the skill's args.
+  A mention of an absolute path outside it, a home path, a `..`, or any
+  other variable refuses the case before the session starts.
+- Files rendered into a harness prompt by `{{fixture}}`, `{{diff}}` and
+  `{{file:…}}` have a word joiner (U+2060) put after every `@` that starts a
+  word, so a mention there (Vue's `@/components`, say) is not read. The
+  model executor renders them unchanged. An `@` mention in the case's own
+  prompt text that Read would refuse refuses the trial.
+- What Claude Code expands into the session comes back as user text. An `@`
+  mention there that Read would refuse ends the trial as a `model_failure`:
+  the read already happened, so the trial is failed, never scored as a pass,
+  and never turned into an unscored ERROR.
 
 Every refusal is written to the transcript. The trial's artifacts are:
 
@@ -791,8 +808,11 @@ it evaluates therefore stays out of reach.
 The case's own directory, its suite and its suite root are always deny roots,
 whatever the runner passes. So are the run store (`results`) and the
 `baselines.json` beside it, since an earlier trial's `trial.json` names every
-bug it matched. They are denied rather than refused like a suite root inside a
-plugin, so a plugin repo can keep its runs in `.litmus/`. The gate fails closed: a call it cannot judge (an
+bug it matched ("may not reach the run store"). They are denied rather than
+refused like a suite root inside a plugin, so a plugin repo can keep its runs
+in `.litmus/`. The plugin checks skip a store inside the plugin, since its
+artifacts are what subjects wrote, and a manifest may not point a component
+into it. The gate fails closed: a call it cannot judge (an
 unreadable path, a path through a file) is a denial with the error as its
 reason. Paths are compared by their on-disk case (`realpath.native`), and names
 that may not exist yet are compared case-folded, so a case variant on a

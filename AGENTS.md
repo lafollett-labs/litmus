@@ -32,8 +32,9 @@ Tests never spend money. They use the fake provider, a mocked SDK, a mocked
 `fetch`, a scripted `query()` stream, or the real Claude Code binary against a
 fake Messages API on 127.0.0.1. Live tests run only when `LITMUS_LIVE=1`.
 
-An Agent SDK bump changes the sandbox: its PR must show
-`node --test test/executors/harness-e2e.test.ts` passing.
+A PR that changes the `@anthropic-ai/claude-agent-sdk` version shows
+`source ~/.nvm/nvm.sh && nvm use && node --test test/executors/harness-e2e.test.ts`
+with `fail 0` and `skipped 0`.
 
 | A trial stopped because of | `exit` | Retried | Trial status |
 | - | - | - | - |
