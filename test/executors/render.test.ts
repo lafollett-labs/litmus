@@ -3,6 +3,7 @@ import { ConfigError } from '../../src/core/errors.ts'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { extractJson, renderPrompt } from '../../src/executors/render.ts'
+import { parseVerdict } from '../../src/graders/judges.ts'
 import { tree } from '../helpers/tmp.ts'
 
 const dir = tree({ 'src/a.ts': 'one\ntwo\n', 'b.txt': 'x', '.git/config': 'secret', 'bin.dat': 'a\0b' })
@@ -40,8 +41,22 @@ test('a json fence closes at the ``` that ends valid JSON, so a code block insid
   assert.deepEqual(extractJson(`Review:\n\`\`\`json\n${JSON.stringify({ findings: [finding] }, null, 2)}\n\`\`\``), { findings: [finding] })
   // A judge whose rationale quotes code.
   assert.deepEqual(extractJson('```json\n{"pass": true, "rationale": "the fix is ```x < y```"}\n```'), { pass: true, rationale: 'the fix is ```x < y```' })
-  // A broken last fence falls back to the last one that parses, never to nothing.
-  assert.deepEqual(extractJson('```json\n{"a":1}\n```\n```json\n{broken\n```'), { a: 1 })
-  // A fence with no closer still parses to the end of the text.
+  // A broken last fence is no answer: never the draft, or the prompt's example, before it.
+  assert.equal(extractJson('```json\n{"a":1}\n```\n```json\n{broken\n```'), undefined)
+  // A fence with no closer is no object: the whole-text fallback sees the opener.
   assert.equal(extractJson('```json\n{"a":1}\n'), undefined)
+  // A closer on the JSON's own last line still closes it.
+  assert.deepEqual(extractJson('```json\n{"a":1}```'), { a: 1 })
+})
+
+test('a judge that echoes the prompt\'s example and then gives a broken verdict has said no', () => {
+  const reply = 'Format:\n```json\n{"pass": true, "rationale": "one or two sentences on why"}\n```\nMy verdict:\n```json\n{"pass": false, "rationale": "it says "no""}\n```'
+  assert.equal(parseVerdict(reply).pass, false)
+})
+
+test('a reply that repeats ```json for 64k characters is parsed in linear time', () => {
+  const t0 = performance.now()
+  extractJson('```json\n'.repeat(8000))
+  extractJson('```json\n{"a":"' + '```'.repeat(20000))
+  assert.ok(performance.now() - t0 < 500, `took ${performance.now() - t0}ms`)
 })

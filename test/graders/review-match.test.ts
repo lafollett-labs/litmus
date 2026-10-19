@@ -116,9 +116,12 @@ test('a finding must point at the bug: one wider than the bug plus the window ei
   assert.equal(score(truth, [f(T, 18, 'high', 30)], 5).pairs.length, 1)
   assert.equal(score(truth, [f(T, 18, 'high', 31)], 5).pairs.length, 0)
   // A whole-file range used to match every bug and dodge the decoy beside it.
-  const wide = score(truth, [f(T, 1, 'high', 9999), f(T, 1, 'high', 9999)], 5)
+  // Over a bug but too wide to point at it, it is a false positive, never a decoy hit.
+  const wide = score(truth, [f(T, 1, 'high', 9999), f(T, 15, 'info', 49)], 5)
   assert.equal(wide.pairs.length, 0)
-  assert.deepEqual(wide.unmatched.map(u => u.as), ['decoy_hit', 'decoy_hit'])
+  assert.deepEqual(wide.unmatched.map(u => u.as), ['false_positive', 'false_positive'])
+  // Too wide, but over no bug: classified as before.
+  assert.deepEqual(score(truth, [f(T, 40, 'high', 60)], 5).unmatched.map(u => u.as), ['decoy_hit'])
 })
 
 test('decoy geometry: within the window of a decoy is a decoy hit at any severity; beyond it, a false positive', () => {

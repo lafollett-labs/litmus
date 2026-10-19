@@ -8,5 +8,5 @@ graders:
     artifact: findings.json
     schema: litmus:findings
   - kind: review-match
-    pass: { min_recall: 1.0, max_false_positives: 1, max_decoy_hits: 0 }
+    pass: { min_recall: 1.0, max_false_positives: 1, max_findings: 4, max_decoy_hits: 0 }
 tags: [go, security]

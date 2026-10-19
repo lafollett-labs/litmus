@@ -13,4 +13,5 @@ Answer with JSON only, in this shape, and nothing else:
 
 {"findings": [{"file": "<path>", "line": <first line, in the changed file>, "end_line": <last line>, "severity": "critical|high|medium|low|info", "title": "<one line>", "explanation": "<why it is wrong>"}]}
 
-An empty list means you found nothing wrong.
+Cite the narrowest line range that holds each bug. An empty list means you
+found nothing wrong.

@@ -672,10 +672,13 @@ type ExecutorResult = {
 - **System prompt.** The subject's content, when the case has a subject.
 - **Artifacts.** It always writes `response.txt`. It writes `findings.json`
   when the response has a JSON object to extract: the last ```` ```json ````
-  fenced block that holds one, otherwise the whole response if that parses
-  as a JSON object. A fence closes at the first ```` ``` ```` after which its
-  text is valid JSON, so a code block inside a string value does not cut it
-  short. Extraction and judge replies are parsed the same way. When neither exists, `findings.json` is not written. A
+  fenced block, otherwise, with no fence at all, the whole response if that
+  parses as a JSON object. An earlier fence is never used: it is a draft or
+  an example echoed from the prompt. The fence closes at a ```` ``` ```` that
+  starts a line, as in CommonMark (or one right after the JSON on its last
+  line). JSON cannot hold a raw newline inside a string, so a code block
+  quoted in a value does not cut the answer short. Extraction and judge
+  replies are parsed the same way. When neither exists, `findings.json` is not written. A
   `json-schema` grader then fails the trial; it is not a model failure.
 - **Reason.** When the provider reports a stop reason, an `ok` trial records
   it as `reason: "stop_reason: <x>"`.
@@ -940,7 +943,9 @@ pairs = a maximum-cardinality one-to-one matching over candidates
         # then earliest bugs in truth order, then earliest findings
 
 for each unmatched finding:
-    if it is within window of a decoy:           decoy hit       # any severity
+    if it overlaps a bug's window but is too wide to point at it:
+                                                 false positive  # it located nothing
+    elif it is within window of a decoy:         decoy hit       # any severity
     elif it is within window of a matched bug:   duplicate       # a second report of a found bug
     elif truth.kind == seeded and its severity is info or low:
                                                  nit
@@ -987,7 +992,12 @@ some review-match in the case must set `min_recall` above 0, because with
 `max_*` bounds alone, `min_recall: 0`, or `min_claims_correct` (n/a when
 nothing matched), an empty review would pass at recall 0. Validate warns when a
 decoy lies within a review-match's window of a bug: bugs are matched first, so
-a finding on that decoy is credited as finding the bug. Matching grows
+a finding on that decoy is credited as finding the bug.
+
+A known limit: low and info findings away from every bug are nits, not false
+positives, so a grid of them `2 × window + 1` lines apart finds every bug
+without locating one. Only `max_findings` bounds that, and validate warns when
+a seeded review-match leaves it unset. Matching grows
 roughly with the cube of the bug count, so a case with dozens of bugs grades
 in seconds rather than milliseconds; the few seeded bugs a case usually has
 cost nothing.

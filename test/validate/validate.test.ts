@@ -28,7 +28,7 @@ async function check(configFile: string, o: Parameters<typeof validate>[2] = {})
   return problems
 }
 
-const REVIEW = 'executor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 1 } }]\n'
+const REVIEW = 'executor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 1, max_findings: 5 } }]\n'
 const FIX = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-broken\n+fixed\n'
 // A seeded case whose one bug is "a.txt says broken": the proof greps for the fix.
 function seeded(name: string, bug: { proof?: string; fix?: string } = {}, files: Record<string, string> = {}): Record<string, string> {
@@ -111,6 +111,11 @@ test('a symlink in the fixture is an error, and warnings name a rate policy that
   ])
   // Any link in a case is refused when a run hashes the case, so validate reports that and checks no further.
   assert.deepEqual(only(ps, 's/linked'), [`error: ${join(configFile, '../suites/s/cases/linked/fixture/escape')} is a symlink; a hashed tree must hold only files and directories; a run that selects this case is refused`])
+})
+
+test('a seeded review-match with no max_findings is a warning: a grid of findings would find every bug blind', async () => {
+  const ps = await check(project({ open: seeded('open', {}, { 'case.yaml': 'name: open\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 1 } }]\n' }) }))
+  assert.deepEqual(only(ps, 's/open'), ['warn: review-match sets no max_findings, so a grid of findings 11 lines apart would find every bug without locating one; bound how many findings a review may make'])
 })
 
 test('a decoy within review-match\'s window of a bug is a warning: a finding on the decoy would be credited to the bug', async () => {
@@ -316,7 +321,7 @@ test('an unreadable proof/ directory is an error for its case alone', { skip: pr
 test('a harness case\'s proof/ may add what a harness would refuse in a fixture: the harness never sees proof/', async () => {
   const harness = (extra: Record<string, string>) => ({
     ...seeded('hp', {}, extra),
-    'case.yaml': `name: hp\nexecutor:\n  kind: harness\n  harness: claude-code\n  prompt: /review\n  setting_sources: [project]\ngraders: [{ kind: review-match, pass: { min_recall: 1 } }]\n`,
+    'case.yaml': `name: hp\nexecutor:\n  kind: harness\n  harness: claude-code\n  prompt: /review\n  setting_sources: [project]\ngraders: [{ kind: review-match, pass: { min_recall: 1, max_findings: 5 } }]\n`,
   })
   assert.deepEqual(await check(project({ hp: harness({ 'proof/.mcp.json': '{}', 'proof/.claude/settings.json': '{"permissions":{}}' }) }), { proofs: false }), [])
   // The same files in the fixture are refused.

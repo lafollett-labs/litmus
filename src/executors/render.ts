@@ -34,21 +34,27 @@ function numbered(name: string, path: string): string {
   return `=== ${name} ===\n${lines.map((l, i) => `${String(i + 1).padStart(width)} | ${l}`).join('\n')}\n`
 }
 
-// The last ```json fence that holds an object wins, because models reason
-// first and answer last; failing that, the whole response if it is one JSON
-// object. A fence closes at the first ``` that ends valid JSON, not merely the
-// first ```: a finding's fix or a judge's rationale may hold a code block of
-// its own. Anything else is no object at all, and the graders decide what
-// that means.
+// The last ```json fence is the answer, because models reason first and answer
+// last; with no fence, the whole response if it is one JSON object. An earlier
+// fence is never fallen back to: it is a draft, or an example echoed from the
+// prompt ("pass": true), and a broken final answer is no answer. The fence
+// closes at a ``` that starts a line, as in CommonMark; JSON cannot hold a raw
+// newline inside a string, so a code block quoted in a finding's fix or a
+// judge's rationale never ends it early, and the scan stays linear. A ``` at
+// the end of the JSON's own last line closes it too. Anything else is no
+// object at all, and the graders decide what that means.
+const OPENER = /```json[ \t]*\r?\n/g
+const CLOSER = /^[ \t]{0,3}```[ \t]*$/gm
+
 export function extractJson(text: string): Record<string, unknown> | undefined {
-  const opens = [...text.matchAll(/```json[ \t]*\r?\n/g)].map(m => m.index + m[0].length)
-  for (const start of opens.reverse()) {
-    for (let end = text.indexOf('```', start); end >= 0; end = text.indexOf('```', end + 3)) {
-      const v = jsonObject(text.slice(start, end))
-      if (v) return v
-    }
-  }
-  return jsonObject(text.trim())
+  const opens = [...text.matchAll(OPENER)]
+  if (opens.length === 0) return jsonObject(text.trim())
+  const start = opens.at(-1)!.index + opens.at(-1)![0].length
+  CLOSER.lastIndex = start
+  const line = CLOSER.exec(text)
+  if (line) return jsonObject(text.slice(start, line.index))
+  const inline = text.indexOf('```', text.lastIndexOf('}') + 1)
+  return inline > start ? jsonObject(text.slice(start, inline)) : undefined
 }
 
 function jsonObject(s: string): Record<string, unknown> | undefined {

@@ -73,7 +73,10 @@ export function score(truth: TruthFile, findings: Finding[], window: number, wor
     if (matchedFindings.has(j)) return
     const decoy = ds.findIndex(d => near(f, d))
     const dup = bs.findIndex((b, i) => matchedBugs.has(i) && near(f, b))
-    if (decoy >= 0) unmatched.push({ finding: j, as: 'decoy_hit', near: truth.decoys[decoy]!.id })
+    // Over a bug but too wide to point at it: a claim that located nothing,
+    // whatever else the range happens to cover.
+    if (bs.some(b => near(f, b) && !points(f, b))) unmatched.push({ finding: j, as: 'false_positive' })
+    else if (decoy >= 0) unmatched.push({ finding: j, as: 'decoy_hit', near: truth.decoys[decoy]!.id })
     else if (dup >= 0) unmatched.push({ finding: j, as: 'duplicate', near: truth.bugs[dup]!.id })
     // A clean case has no nits: every finding on it claims a bug that is not there.
     else if (truth.kind === 'seeded' && (findings[j]!.severity === 'info' || findings[j]!.severity === 'low')) unmatched.push({ finding: j, as: 'nit' })
