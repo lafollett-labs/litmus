@@ -22,7 +22,8 @@ const skip = (() => {
     createRequire(import.meta.url).resolve(`${binary}/package.json`)
     return false
   } catch {
-    return `${binary} is not installed`
+    // In CI a missing binary is a failure, never a quiet skip.
+    return process.env['CI'] ? false : `${binary} is not installed`
   }
 })()
 
@@ -86,7 +87,7 @@ test('real Claude Code: every way out of the workdir is refused, and nothing out
     isSub: body => JSON.stringify((body['messages'] as unknown[] | undefined)?.[0] ?? '').includes('SUBAGENT-MARK'),
     sub: [[{ type: 'tool_use', id: 'toolu_s1', name: 'Read', input: { file_path: truth } }]],
   }))
-  assert.equal(r.exit, 'ok', r.reason)
+  assert.equal(r.exit, 'ok', r.reason ?? '')
   const sent = JSON.stringify(bodies)
   assert.ok(!sent.includes(TRUTH_CANARY), 'the ground truth reached the model')
   assert.ok(!sent.includes(FILE_CANARY), 'an operator file reached the model')
@@ -99,7 +100,7 @@ test('real Claude Code: every way out of the workdir is refused, and nothing out
 
 test('real Claude Code: the model is offered only the tools the gate can allow', { skip, timeout: 120_000 }, async () => {
   const { r, bodies } = await session(() => ({ main: [] }))
-  assert.equal(r.exit, 'ok', r.reason)
+  assert.equal(r.exit, 'ok', r.reason ?? '')
   const loop = bodies.find(b => Array.isArray(b['tools']) && (b['tools'] as unknown[]).length > 0)!
   const offered = (loop['tools'] as { name: string }[]).map(t => t.name)
   const allowed = new Set(sessionTools({ allowShell: false, allowNetwork: false }))

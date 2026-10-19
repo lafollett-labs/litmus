@@ -29,8 +29,11 @@ Never commit a gating suite (any suite used to decide a model rollout), keys,
 tokens, or run output (`.litmus/`).
 
 Tests never spend money. They use the fake provider, a mocked SDK, a mocked
-`fetch`, or a scripted `query()` stream. Live tests run only when
-`LITMUS_LIVE=1`.
+`fetch`, a scripted `query()` stream, or the real Claude Code binary against a
+fake Messages API on 127.0.0.1. Live tests run only when `LITMUS_LIVE=1`.
+
+An Agent SDK bump changes the sandbox: its PR must show
+`node --test test/executors/harness-e2e.test.ts` passing.
 
 | A trial stopped because of | `exit` | Retried | Trial status |
 | - | - | - | - |
