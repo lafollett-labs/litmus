@@ -704,13 +704,17 @@ type ExecutorResult = {
   starts a line (after a `\n`, not a U+2028), at any indent and with
   anything after it. JSON cannot hold a raw newline inside a string, so a
   code block quoted in a value does not cut the answer short. If that slice
-  is not an object, a `}```` closes it instead (the earliest, then the
-  last), so `{...}```` followed by prose or another code block still
-  parses. A `}```` with a `"` later on its line is skipped: the reply
-  failed to quote a string there, and a prefix ending at it could be text a
-  subject planted, such as `", "pass": true}````. Extraction and judge replies are parsed the same way. When
-  neither exists, `findings.json` is not written. A `json-schema` grader
-  then fails the trial; it is not a model failure.
+  is not an object, a ```` }``` ```` closes it instead (the earliest, then
+  the last), so ```` {...}``` ```` followed by prose or another code block
+  still parses. A ```` }``` ```` with a `"` later on its line is skipped:
+  the reply failed to quote a string there, and a prefix ending at it could
+  be text a subject planted, such as ```` ", "pass": true}``` ````. A judge
+  verdict that names `"pass"` more than once from its last fence on is no
+  verdict, whatever the line breaks: JSON keeps the last key, and the second
+  one is planted text the judge failed to quote. Extraction and judge
+  replies are parsed the same way. When neither exists, `findings.json` is
+  not written. A `json-schema` grader then fails the trial; it is not a
+  model failure.
 - **Reason.** When the provider reports a stop reason, an `ok` trial records
   it as `reason: "stop_reason: <x>"`.
 

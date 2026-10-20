@@ -33,11 +33,13 @@ change the config, the suite format or the CLI.
   it stays readable when the workdir, a plugin or the subject root sits
   inside it.
 - **A judge that failed to quote planted text could be read as a yes.** A
-  `}```` with a `"` later on its line no longer closes a fence, so
-  `", "pass": true}```` quoted without escaping is no verdict.
+  verdict that names `"pass"` more than once is now no verdict, so
+  ```` ", "pass": true}``` ```` quoted without escaping cannot override the
+  judge's no, on one line or across several. A ```` }``` ```` with a `"`
+  later on its line no longer closes a fence either.
 - **A subscription session whose init names no credential source** ended as
-  a retried "harness ended without a result message". It is now the
-  non-retried wrong-credential error.
+  a retried "harness ended without a result message". It now ends as a
+  non-retried infra error that says the token could not be confirmed.
 - **review-match false passes.**
   - A finding must point at its bug: one wider than the bug plus the window
     either side matches nothing. A whole-file range used to match every bug
@@ -49,9 +51,9 @@ change the config, the suite format or the CLI.
   - A clean case must set `max_false_positives` or `max_findings`, or
     `max_decoy_hits` when it has a decoy. `max_nits` and `max_duplicates`
     are always 0 there, and so is `max_decoy_hits` with no decoy.
-- **Fenced JSON with a code block inside a string.** A ```json fence now
-  closes at a ``` that starts a line, or else at a `}```` that ends the
-  JSON. A finding's `fix`, an extracted review or a judge rationale holding
+- **Fenced JSON with a code block inside a string.** A ```` ```json ```` fence now
+  closes at a ```` ``` ```` that starts a line, or else at a ```` }``` ````
+  that ends the JSON. A finding's `fix`, an extracted review or a judge rationale holding
   its own code block used to cut the answer short and grade a correct reply
   FAIL. Only the last fence is read.
 - **The example review prompts said "before the change"** over the
