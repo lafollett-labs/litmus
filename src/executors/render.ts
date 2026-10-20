@@ -42,26 +42,42 @@ function numbered(name: string, path: string): string {
 // JSON cannot hold a raw newline inside a string, so a code block quoted in a
 // finding's fix or a judge's rationale never ends it early. If that slice is
 // not an object, a ``` right after a } closes it instead (`{...}```), first
-// the earliest and then the last; one inside a string leaves the slice
-// unterminated. At most three parses, so the scan stays linear. Anything else
+// the earliest and then the last, unless a " follows it on its line; one
+// inside a string leaves the slice unterminated. At most three parses, so the scan stays linear. Anything else
 // is no object at all, and the graders decide what that means.
 const OPENER = /```json[ \t]*\r?\n/g
 // After \n only: JSON may hold a raw U+2028 or U+2029 in a string, and ^ with
 // the m flag would start a line there.
 const CLOSER = /(?<![^\n])[ \t]*```/g
 
+// Where the answer starts: just after the last opener, or -1 with no fence.
+export function answerStart(text: string): number {
+  const last = [...text.matchAll(OPENER)].at(-1)
+  return last ? last.index + last[0].length : -1
+}
+
 export function extractJson(text: string): Record<string, unknown> | undefined {
-  const opens = [...text.matchAll(OPENER)]
-  if (opens.length === 0) return jsonObject(text.trim())
-  const start = opens.at(-1)!.index + opens.at(-1)![0].length
+  const start = answerStart(text)
+  if (start < 0) return jsonObject(text.trim())
   CLOSER.lastIndex = start
   const line = CLOSER.exec(text)
   const fenced = line ? jsonObject(text.slice(start, line.index)) : undefined
   if (fenced) return fenced
+  // A " later on the closer's line means the ``` sat inside a string the
+  // reply failed to quote, and a prefix ending there could be planted text.
+  const closes = (i: number) => {
+    const end = text.indexOf('\n', i)
+    return !text.slice(i + 4, end < 0 ? undefined : end).includes('"')
+  }
   const first = text.indexOf('}```', start)
   if (first < 0) return undefined
   const last = text.lastIndexOf('}```')
-  return jsonObject(text.slice(start, first + 1)) ?? (last > first ? jsonObject(text.slice(start, last + 1)) : undefined)
+  const at = [first, ...(last > first ? [last] : [])].filter(closes)
+  for (const i of at) {
+    const v = jsonObject(text.slice(start, i + 1))
+    if (v) return v
+  }
+  return undefined
 }
 
 function jsonObject(s: string): Record<string, unknown> | undefined {

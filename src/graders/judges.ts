@@ -3,7 +3,7 @@ import { ConfigError, InfraError } from '../core/errors.ts'
 import type { Usage } from '../core/types.ts'
 import { deadline, raced } from '../executors/deadline.ts'
 import { hashJson } from '../core/hash.ts'
-import { extractJson } from '../executors/render.ts'
+import { answerStart, extractJson } from '../executors/render.ts'
 import { createProvider, type Provider } from '../providers/index.ts'
 import type { JudgeDef } from '../suite/schema.ts'
 import { JUDGE_PROMPT_VERSION, JUDGE_SYSTEM } from './prompts.ts'
@@ -85,7 +85,28 @@ const Verdict = z.object({ pass: z.boolean(), rationale: z.string() })
 
 // Anything but a well-formed { pass: boolean, rationale: string } is a no. A
 // judge that rambles, refuses, or answers "pass": "yes" has not said yes.
+// A verdict with two pass keys is planted text the judge failed to quote, and
+// JSON keeps the last: no verdict. Keys are counted decoded ("\u0070ass" is
+// pass) from where extractJson reads the answer, so an example echoed earlier
+// does not count.
+const KEY = /"(?:[^"\\\n]|\\.)*"\s*:/g
+
+function passKeys(text: string): number {
+  let n = 0
+  for (const m of text.slice(Math.max(answerStart(text), 0)).matchAll(KEY)) {
+    try {
+      if (JSON.parse(m[0].replace(/\s*:$/, '')) === 'pass') n++
+    } catch {
+      // not a JSON string: not a key
+    }
+  }
+  return n
+}
+
 export function parseVerdict(text: string): { pass: boolean; rationale: string } {
+  if (passKeys(text) > 1) {
+    return { pass: false, rationale: 'judge reply names "pass" more than once: a quote it failed to escape' }
+  }
   const v = Verdict.safeParse(extractJson(text))
   if (v.success) return { pass: v.data.pass, rationale: v.data.rationale }
   return { pass: false, rationale: `judge reply unparseable: ${JSON.stringify(text.length > 200 ? `${text.slice(0, 197)}...` : text)}` }

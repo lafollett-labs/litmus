@@ -9,7 +9,7 @@ import { digest, readRegular, snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
 import { fold, inside } from '../core/paths.ts'
 import { baselinesFile } from '../store/store.ts'
-import { decide, NETWORK_TOOLS, SHELL_TOOLS, sessionTools, type GatePolicy } from './gate.ts'
+import { decide, NETWORK_TOOLS, realpathOf, SHELL_TOOLS, sessionTools, type GatePolicy } from './gate.ts'
 import { bedrockRegion } from '../providers/index.ts'
 import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
@@ -22,6 +22,9 @@ export type Query = (params: { prompt: string; options: Options }) => AsyncItera
 // `harness`). The subject is whatever the case loads into it: plugins, a
 // fixture CLAUDE.md or AGENTS.md, the prompt. Everything else about the
 // session is pinned here so two runs differ only in the model.
+// An init on a subscription run that names no credential source.
+const UNREPORTED = 'unreported'
+
 export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknown as Query): Promise<ExecutorResult> {
   const exec = job.case.spec.executor
   if (exec.kind !== 'harness') throw new Error(`runHarness given a ${exec.kind} case`)
@@ -195,7 +198,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
       if (m.type === 'system' && m.subtype === 'init' && job.config.provider === 'claude-subscription' && m.apiKeySource !== 'none') {
         // Managed settings can hand Claude Code an API key, which it ranks
         // above the token: the run would bill a key nobody chose.
-        wrongCredential = m.apiKeySource
+        wrongCredential = m.apiKeySource || UNREPORTED
         break
       }
       if (m.type === 'result') {
@@ -211,6 +214,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     clock.clear()
   }
   if (ungated) return done('infra_error', { reason: `the gate never saw ${ungated}, which ran anyway; the trial is void`, retryable: false })
+  if (wrongCredential === UNREPORTED) return done('infra_error', { reason: "Claude Code's init named no credential source, so the token is unconfirmed (an SDK change?); the trial would not run on your plan", retryable: false })
   if (wrongCredential) return done('infra_error', { reason: `Claude Code chose ${wrongCredential} over CLAUDE_CODE_OAUTH_TOKEN (managed settings?); the trial would not run on your plan`, retryable: false })
   // The SDK may end the stream quietly, with an error result, or even with a
   // success after an abort: the clock's reason still decides, unless the
@@ -248,9 +252,10 @@ const FAILS_AGAIN_TEXT = /authentication|invalid (x-)?api[ -]key|permission|cred
 
 // Tokens from modelUsage, which covers every model call in the session:
 // subagents included. `usage` is the main loop only, and a review skill that
-// fans out to reviewers spends most of its tokens outside it. A subscription
-// is not billed per token, so its trials carry tokens and no cost: the SDK's
-// figure is an API price nobody paid.
+// fans out to reviewers spends most of its tokens outside it. litmus can't
+// see what a plan bills, so subscription trials carry tokens and no cost: the
+// SDK's figure is an API price, which only extra usage past the plan's limit
+// would charge.
 function usageOf(result: Extract<SDKMessage, { type: 'result' }>, billed: boolean): Usage {
   const cost = billed ? { cost_usd: result.total_cost_usd } : {}
   const models = Object.values(result.modelUsage ?? {})
@@ -337,7 +342,7 @@ export function credentials(job: Pick<ExecJob, 'config'>, env: NodeJS.ProcessEnv
 // anywhere is refused because it could point a component at a file this check
 // never reads. Returns why a plugin is refused, if it is.
 const SAFE_MANIFEST_KEYS = new Set(['$schema', 'name', 'version', 'description', 'author', 'homepage', 'repository', 'license', 'keywords', 'commands', 'agents', 'skills'])
-const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json', 'monitors/monitors.json']
+export const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json', 'monitors/monitors.json']
 const PROCESS_KEYS = new Set(['hooks', 'mcpservers', 'lspservers', 'monitors', 'statusline'])
 
 // Why a plugin or fixture is refused, and what would fix it. Only a real
@@ -372,7 +377,9 @@ function roots(c: LoadedCase, suiteRoots: string[]) {
 type Store = { files: string[]; home?: string } // the store and baselines.json; the directory holding them, when denied
 
 function storeRoots(resultsDir: string, keep: string[]): Store {
-  const at = (p: string) => (existsSync(p) ? realpathSync.native(p) : existsSync(dirname(p)) ? join(realpathSync.native(dirname(p)), basename(p)) : resolve(p))
+  // The deepest existing ancestor's realpath, so validate (before the store
+  // exists) judges the store where run (after) will.
+  const at = (p: string) => realpathOf(p) ?? resolve(p)
   const home = at(dirname(resultsDir))
   const needed = keep.map(at).some(k => inside(k, home))
   return { files: [at(resultsDir), at(baselinesFile(resultsDir))], ...(needed ? {} : { home }) }
@@ -475,8 +482,8 @@ export function pluginRunsProcesses(dir: string, allowHooks = false, store: Stor
 
 // The default component directories Claude Code loads from a plugin, less
 // hooks/ and monitors/, whose files are checked by name before the walk.
-// Re-check against the binary's own list on each SDK bump.
-const COMPONENT_DIRS = ['commands', 'agents', 'skills', 'output-styles', 'themes', 'workflows']
+// plugin-loader.test.ts holds this to the pinned binary's own list.
+export const COMPONENT_DIRS = ['commands', 'agents', 'skills', 'output-styles', 'themes', 'workflows']
 
 // A component path and what the gate denies of the store may not overlap
 // either way: a component inside it would load unscanned, and a store inside
@@ -486,7 +493,11 @@ function storeClash(dir: string, path: string, store: Store, key = path): Refusa
   const component = fold(resolve(dir, path))
   const at = (paths: string[]) => storeRel(dir, paths).map(r => fold(resolve(dir, r)))
   if (at(store.files).some(s => inside(s, component))) return blocks(`plugin ${dir} keeps the run store inside its ${key} directory ${path}`, "keep results outside the plugin's component directories")
-  if (at(denied(store)).some(s => inside(component, s))) return blocks(`plugin ${dir} loads ${key} from ${path}, inside the run store`, 'keep components out of the results directory')
+  if (at(store.files).some(s => inside(component, s))) return blocks(`plugin ${dir} loads ${key} from ${path}, inside the run store`, 'keep components out of the results directory')
+  const where = store.home ? storeRel(dir, [store.home])[0] : undefined
+  if (where !== undefined && inside(component, fold(resolve(dir, where)))) {
+    return blocks(`plugin ${dir} loads ${key} from ${path}, inside ${where}, the directory holding the run store, which the gate denies`, `move results, or move the component out of ${where}`)
+  }
   return undefined
 }
 

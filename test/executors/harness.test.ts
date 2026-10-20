@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } fro
 import { dirname, join } from 'node:path'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
-import { credentials, runHarness, type Query } from '../../src/executors/harness.ts'
+import { harnessPreflight, credentials, runHarness, type Query } from '../../src/executors/harness.ts'
 import { sessionTools } from '../../src/executors/gate.ts'
 import type { ExecJob } from '../../src/executors/types.ts'
 import { redactor, secretValues } from '../../src/core/redact.ts'
@@ -285,6 +285,10 @@ test('on claude-subscription, a session where Claude Code chose an API key over 
     const keyed = await runHarness(job(HARNESS(), {}, sub), scripted([init('apiKeyHelper'), result()]).query)
     assert.deepEqual([keyed.exit, keyed.retryable], ['infra_error', false])
     assert.match(keyed.reason ?? '', /Claude Code chose apiKeyHelper over CLAUDE_CODE_OAUTH_TOKEN/)
+    // An init that names no source is not the token either, and says so.
+    const silent = await runHarness(job(HARNESS(), {}, sub), scripted([({ type: 'system', subtype: 'init' }) as unknown as SDKMessage, result()]).query)
+    assert.deepEqual([silent.exit, silent.retryable], ['infra_error', false])
+    assert.match(silent.reason ?? '', /init named no credential source, so the token is unconfirmed \(an SDK change\?\)/)
     const plan = await runHarness(job(HARNESS(), {}, sub), scripted([init('none'), result()]).query)
     assert.equal(plan.exit, 'ok')
     // An API-key run says its source too, and that is what it asked for.
@@ -458,10 +462,22 @@ test('a store inside a component directory, or a component inside the store\'s d
   assert.match(await run({ 'themes/t.json': '{}' }, 'themes/runs'), /inside its themes directory/)
   // x/ holds the store, so the gate denies x/, and the manifest loads skills from it.
   const manifest = { '.claude-plugin/plugin.json': '{"name":"x","skills":"./x/skills"}', 'x/skills/s/SKILL.md': '---\nname: s\ndescription: s\n---\ns\n' }
-  assert.match(await run(manifest, 'x/runs'), /loads skills from \.\/x\/skills, inside the run store/)
+  assert.match(await run(manifest, 'x/runs'), /loads skills from \.\/x\/skills, inside x, the directory holding the run store, which the gate denies; move results, or move the component out of x/)
   const upper = { ...manifest, '.claude-plugin/plugin.json': '{"name":"x","skills":"./X/skills"}' }
-  assert.match(await run(upper, 'x/runs'), /loads skills from \.\/X\/skills, inside the run store/)
+  assert.match(await run(upper, 'x/runs'), /loads skills from \.\/X\/skills, inside x, the directory holding the run store/)
+  // A manifest component that is the store itself is inside the store.
+  assert.match(await run({ '.claude-plugin/plugin.json': '{"name":"x","skills":"./x/runs/s"}' }, 'x/runs'), /loads skills from \.\/x\/runs\/s, inside the run store/)
   assert.equal(await run({}, '.litmus/runs'), '', 'the layout the docs suggest is fine')
+})
+
+test('validate judges a store not made yet where run will: through a symlinked path, inside a component directory', () => {
+  const real = realpathSync(tree({ 'p/.claude-plugin/plugin.json': '{"name":"p"}', 'p/agents/a.md': '---\nname: a\ndescription: a\n---\na\n' }))
+  const link = join(realpathSync(tree({ '.keep': '' })), 'link')
+  symlinkSync(real, link)
+  const j = job(HARNESS(`  plugins: [${join(real, 'p')}]\n`))
+  // Neither the store nor its parent exists yet, and the path goes through the link.
+  const refused = harnessPreflight(j.case, j.workdir.dir, j.suiteRoots, join(link, 'p/agents/.litmus/runs'))
+  assert.match(refused ?? '', /keeps the run store inside its agents directory agents/)
 })
 
 test('the store\'s directory is not denied when the workdir or the subject root sits inside it', async () => {
