@@ -338,7 +338,7 @@ export function credentials(job: Pick<ExecJob, 'config'>, env: NodeJS.ProcessEnv
 // anywhere is refused because it could point a component at a file this check
 // never reads. Returns why a plugin is refused, if it is.
 const SAFE_MANIFEST_KEYS = new Set(['$schema', 'name', 'version', 'description', 'author', 'homepage', 'repository', 'license', 'keywords', 'commands', 'agents', 'skills'])
-const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json', 'monitors/monitors.json']
+export const PROCESS_FILES = ['hooks/hooks.json', '.mcp.json', '.lsp.json', 'monitors/monitors.json']
 const PROCESS_KEYS = new Set(['hooks', 'mcpservers', 'lspservers', 'monitors', 'statusline'])
 
 // Why a plugin or fixture is refused, and what would fix it. Only a real
@@ -478,8 +478,8 @@ export function pluginRunsProcesses(dir: string, allowHooks = false, store: Stor
 
 // The default component directories Claude Code loads from a plugin, less
 // hooks/ and monitors/, whose files are checked by name before the walk.
-// Re-check against the binary's own list on each SDK bump.
-const COMPONENT_DIRS = ['commands', 'agents', 'skills', 'output-styles', 'themes', 'workflows']
+// plugin-loader.test.ts holds this to the pinned binary's own list.
+export const COMPONENT_DIRS = ['commands', 'agents', 'skills', 'output-styles', 'themes', 'workflows']
 
 // A component path and what the gate denies of the store may not overlap
 // either way: a component inside it would load unscanned, and a store inside
