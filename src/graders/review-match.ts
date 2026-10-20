@@ -75,7 +75,8 @@ export function score(truth: TruthFile, findings: Finding[], window: number, wor
     const decoy = ds.findIndex(d => near(f, d))
     const dup = bs.findIndex((b, i) => matchedBugs.has(i) && near(f, b))
     // Too wide to point at any bug it is near: a claim that located nothing.
-    // Unless its range overlaps a decoy in its file, which it then flagged: a decoy hit.
+    // Unless its range overlaps a decoy in its file, which it then flagged:
+    // a decoy hit.
     const nearBugs = bs.filter(b => near(f, b))
     const tooWide = nearBugs.length > 0 && !nearBugs.some(b => points(f, b))
     if (tooWide && !ds.some(d => covers(f, d))) unmatched.push({ finding: j, as: 'false_positive' })

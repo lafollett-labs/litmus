@@ -675,11 +675,14 @@ type ExecutorResult = {
   fenced block, otherwise, with no fence at all, the whole response if that
   parses as a JSON object. An earlier fence is never used: it is a draft or
   an example echoed from the prompt. The fence closes at a ```` ``` ```` that
-  starts a line (after a `\n`, not a U+2028), at any indent and with anything after it (or one right
-  after the JSON on its last line). JSON cannot hold a raw newline inside a string, so a code block
-  quoted in a value does not cut the answer short. Extraction and judge
-  replies are parsed the same way. When neither exists, `findings.json` is not written. A
-  `json-schema` grader then fails the trial; it is not a model failure.
+  starts a line (after a `\n`, not a U+2028), at any indent and with
+  anything after it. JSON cannot hold a raw newline inside a string, so a
+  code block quoted in a value does not cut the answer short. If that slice
+  is not an object, a `}```` closes it instead (the earliest, then the
+  last), so `{...}```` followed by prose or another code block still
+  parses. Extraction and judge replies are parsed the same way. When
+  neither exists, `findings.json` is not written. A `json-schema` grader
+  then fails the trial; it is not a model failure.
 - **Reason.** When the provider reports a stop reason, an `ok` trial records
   it as `reason: "stop_reason: <x>"`.
 
@@ -874,8 +877,8 @@ An extraction that yields nothing says why:
 The graders then fail on the missing artifact, and the reason is recorded with
 the trial. This is a FAIL, not an ERROR, on purpose: an ERROR leaves scoring,
 so a subject that could steer its extractor (or a judge) into a capped or
-garbled reply would turn its own failures into unscored trials. The extracted findings are redacted before
-they are written.
+garbled reply would turn its own failures into unscored trials. The
+extracted findings are redacted before they are written.
 
 ### Grader
 
@@ -983,9 +986,10 @@ The `pass` bounds are `min_recall`, `max_false_positives`, `max_decoy_hits`,
 that is not set does not apply. Nor does a bound whose metric is null, such as
 `min_recall` on a clean case; its rationale says "n/a". A grade where no bound
 applied has checked nothing, so it fails. At load, a review-match must set a
-bound that can fail on its truth: on a clean case, `max_false_positives`,
-`max_decoy_hits` or `max_findings`, since a clean case has nothing to recall or
-confirm and no nits or duplicates (validate warns when `max_nits` or
+bound that can fail on its truth: on a clean case, `max_false_positives` or
+`max_findings`, or `max_decoy_hits` when it has a decoy, since a clean case
+has nothing to recall or confirm, no nits or duplicates, and no decoy hit
+without a decoy (validate warns when `max_nits` or
 `max_duplicates` is set there). More than 1,000 findings fail the grade
 rather than being matched. On a seeded case, the load-time rule is stricter:
 some review-match in the case must set `min_recall` above 0, because with
