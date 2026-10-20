@@ -50,10 +50,15 @@ const OPENER = /```json[ \t]*\r?\n/g
 // the m flag would start a line there.
 const CLOSER = /(?<![^\n])[ \t]*```/g
 
+// Where the answer starts: just after the last opener, or -1 with no fence.
+export function answerStart(text: string): number {
+  const last = [...text.matchAll(OPENER)].at(-1)
+  return last ? last.index + last[0].length : -1
+}
+
 export function extractJson(text: string): Record<string, unknown> | undefined {
-  const opens = [...text.matchAll(OPENER)]
-  if (opens.length === 0) return jsonObject(text.trim())
-  const start = opens.at(-1)!.index + opens.at(-1)![0].length
+  const start = answerStart(text)
+  if (start < 0) return jsonObject(text.trim())
   CLOSER.lastIndex = start
   const line = CLOSER.exec(text)
   const fenced = line ? jsonObject(text.slice(start, line.index)) : undefined
