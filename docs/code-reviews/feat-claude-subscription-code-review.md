@@ -1,6 +1,6 @@
 # Code Review: feat-claude-subscription
 
-**Verdict:** 🚫 BLOCKED (round 1, at `c086564`). HIGH-001 was dismissed as the owner's decision. The other findings are fixed in `7213d6e` (`f5f98bf` after the rebase onto `main`), which round 2 reviews.
+**Verdict:** ✅ APPROVED (round 3, at `ded31e5`). Round 1 was BLOCKED at `c086564`: HIGH-001 was dismissed as the owner's decision, and the other findings were fixed in `7213d6e` (`f5f98bf` after the rebase onto `main`). Round 2 requested changes.
 
 | | |
 | - | - |
@@ -83,6 +83,17 @@ Receipts after the fixes:
 
 - `npm run check` exit 0.
 - `npm test` tests 626, pass 621, fail 0, skipped 5.
+
+## Review Round 3
+
+**Verdict:** ✅ APPROVED at `ded31e5`.
+
+| | |
+| - | - |
+| **Reviewer** | PE-Vue |
+| **Reviewed SHA** | `ded31e5` |
+
+The reviewer resolved MEDIUM-001, LOW-001 and INFO-004, and checked the new wording against the round 2 probes. LOW-002 (a missing verb and a ragged line) and INFO-001 (`ps -E` is the macOS form; Linux reads `/proc/<pid>/environ`) are fixed in the commit after it.
 
 ---
 
