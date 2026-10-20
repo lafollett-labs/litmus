@@ -794,7 +794,7 @@ the skill listing too. Claude Code documents neither variable, so
 canary for each of those places, and every plugin skill listed. Matching Claude Code's mention grammar was tried first and lost:
 it also expands after CJK punctuation, and it parses quotes differently.
 
-Every refusal is written to the transcript. The trial's artifacts are:
+Every refusal the gate makes is written to the transcript. The trial's artifacts are:
 
 - the files the subject wrote, found by the snapshot
 - `final_message.txt`
@@ -804,9 +804,13 @@ also inside a plugin or subject root. A private suite kept in the plugin repo
 it evaluates therefore stays out of reach.
 
 The case's own directory, its suite and its suite root are always deny roots,
-whatever the runner passes. So are the run store (`results`) and the
-`baselines.json` beside it, since an earlier trial's `trial.json` names every
-bug it matched ("may not reach the run store"). They are denied rather than
+whatever the runner passes. So are the run store (`results`), the
+`baselines.json` beside it, and the directory holding both (`.litmus/` by
+default), since an earlier trial's `trial.json` names every bug it matched
+("may not reach the run store"). That directory also holds another config's
+store or one left behind by a rename. It is not denied when the workdir, a
+plugin or the subject root sits inside it: with `results: ./runs` at the top
+of a plugin, only `runs/` is denied. They are denied rather than
 refused like a suite root inside a plugin, so a plugin repo can keep its runs
 in `.litmus/`. The plugin checks skip a store inside the plugin, since its
 artifacts are what subjects wrote, and a manifest may not point a component
