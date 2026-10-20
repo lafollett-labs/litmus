@@ -160,8 +160,10 @@ config error (exit 2) before the run starts, and a judge can't use it. Its
 config takes only `model` and `effort`. If Claude Code reports that it chose
 an API key over the token (`apiKeySource` in its init message, as when
 managed settings supply one), the trial ends as a non-retried infra error
-rather than run on a key the operator didn't pick. Its trials record
-tokens and no cost, since a plan is not billed per token. The provider is in
+rather than run on a key the operator didn't pick; so does an init that
+names no source. Its trials record tokens and no cost: litmus can't see what
+a plan bills. With extra usage turned on, trials past the plan's limit are
+billed at API rates, and litmus still records no cost for them. The provider is in
 `run.json`, so a subscription run is never mistaken for one billed through the
 API. Plan limits are meant for individual use: keep `concurrency` low, since a
 rate-limited trial is an ERROR. Using a plan this way is between the operator
@@ -396,8 +398,9 @@ It warns in three situations:
 
 `run` makes the load checks too. Before the run starts, it also refuses with
 a config error (exit 2) a selected case whose directory holds a symlink, a
-bedrock config with no region, and a harness case on a provider other than
-`anthropic` or `bedrock`. The workdir and harness checks (a symlink after the
+bedrock config with no region, a harness case on a provider other than
+`anthropic`, `bedrock` or `claude-subscription`, and a model case on
+`claude-subscription`. The workdir and harness checks (a symlink after the
 patch, a fixture `.git`, hooks, MCP and fixture settings, a plugin in or
 around a suite) it makes per trial, as each attempt's workdir is built and its
 session starts. Each one makes that trial an `error`, so the case settles
@@ -703,7 +706,9 @@ type ExecutorResult = {
   code block quoted in a value does not cut the answer short. If that slice
   is not an object, a `}```` closes it instead (the earliest, then the
   last), so `{...}```` followed by prose or another code block still
-  parses. Extraction and judge replies are parsed the same way. When
+  parses. A `}```` with a `"` later on its line is skipped: the reply
+  failed to quote a string there, and a prefix ending at it could be text a
+  subject planted, such as `", "pass": true}````. Extraction and judge replies are parsed the same way. When
   neither exists, `findings.json` is not written. A `json-schema` grader
   then fails the trial; it is not a model failure.
 - **Reason.** When the provider reports a stop reason, an `ok` trial records
@@ -853,9 +858,12 @@ since its artifacts are what subjects wrote. So a component directory may not
 overlap it either way: a plugin whose default component directory
 (`skills/`, `agents/`, `commands/`, `output-styles/`, `themes/`,
 `workflows/`) or manifest component path lies inside the denied area, or
-holds the store, is refused. Paths are compared case-folded. A component at
-the plugin root (`"skills": "./"`) therefore cannot share a plugin with the
-store. The gate fails closed: a call it cannot judge (an
+holds the store, is refused. Paths are compared case-folded, and a store
+not made yet is judged at its deepest existing ancestor's realpath, so
+`validate` and `run` agree. A component at the plugin root
+(`"skills": "./"`) therefore cannot share a plugin with the store; a
+single-skill plugin can leave `skills` out, since its root `SKILL.md` loads
+on its own. The gate fails closed: a call it cannot judge (an
 unreadable path, a path through a file) is a denial with the error as its
 reason. Paths are compared by their on-disk case (`realpath.native`), and names
 that may not exist yet are compared case-folded, so a case variant on a

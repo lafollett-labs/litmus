@@ -14,7 +14,8 @@ change the config, the suite format or the CLI.
   litmus never runs a login, stores the token or reads the stored claude.ai
   login. The token is redacted like every other credential. A model case on
   it is refused before the run, it can't be a judge, and its trials carry
-  tokens and no cost.
+  tokens and no cost. With extra usage turned on, trials past the plan's
+  limit are billed at API rates that litmus does not record.
 
 ### Fixed
 
@@ -23,10 +24,20 @@ change the config, the suite format or the CLI.
   components from (`skills/`, `agents/`, `commands/`, `output-styles/`,
   `themes/`, `workflows/` or a manifest path, in any case), or the directory
   holding it containing one, the files Claude Code loads from there went
-  unscanned. Such a layout is now refused with "keep results
-  outside the plugin's component directories". The 0.1.1 note on the store's
-  directory now states its exception: it stays readable when the workdir, a
-  plugin or the subject root sits inside it.
+  unscanned. Such a layout is now refused: a store inside a component with
+  "keep results outside the plugin's component directories", a component
+  inside the store with "inside the run store", and a component inside the
+  directory holding the store with a message naming that directory. `validate` judges a store not made yet
+  through its deepest existing ancestor's realpath, so it agrees with
+  `run`. The 0.1.1 note on the store's directory now states its exception:
+  it stays readable when the workdir, a plugin or the subject root sits
+  inside it.
+- **A judge that failed to quote planted text could be read as a yes.** A
+  `}```` with a `"` later on its line no longer closes a fence, so
+  `", "pass": true}```` quoted without escaping is no verdict.
+- **A subscription session whose init names no credential source** ended as
+  a retried "harness ended without a result message". It is now the
+  non-retried wrong-credential error.
 - **review-match false passes.**
   - A finding must point at its bug: one wider than the bug plus the window
     either side matches nothing. A whole-file range used to match every bug

@@ -34,7 +34,9 @@ fake Messages API on 127.0.0.1. Live tests run only when `LITMUS_LIVE=1`.
 
 A PR that changes the `@anthropic-ai/claude-agent-sdk` version shows
 `source ~/.nvm/nvm.sh && nvm use && node --test test/executors/harness-e2e.test.ts`
-with `fail 0` and `skipped 0`.
+with `fail 0` and `skipped 0`, and checks `COMPONENT_DIRS` in
+`src/executors/harness.ts` against the new binary's list of plugin
+directories.
 
 | A trial stopped because of | `exit` | Retried | Trial status |
 | - | - | - | - |
