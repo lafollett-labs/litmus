@@ -7,8 +7,10 @@ import { createServer, type Server } from 'node:http'
 export type Block = { type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: unknown }
 export type Script = { main: Block[][]; sub?: Block[][]; isSub?: (body: Record<string, unknown>) => boolean }
 
-export async function fakeMessagesApi(script: Script): Promise<{ url: string; bodies: Record<string, unknown>[]; close: () => Promise<void> }> {
+export async function fakeMessagesApi(script: Script): Promise<{ url: string; bodies: Record<string, unknown>[]; auths: string[]; close: () => Promise<void> }> {
   const bodies: Record<string, unknown>[] = []
+  // Each request's path and how it authenticated: `/v1/messages bearer <token>`, `... key <key>` or `... none`.
+  const auths: string[] = []
   const at = { main: 0, sub: 0 }
   const server: Server = createServer((req, res) => {
     let data = ''
@@ -21,6 +23,10 @@ export async function fakeMessagesApi(script: Script): Promise<{ url: string; bo
         // a request with no body is still answered
       }
       bodies.push(body)
+      const bearer = req.headers['authorization']
+      const key = req.headers['x-api-key']
+      const how = typeof bearer === 'string' ? `bearer ${bearer.replace(/^Bearer /, '')}` : typeof key === 'string' ? `key ${key}` : 'none'
+      auths.push(`${String(req.url).split('?')[0]} ${how}`)
       if (!req.url?.startsWith('/v1/messages') || req.url.includes('count_tokens')) {
         res.writeHead(200, { 'content-type': 'application/json' })
         return res.end(JSON.stringify({ input_tokens: 10 }))
@@ -57,5 +63,5 @@ export async function fakeMessagesApi(script: Script): Promise<{ url: string; bo
   })
   await new Promise<void>(ok => server.listen(0, '127.0.0.1', ok))
   const { port } = server.address() as { port: number }
-  return { url: `http://127.0.0.1:${port}`, bodies, close: () => new Promise(ok => server.close(() => ok())) }
+  return { url: `http://127.0.0.1:${port}`, bodies, auths, close: () => new Promise(ok => server.close(() => ok())) }
 }
