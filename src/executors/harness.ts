@@ -49,14 +49,14 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const project = exec.setting_sources.includes('project')
   const subjectRoot = subjectRootOf(job.case)
   const { real, denyRoots, trapped } = roots(job.case, job.suiteRoots)
-  const store = storeRoots(job.resultsDir, [job.workdir.dir, ...plugins, ...(subjectRoot ? [subjectRoot] : [])])
+  const store = storeRoots(job.resultsDir, keepRoots(job.case, job.workdir.dir))
   const policy: GatePolicy = {
     workdir: realpathSync.native(job.workdir.dir),
     // A subject root inside a deny root is only a version for the harness, so
     // it simply is not readable.
     readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]).filter(r => !trapped(r)),
     denyRoots,
-    storeRoots: store,
+    storeRoots: denied(store),
     // Written mid-session, these would overwrite an artifact litmus writes
     // itself, or be read back as the session's own MCP config.
     protect: ['final_message.txt', ...(project ? ['.mcp.json'] : [])],
@@ -351,11 +351,21 @@ function roots(c: LoadedCase, suiteRoots: string[]) {
 // the session needs sits inside it. Denied by the gate rather than refused
 // like a suite root, since a plugin repo keeping its runs in .litmus/ is the
 // layout the docs suggest. A path not made yet is judged where it will be.
-function storeRoots(resultsDir: string, keep: string[]): string[] {
+type Store = { files: string[]; home?: string } // the store and baselines.json; the directory holding them, when denied
+
+function storeRoots(resultsDir: string, keep: string[]): Store {
   const at = (p: string) => (existsSync(p) ? realpathSync.native(p) : existsSync(dirname(p)) ? join(realpathSync.native(dirname(p)), basename(p)) : resolve(p))
   const home = at(dirname(resultsDir))
   const needed = keep.map(at).some(k => inside(k, home))
-  return [at(resultsDir), at(baselinesFile(resultsDir)), ...(needed ? [] : [home])]
+  return { files: [at(resultsDir), at(baselinesFile(resultsDir))], ...(needed ? {} : { home }) }
+}
+
+const denied = (s: Store): string[] => [...s.files, ...(s.home ? [s.home] : [])]
+
+// The roots a trial reads from: the parent-dir deny must never cover one.
+function keepRoots(c: LoadedCase, workdir: string): string[] {
+  const subject = subjectRootOf(c)
+  return [workdir, ...c.plugins, ...(subject ? [subject] : [])]
 }
 
 // Everything a harness case must pass before the SDK loads a thing, on the
@@ -369,8 +379,7 @@ export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: str
   // case has to say it accepts that (allow_hooks) before any of them load. The
   // scan runs either way: what allow_hooks waives is only those process
   // signals, never the gate's own checks (isolation, links, unparseable keys).
-  const subject = subjectRootOf(c)
-  const store = resultsDir ? storeRoots(resultsDir, [workdir, ...c.plugins, ...(subject ? [subject] : [])]) : []
+  const store: Store = resultsDir ? storeRoots(resultsDir, keepRoots(c, workdir)) : { files: [] }
   const found = [...c.plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks, store)), project ? fixtureRunsProcesses(workdir, exec.allow_hooks) : undefined].find(x => x !== undefined)
   if (found) return `${found.reason}; ${found.fix}`
   if (project) {
@@ -391,10 +400,17 @@ export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: str
   return undefined
 }
 
-export function pluginRunsProcesses(dir: string, allowHooks = false, store: string[] = []): Refusal | undefined {
+export function pluginRunsProcesses(dir: string, allowHooks = false, store: Store = { files: [] }): Refusal | undefined {
   // The walk lstats everything below the root; the root itself is checked here.
   if (lstatSync(dir).isSymbolicLink()) return blocks(`plugin ${dir} is a symlink`, 'name the directory it points at')
   if (!allowHooks) for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return runs(`plugin ${dir} has ${f}`)
+  // Claude Code loads these whatever the manifest says. A store inside one
+  // would be skipped by the walk yet loaded, and a denied one would hide the
+  // plugin's own files from it.
+  for (const key of COMPONENT_DIRS) {
+    const clash = storeClash(dir, key, store)
+    if (clash) return clash
+  }
   // Read before the walk refuses links and special files, so every part of
   // the path is checked the same way: O_NOFOLLOW guards only the last one.
   const holder = lstatSync(join(dir, '.claude-plugin'), { throwIfNoEntry: false })
@@ -427,14 +443,29 @@ export function pluginRunsProcesses(dir: string, allowHooks = false, store: stri
       if (!paths) return blocks(`plugin ${dir}'s plugin.json ${key} is not a path or a list of paths`, 'give it paths inside the plugin')
       const outside = paths.find(p => !inside(resolve(dir, p), resolve(dir)))
       if (outside !== undefined) return blocks(`plugin ${dir}'s plugin.json points ${key} at ${outside}, outside the plugin`, 'keep every component inside the plugin directory')
-      const stored = paths.find(p => storeRel(dir, store).some(s => inside(resolve(dir, p), resolve(dir, s))))
-      if (stored !== undefined) return blocks(`plugin ${dir}'s plugin.json points ${key} at ${stored}, inside the run store`, 'keep components out of the results directory')
+      for (const p of paths) {
+        const clash = storeClash(dir, p, store, key)
+        if (clash) return clash
+      }
     }
   }
   // A plugin's .git is walked too: its manifest can point a component there.
-  // A run store inside it is not: the gate denies it, Claude Code never loads
-  // from it, and its artifacts are what subjects wrote.
-  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks, storeRel(dir, store))
+  // What the gate denies of the store is not: no component loads from it (the
+  // checks above), and its artifacts, an old store's too, are what subjects wrote.
+  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks, storeRel(dir, denied(store)))
+}
+
+const COMPONENT_DIRS = ['commands', 'agents', 'skills']
+
+// A component path and what the gate denies of the store may not overlap
+// either way: a component inside it would load unscanned, and a store inside
+// a component would be loaded as one.
+function storeClash(dir: string, path: string, store: Store, key = path): Refusal | undefined {
+  const component = resolve(dir, path)
+  const at = (paths: string[]) => storeRel(dir, paths).map(r => resolve(dir, r))
+  if (at(store.files).some(s => inside(s, component))) return blocks(`plugin ${dir} keeps the run store inside its ${key} directory ${path}`, "keep results outside the plugin's component directories")
+  if (at(denied(store)).some(s => inside(component, s))) return blocks(`plugin ${dir} loads ${key} from ${path}, inside the run store`, 'keep components out of the results directory')
+  return undefined
 }
 
 // The store roots that lie inside dir, relative to it.
