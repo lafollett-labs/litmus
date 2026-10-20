@@ -164,3 +164,40 @@ test('real Claude Code: no @ mention is read from a plugin body, skill args, the
     assert.ok(first.includes(`SKILL-DESC-${name}`), `the ${name} skill was not listed`)
   }
 })
+
+// Claude Code itself refuses a CLAUDE.md import from outside the project, not
+// eval-confined mode, so this watches for an SDK that stops refusing it.
+test('real Claude Code: a CLAUDE.md, the fixture\'s or one the subject writes, imports nothing from outside the workdir', { skip, timeout: 120_000 }, async () => {
+  const secrets = realpathSync(tree({ 'root.txt': 'IMPORT-CANARY-root\n', 'nested.txt': 'IMPORT-CANARY-nested\n', 'written.txt': 'IMPORT-CANARY-written\n' }))
+  // Each file also imports one inside the workdir, so a pass shows imports were resolved.
+  const { r, bodies } = await session(
+    () => ({
+      main: [
+        [{ type: 'tool_use', id: 'toolu_01', name: 'Read', input: { file_path: 'sub/x.txt' } }],
+        // Written by the subject, then a Read beside it.
+        [{ type: 'tool_use', id: 'toolu_02', name: 'Write', input: { file_path: 'sub2/CLAUDE.md', content: `WRITTEN-MARK @../in-written.txt @${join(secrets, 'written.txt')}\n` } }],
+        [{ type: 'tool_use', id: 'toolu_03', name: 'Read', input: { file_path: 'sub2/y.txt' } }],
+      ],
+    }),
+    {
+      executor: '  setting_sources: [project]\n',
+      files: {
+        'fixture/CLAUDE.md': `ROOT-MARK @./in-root.txt @${join(secrets, 'root.txt')}\n`,
+        'fixture/in-root.txt': 'INSIDE-root\n',
+        'fixture/in-nested.txt': 'INSIDE-nested\n',
+        'fixture/in-written.txt': 'INSIDE-written\n',
+        'fixture/sub/CLAUDE.md': `NESTED-MARK @../in-nested.txt @${join(secrets, 'nested.txt')}\n`,
+        'fixture/sub/x.txt': 'x\n',
+        'fixture/sub2/y.txt': 'y\n',
+      },
+    },
+  )
+  assert.equal(r.exit, 'ok', r.reason ?? '')
+  const sent = JSON.stringify(bodies)
+  // Each CLAUDE.md loaded, so each import was offered the chance to leak.
+  for (const mark of ['ROOT-MARK', 'NESTED-MARK']) assert.ok(sent.includes(mark), `${mark} never loaded`)
+  // Claude Code does not re-inject the body of a CLAUDE.md the session wrote,
+  // but it does resolve its imports: only the outside one is refused.
+  for (const v of ['root', 'nested', 'written']) assert.ok(sent.includes(`INSIDE-${v}`), `the ${v} CLAUDE.md's imports were never resolved`)
+  assert.ok(!sent.includes('IMPORT-CANARY'), 'a CLAUDE.md imported a file outside the workdir')
+})
