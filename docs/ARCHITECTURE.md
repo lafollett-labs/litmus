@@ -555,12 +555,13 @@ subject wrote into `.git/` ever runs.
   that needs a newer Go fail instead of downloading one).
 - For the harness only: the credential variables its provider needs (for
   `anthropic`, `ANTHROPIC_API_KEY`; for `claude-subscription`,
-  `CLAUDE_CODE_OAUTH_TOKEN` and never `ANTHROPIC_API_KEY`; for `bedrock`, the region as `AWS_REGION`,
-  `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`,
-  `AWS_BEARER_TOKEN_BEDROCK`, whichever are set, and with `AWS_PROFILE`, also
-  `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`, defaulting to the
-  operator's `~/.aws` files), `CLAUDE_CONFIG_DIR`, and
-  the Claude Code flags listed under the harness executor.
+  `CLAUDE_CODE_OAUTH_TOKEN` and never `ANTHROPIC_API_KEY`; for `bedrock`,
+  the region as `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `AWS_SESSION_TOKEN`, `AWS_BEARER_TOKEN_BEDROCK`, whichever are set, and
+  with `AWS_PROFILE`, also `AWS_CONFIG_FILE` and
+  `AWS_SHARED_CREDENTIALS_FILE`, defaulting to the operator's `~/.aws`
+  files), `CLAUDE_CONFIG_DIR`, and the Claude Code flags listed under the
+  harness executor.
 
 This keeps credentials out of the environment and out of the usual dotfile
 locations. **It does not contain a hostile process**, which can still read any
@@ -776,8 +777,9 @@ scrubbed environment and these settings:
 - Credentials: `anthropic` requires `ANTHROPIC_API_KEY`. `claude-subscription`
   requires `CLAUDE_CODE_OAUTH_TOKEN` and leaves `ANTHROPIC_API_KEY` out, since
   Claude Code would prefer the key to the token. The stored claude.ai login is
-  never used: `HOME` and `CLAUDE_CONFIG_DIR` are the attempt's own. `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS
-  credential variables, including `AWS_BEARER_TOKEN_BEDROCK`. With
+  never used: `HOME` and `CLAUDE_CONFIG_DIR` are the attempt's own.
+  `bedrock` sets `CLAUDE_CODE_USE_BEDROCK=1` and passes the AWS credential
+  variables, including `AWS_BEARER_TOKEN_BEDROCK`. With
   `AWS_PROFILE`, it points `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`
   at the operator's own files, because `HOME` is redirected. A run that pairs
   a harness case with a config on any other provider (`openrouter`, `fake`)

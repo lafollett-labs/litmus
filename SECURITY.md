@@ -80,10 +80,14 @@ contain a hostile process**, which can still read any file you can read. A
 shell command, hook or MCP server started by the harness is the harness's
 child, so it also holds the harness's credential: under `allow_shell`,
 `echo $ANTHROPIC_API_KEY` works. On `claude-subscription` it is
-`CLAUDE_CODE_OAUTH_TOKEN`, a long-lived token for your plan: use one you can
-revoke, and never under `allow_shell` and `allow_network` for a suite you don't trust. A Bedrock harness run with `AWS_PROFILE`
-points at your real AWS config and credentials files, so under `allow_shell` a
-subject can read every profile in them. Until
+`CLAUDE_CODE_OAUTH_TOKEN`, a long-lived token for your plan. Claude Code
+keeps it out of a shell's environment, but a shell can still read it from
+the process table (`ps -E`), and a shell reaches the network without
+`allow_network`, which gates only the web tools. Use a token you can
+revoke, and never `allow_shell` with it for a suite you don't trust. A
+Bedrock harness run with `AWS_PROFILE` points at your real AWS config and
+credentials files, so under `allow_shell` a subject can read every profile
+in them. Until
 the container executor lands (see "After 0.1.0" in the plan), run the four
 uncontained paths only on a machine you are willing to lose, and only for
 suites whose authors you trust.

@@ -72,8 +72,9 @@ export function planRun(configFile: string, req: RunRequest, wording: { configs:
 // What would make every trial of a (case, config) pair an error is a config
 // error now, before anything is spent: a bedrock config, or a bedrock judge a
 // case calls, with no region; and a harness case on a provider the harness
-// cannot use, or a model case on a provider only the harness can use. Only the pairs the run would run are checked, as expand() makes
-// them: a trial key pins its own config, and a rerun runs only its pairs.
+// cannot use, or a model case on a provider only the harness can use. Only
+// the pairs the run would run are checked, as expand() makes them: a trial
+// key pins its own config, and a rerun runs only its pairs.
 const HARNESS_PROVIDERS = ['anthropic', 'bedrock', 'claude-subscription']
 const HARNESS_ONLY = ['claude-subscription']
 function runnable(config: Config, configs: string[], selection: Selection, only: ReadonlySet<string> | undefined, env: NodeJS.ProcessEnv): void {
