@@ -102,7 +102,7 @@ test('the session is pinned: explicit empty settings, strict MCP, a private conf
   assert.equal(env['CLAUDE_CONFIG_DIR'], j.workdir.claudeConfig)
   assert.equal(env['CLAUDE_CODE_DISABLE_AUTO_MEMORY'], '1')
   // Claude Code would otherwise read every @path it expands, past the gate.
-  assert.equal(env['CLAUDE_CODE_DISABLE_ATTACHMENTS'], '1')
+  assert.equal(env['CLAUDE_CODE_EVAL_CONFINED'], '1')
   assert.equal(env['HOME'], j.workdir.home)
   assert.equal(env['ANTHROPIC_API_KEY'], 'sk-ant-test')
   assert.equal(env['OPENROUTER_API_KEY'], undefined)

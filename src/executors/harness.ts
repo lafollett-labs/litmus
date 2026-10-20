@@ -116,10 +116,12 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
         // Claude Code reads every @path it expands (in the prompt, in a skill
         // or command body, in a skill's args) by itself, with no tool call and
-        // no hook, so the gate never sees it. This turns those reads off. It
-        // is not in Claude Code's docs, so harness-e2e.test.ts proves it at
-        // every SDK version: each of those mentions reaches the model unread.
-        CLAUDE_CODE_DISABLE_ATTACHMENTS: '1',
+        // no hook, so the gate never sees it. Eval-confined mode turns those
+        // reads off and keeps the rest: the skill listing, nested CLAUDE.md.
+        // It also drops settings' allow rules, which the gate never relied
+        // on. It is not in Claude Code's docs, so harness-e2e.test.ts proves
+        // both halves at every SDK version.
+        CLAUDE_CODE_EVAL_CONFINED: '1',
         ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
         ...creds,
       },

@@ -783,11 +783,15 @@ Claude Code would read every `@path` mention it expands, by itself and with
 no tool call the hook could judge. That covers mentions in the prompt, in a
 rendered fixture or diff, in a skill or command body, and in a skill's args,
 including the args a body places in `@$ARGUMENTS`. The trial env sets
-`CLAUDE_CODE_DISABLE_ATTACHMENTS=1`, which turns those reads off: the
-mention reaches the model as plain text, and a subject that wants the file
-calls Read. Claude Code does not document the variable, so
-`harness-e2e.test.ts` proves it on the real binary for each of those
-places. Matching Claude Code's mention grammar was tried first and lost:
+`CLAUDE_CODE_EVAL_CONFINED=1`, which turns those reads off: the mention
+reaches the model as plain text, and a subject that wants the file calls
+Read. The skill listing and nested CLAUDE.md still load, so a subject
+whose prompt does not name its skill can still find it. The mode also
+drops the allow rules in settings, which the gate never relied on.
+`CLAUDE_CODE_DISABLE_ATTACHMENTS` would also stop the reads, but it hides
+the skill listing too. Claude Code documents neither variable, so
+`harness-e2e.test.ts` checks both halves on the real binary: a separate
+canary for each of those places, and every plugin skill listed. Matching Claude Code's mention grammar was tried first and lost:
 it also expands after CJK punctuation, and it parses quotes differently.
 
 Every refusal is written to the transcript. The trial's artifacts are:
