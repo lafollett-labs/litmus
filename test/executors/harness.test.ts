@@ -325,7 +325,7 @@ test('a tool call that ran without the gate seeing it voids the trial; one refus
 })
 
 test('the run store and its baselines are never readable, even inside a plugin root that holds them', async () => {
-  const plugin = pluginTree({ '.claude-plugin/plugin.json': '{"name":"p"}', 'skills/r/SKILL.md': '---\nname: r\ndescription: r\n---\nr\n', '.litmus/runs/2026-10-19T00-00-00Z-a1b2/trials/s/c/opus/1/trial.json': '{"graders":[]}', '.litmus/baselines.json': '{}' })
+  const plugin = pluginTree({ '.claude-plugin/plugin.json': '{"name":"p"}', 'skills/r/SKILL.md': '---\nname: r\ndescription: r\n---\nr\n', '.litmus/runs/2026-10-19T00-00-00Z-a1b2/trials/s/c/opus/1/trial.json': '{"graders":[]}', '.litmus/baselines.json': '{}', '.litmus/old-runs/r/trial.json': '{"graders":[]}' })
   const verdicts: string[] = []
   const { query } = scripted([result()], async o => {
     const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
@@ -334,6 +334,8 @@ test('the run store and its baselines are never readable, even inside a plugin r
       ['Read', { file_path: join(plugin, '.litmus/runs/2026-10-19T00-00-00Z-a1b2/trials/s/c/opus/1/trial.json') }],
       ['Glob', { pattern: '**/trial.json', path: plugin }],
       ['Read', { file_path: join(plugin, '.litmus/baselines.json') }],
+      // Another config's store, or one left behind by a rename.
+      ['Read', { file_path: join(plugin, '.litmus/old-runs/r/trial.json') }],
     ] as const) {
       const out = (await hook({ tool_name, tool_input } as never, undefined, { signal: new AbortController().signal })) as { hookSpecificOutput: { permissionDecision: string } }
       verdicts.push(out.hookSpecificOutput.permissionDecision)
@@ -342,7 +344,7 @@ test('the run store and its baselines are never readable, even inside a plugin r
   const j = job(HARNESS(`  plugins: [${plugin}]\n`))
   j.resultsDir = join(plugin, '.litmus/runs')
   await runHarness(j, query)
-  assert.deepEqual(verdicts, ['allow', 'deny', 'deny', 'deny'])
+  assert.deepEqual(verdicts, ['allow', 'deny', 'deny', 'deny', 'deny'])
 })
 
 const SKILL = (body: string) => `---\nname: s\ndescription: s\n---\n${body}\n`
@@ -354,6 +356,22 @@ test('a hook denial that Claude Code ran anyway voids the trial: only allowed ca
   const r = await runHarness(job(HARNESS()), scripted([call, back, result()]).query)
   assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
   assert.match(r.reason ?? '', /the gate never saw Read \(tu9\)/)
+})
+
+test('a store kept at the top of a plugin denies only itself: the plugin around it stays readable', async () => {
+  const plugin = pluginTree({ '.claude-plugin/plugin.json': '{"name":"p"}', 'skills/r/SKILL.md': '---\nname: r\ndescription: r\n---\nr\n', 'runs/r/trial.json': '{"graders":[]}' })
+  const verdicts: string[] = []
+  const { query } = scripted([result()], async o => {
+    const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
+    for (const file of ['skills/r/SKILL.md', 'runs/r/trial.json']) {
+      const out = (await hook({ tool_name: 'Read', tool_input: { file_path: join(plugin, file) } } as never, undefined, { signal: new AbortController().signal })) as { hookSpecificOutput: { permissionDecision: string } }
+      verdicts.push(out.hookSpecificOutput.permissionDecision)
+    }
+  })
+  const j = job(HARNESS(`  plugins: [${plugin}]\n`))
+  j.resultsDir = join(plugin, 'runs')
+  await runHarness(j, query)
+  assert.deepEqual(verdicts, ['allow', 'deny'])
 })
 
 test('a run store inside a plugin is neither scanned nor a home for components: a subject\'s artifact there cannot refuse the plugin', async () => {

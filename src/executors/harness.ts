@@ -49,7 +49,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const project = exec.setting_sources.includes('project')
   const subjectRoot = subjectRootOf(job.case)
   const { real, denyRoots, trapped } = roots(job.case, job.suiteRoots)
-  const store = storeRoots(job.resultsDir)
+  const store = storeRoots(job.resultsDir, [job.workdir.dir, ...plugins, ...(subjectRoot ? [subjectRoot] : [])])
   const policy: GatePolicy = {
     workdir: realpathSync.native(job.workdir.dir),
     // A subject root inside a deny root is only a version for the harness, so
@@ -346,12 +346,16 @@ function roots(c: LoadedCase, suiteRoots: string[]) {
 }
 
 // The run store and the baselines file beside it: a trial.json there names
-// every bug an earlier trial matched. Denied by the gate rather than refused
+// every bug an earlier trial matched. The directory holding them (.litmus/)
+// is denied too, for another config's store or a renamed one, unless a root
+// the session needs sits inside it. Denied by the gate rather than refused
 // like a suite root, since a plugin repo keeping its runs in .litmus/ is the
 // layout the docs suggest. A path not made yet is judged where it will be.
-function storeRoots(resultsDir: string): string[] {
+function storeRoots(resultsDir: string, keep: string[]): string[] {
   const at = (p: string) => (existsSync(p) ? realpathSync.native(p) : existsSync(dirname(p)) ? join(realpathSync.native(dirname(p)), basename(p)) : resolve(p))
-  return [at(resultsDir), at(baselinesFile(resultsDir))]
+  const home = at(dirname(resultsDir))
+  const needed = keep.map(at).some(k => inside(k, home))
+  return [at(resultsDir), at(baselinesFile(resultsDir)), ...(needed ? [] : [home])]
 }
 
 // Everything a harness case must pass before the SDK loads a thing, on the
@@ -365,7 +369,8 @@ export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: str
   // case has to say it accepts that (allow_hooks) before any of them load. The
   // scan runs either way: what allow_hooks waives is only those process
   // signals, never the gate's own checks (isolation, links, unparseable keys).
-  const store = resultsDir ? storeRoots(resultsDir) : []
+  const subject = subjectRootOf(c)
+  const store = resultsDir ? storeRoots(resultsDir, [workdir, ...c.plugins, ...(subject ? [subject] : [])]) : []
   const found = [...c.plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks, store)), project ? fixtureRunsProcesses(workdir, exec.allow_hooks) : undefined].find(x => x !== undefined)
   if (found) return `${found.reason}; ${found.fix}`
   if (project) {
