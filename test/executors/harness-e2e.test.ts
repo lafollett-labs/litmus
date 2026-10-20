@@ -31,7 +31,7 @@ const TRUTH_CANARY = 'TRUTH-CANARY-7f3a'
 const FILE_CANARY = 'FILE-SECRET-CANARY-91c2'
 const LISTING_CANARY = 'LISTING-CANARY-5e0d.txt'
 
-type Setup = { prompt?: string; executor?: string; files?: Record<string, string>; fill?: (caseDir: string, c: ExecJob['case']) => void }
+type Setup = { prompt?: string; executor?: string; files?: Record<string, string>; fill?: (caseDir: string, c: ExecJob['case']) => void; config?: ExecJob['config']; env?: Record<string, string> }
 
 async function session(script: (p: { truth: string; caseDir: string; secret: string }) => Script, setup: Setup = {}) {
   const { c, base } = oneCase(`name: c\nexecutor:\n  kind: harness\n  harness: claude-code\n  prompt: ${JSON.stringify(setup.prompt ?? 'Review a.go')}\n  max_turns: 20\n${setup.executor ?? ''}graders: [{ kind: regex, pattern: x }]\ntimeout_s: 100\n`, {
@@ -48,13 +48,15 @@ async function session(script: (p: { truth: string; caseDir: string; secret: str
   const api = await fakeMessagesApi(script({ truth: join(caseDir, 'truth.yaml'), caseDir, secret }))
   const out = tree({ '.keep': '' })
   const suiteRoot = dirname(dirname(dirname(c.dir)))
-  const saved = process.env['ANTHROPIC_API_KEY']
-  process.env['ANTHROPIC_API_KEY'] = 'sk-ant-fake-e2e-000'
+  // Every run has a key in the operator's env; a subscription run must not use it.
+  const env: Record<string, string> = { ANTHROPIC_API_KEY: 'sk-ant-fake-e2e-000', ...setup.env }
+  const saved = Object.fromEntries(Object.keys(env).map(k => [k, process.env[k]]))
+  Object.assign(process.env, env)
   const job: ExecJob = {
     key: 's/c@fake#1',
     case: c,
     configName: 'fake',
-    config: { provider: 'anthropic', model: 'claude-sonnet-5' },
+    config: setup.config ?? { provider: 'anthropic', model: 'claude-sonnet-5' },
     trial: 1,
     attempt: 1,
     workdir: buildWorkdir(c, { run: '2026-10-19T12-00-00Z-e2e0', key: 's/c@fake#1', attempt: 1 }, base, [suiteRoot]),
@@ -71,11 +73,13 @@ async function session(script: (p: { truth: string; caseDir: string; secret: str
   const query: Query = ({ prompt, options }) => sdkQuery({ prompt, options: { ...options, env: { ...options.env, ANTHROPIC_BASE_URL: api.url } } })
   try {
     const r = await runHarness(job, query)
-    const transcript = readFileSync(job.out.transcript, 'utf8').trim().split('\n').map(l => JSON.parse(l) as { kind: string; tool?: string })
-    return { r, transcript, bodies: api.bodies }
+    const transcript = readFileSync(job.out.transcript, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as { kind: string; tool?: string })
+    return { r, transcript, bodies: api.bodies, auths: api.auths }
   } finally {
-    if (saved === undefined) delete process.env['ANTHROPIC_API_KEY']
-    else process.env['ANTHROPIC_API_KEY'] = saved
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
     job.workdir.cleanup()
     await api.close()
   }
@@ -200,4 +204,18 @@ test('real Claude Code: a CLAUDE.md, the fixture\'s or one the subject writes, i
   // but it does resolve its imports: only the outside one is refused.
   for (const v of ['root', 'nested', 'written']) assert.ok(sent.includes(`INSIDE-${v}`), `the ${v} CLAUDE.md's imports were never resolved`)
   assert.ok(!sent.includes('IMPORT-CANARY'), 'a CLAUDE.md imported a file outside the workdir')
+})
+
+test('real Claude Code: a claude-subscription trial authenticates with the setup-token, never the API key beside it', { skip, timeout: 120_000 }, async () => {
+  const token = 'sk-ant-oat01-fake-e2e-000'
+  const { r, auths } = await session(() => ({ main: [[{ type: 'tool_use', id: 'toolu_01', name: 'Read', input: { file_path: 'a.go' } }]] }), {
+    config: { provider: 'claude-subscription', model: 'claude-sonnet-5' },
+    env: { CLAUDE_CODE_OAUTH_TOKEN: token },
+  })
+  // exit ok also means the init message reported apiKeySource none.
+  assert.equal(r.exit, 'ok', r.reason ?? '')
+  const messages = auths.filter(a => a.startsWith('/v1/messages '))
+  assert.ok(messages.length > 0, 'no Messages call reached the API')
+  assert.deepEqual([...new Set(messages)], [`/v1/messages bearer ${token}`])
+  assert.ok(!auths.some(a => a.includes('sk-ant-fake-e2e-000')), 'the API key was sent')
 })

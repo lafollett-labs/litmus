@@ -72,9 +72,11 @@ export function planRun(configFile: string, req: RunRequest, wording: { configs:
 // What would make every trial of a (case, config) pair an error is a config
 // error now, before anything is spent: a bedrock config, or a bedrock judge a
 // case calls, with no region; and a harness case on a provider the harness
-// cannot use. Only the pairs the run would run are checked, as expand() makes
-// them: a trial key pins its own config, and a rerun runs only its pairs.
-const HARNESS_PROVIDERS = ['anthropic', 'bedrock']
+// cannot use, or a model case on a provider only the harness can use. Only
+// the pairs the run would run are checked, as expand() makes them: a trial
+// key pins its own config, and a rerun runs only its pairs.
+const HARNESS_PROVIDERS = ['anthropic', 'bedrock', 'claude-subscription']
+const HARNESS_ONLY = ['claude-subscription']
 function runnable(config: Config, configs: string[], selection: Selection, only: ReadonlySet<string> | undefined, env: NodeJS.ProcessEnv): void {
   const pairs = selection.flatMap(s => {
     const names = s.trials ? [...new Set(s.trials.map(t => t.config))] : configs
@@ -89,7 +91,10 @@ function runnable(config: Config, configs: string[], selection: Selection, only:
   for (const { c, name } of pairs) {
     const def = own(config.configs, name) // an unknown name is refused where the run starts
     if (def && c.spec.executor.kind === 'harness' && !HARNESS_PROVIDERS.includes(def.provider)) {
-      throw new ConfigError(`${c.id} is a harness case, which cannot run on config "${name}" (provider ${def.provider}); the harness runs on ${HARNESS_PROVIDERS.join(' or ')}`)
+      throw new ConfigError(`${c.id} is a harness case, which cannot run on config "${name}" (provider ${def.provider}); the harness runs on ${HARNESS_PROVIDERS.slice(0, -1).join(', ')} or ${HARNESS_PROVIDERS.at(-1)}`)
+    }
+    if (def && c.spec.executor.kind !== 'harness' && HARNESS_ONLY.includes(def.provider)) {
+      throw new ConfigError(`${c.id} is a ${c.spec.executor.kind} case, which cannot run on config "${name}" (provider ${def.provider}); a subscription token is for Claude Code sessions only`)
     }
   }
   for (const j of new Set(pairs.flatMap(p => judgesOf(p.c)))) {

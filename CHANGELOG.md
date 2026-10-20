@@ -7,6 +7,15 @@ change the config, the suite format or the CLI.
 
 ## [Unreleased]
 
+### Added
+
+- **`claude-subscription` provider.** Harness cases run on the operator's own
+  Claude plan through `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`).
+  litmus never runs a login, stores the token or reads the stored claude.ai
+  login. The token is redacted like every other credential. A model case on
+  it is refused before the run, it can't be a judge, and its trials carry
+  tokens and no cost.
+
 ### Fixed
 
 - **A store kept inside a plugin's component directory skipped the plugin

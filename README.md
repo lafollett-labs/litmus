@@ -48,6 +48,13 @@ Keys are read only from the environment, never from a file. Without the key,
 every trial is ERROR, the summary says why (`ANTHROPIC_API_KEY is not set`),
 and the run exits 3.
 
+Harness cases, which run your skills, plugins and agents under Claude Code, can
+also run on your own Claude plan. Run `claude setup-token`, put the token it
+prints in `CLAUDE_CODE_OAUTH_TOKEN`, and use a config with
+`provider: claude-subscription`. Model cases and judges still need an API key.
+This is for your own use of your own plan, under your plan's terms, and plan
+limits are meant for individual use, so keep `concurrency` low.
+
 ## What it does
 
 - **Runs everything, a selection or a single case.** A suite is a tree: suite →

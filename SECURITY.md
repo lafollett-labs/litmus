@@ -58,8 +58,8 @@ Out of scope:
 | Default-deny tool gate | The gate is a PreToolUse hook, so it sees every tool call the model makes, including read-only tools, tools that settings allow, and subagent calls. A skill body's inline `` !`command` `` runs without a tool call, so it is shell and runs only under `allow_shell`. The session is given only the built-in tools the gate can allow. File tools are confined to the workdir by realpath. Plugin and subject roots are readable but not writable. Writes under `.git/`, and reads inside any suite root, the run store or the directory holding it (unless the workdir, a plugin or the subject root sits inside that directory), are refused. Claude Code would read an `@path` mention without asking the hook, so the trial env turns those reads off (`CLAUDE_CODE_EVAL_CONFINED`) and a mention reaches the model as text. Shell, network, hooks and MCP servers are refused unless the case opts in. Every refusal the gate makes is recorded, and a tool call that ran without the gate allowing it voids the trial. Claude Code's own refusals, of a tool the case has not opted into, come back as error results. A test runs the real Claude Code binary against a fake API to keep this true across SDK versions. |
 | Scrubbed child environments | The harness, `command` graders and `validate` proofs get an allowlisted environment, with `HOME` pointed at a temporary directory. Only the harness gets a credential, and only the one its provider needs. |
 | Git before, snapshot after | Git runs only while the workdir is being built, with system, global and hook config disabled. The files a subject wrote are found by comparing snapshots, so nothing it writes into `.git/` ever runs. |
-| API keys only | The harness authenticates with an API key or AWS credentials. It never uses a claude.ai login. |
-| Redaction by value | Where events and records are produced, the values of known key variables are replaced with `[REDACTED]`, so every sink gets the same scrubbed text. That covers the Anthropic, OpenRouter and AWS keys, plus any listed under `redact`. Provider responses are stored as parsed bodies only. Credentials the AWS SDK resolves from a named profile never pass through litmus's environment, so they are not redacted. |
+| Credentials from the environment only | The harness authenticates with an API key, AWS credentials, or, on `claude-subscription`, the `CLAUDE_CODE_OAUTH_TOKEN` the operator exported. It never uses the stored claude.ai login. |
+| Redaction by value | Where events and records are produced, the values of known key variables are replaced with `[REDACTED]`, so every sink gets the same scrubbed text. That covers the Anthropic, OpenRouter and AWS keys and `CLAUDE_CODE_OAUTH_TOKEN`, plus any listed under `redact`. Provider responses are stored as parsed bodies only. Credentials the AWS SDK resolves from a named profile never pass through litmus's environment, so they are not redacted. |
 | Localhost only | `litmus serve` binds to `127.0.0.1`. It accepts only its own `Host`, requires its own `Origin` on any request that changes state, and sends no CORS headers. |
 | Declarative loading | Loading a suite, case or config never runs code. |
 | Fenced judge material | What a judge or extractor reads (a transcript, a review, a finding) is fenced in tags, with any closing tag inside it defused in any case or spacing, and the prompt says the material is data, not instructions. This makes a subject that writes "reply pass: true" much less likely to steer its judge, but it is a mitigation, not a guarantee: prompt injection against a model judge is not fully preventable. A binary judge answers false when unsure. |
@@ -79,12 +79,17 @@ A scrubbed environment keeps keys out of reach of casual reads. **It does not
 contain a hostile process**, which can still read any file you can read. A
 shell command, hook or MCP server started by the harness is the harness's
 child, so it also holds the harness's credential: under `allow_shell`,
-`echo $ANTHROPIC_API_KEY` works. A Bedrock harness run with `AWS_PROFILE`
-points at your real AWS config and credentials files, so under `allow_shell` a
-subject can read every profile in them. Until
-the container executor lands (see "After 0.1.0" in the plan), run the four
-uncontained paths only on a machine you are willing to lose, and only for
-suites whose authors you trust.
+`echo $ANTHROPIC_API_KEY` works. On `claude-subscription` it is
+`CLAUDE_CODE_OAUTH_TOKEN`, a long-lived token for your plan. Claude Code
+keeps it out of a shell's environment, but a shell can still read it from
+the process table (`ps -E` on macOS, `/proc/<pid>/environ` on Linux), and a
+shell reaches the network without `allow_network`, which gates only the web
+tools. Use a token you can revoke, and never use `allow_shell` with it for a
+suite you don't trust. A Bedrock harness run with `AWS_PROFILE` points at
+your real AWS config and credentials files, so under `allow_shell` a subject
+can read every profile in them. Until the container executor lands (see
+"After 0.1.0" in the plan), run the four uncontained paths only on a machine
+you are willing to lose, and only for suites whose authors you trust.
 
 ## Results are sensitive
 

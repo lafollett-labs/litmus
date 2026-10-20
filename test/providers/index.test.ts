@@ -10,6 +10,10 @@ test('each config builds the provider it names, without needing credentials up f
   assert.equal(createProvider({ provider: 'fake', model: 'fake' }).id, 'fake')
 })
 
+test('claude-subscription builds no Messages provider: the token runs only the harness', () => {
+  assert.throws(() => createProvider({ provider: 'claude-subscription', model: 'claude-opus-5-5' }, { CLAUDE_CODE_OAUTH_TOKEN: 't' }), (e: unknown) => e instanceof ConfigError && /runs only harness cases/.test(e.message))
+})
+
 test('pricing fills cost from the table, but a cost the provider reported always wins', () => {
   const pricing = { 'claude-opus-5-5': { input: 4, output: 20 } }
   assert.deepEqual(priced({ input_tokens: 1_000_000, output_tokens: 500_000 }, 'claude-opus-5-5', pricing), {

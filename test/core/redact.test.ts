@@ -24,6 +24,6 @@ test('a JSON value is redacted in its keys and nested values, before anything es
 })
 
 test('the scrubbed set is every credential variable plus the config\'s own names, set and non-empty', () => {
-  const env = { ANTHROPIC_API_KEY: 'sk-a', AWS_SESSION_TOKEN: '', MY_TOKEN: 'mine', OTHER: 'not-listed' }
-  assert.deepEqual(secretValues(['MY_TOKEN', 'UNSET'], env).sort(), ['mine', 'sk-a'])
+  const env = { ANTHROPIC_API_KEY: 'sk-a', AWS_SESSION_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat', MY_TOKEN: 'mine', OTHER: 'not-listed' }
+  assert.deepEqual(secretValues(['MY_TOKEN', 'UNSET'], env).sort(), ['mine', 'sk-a', 'sk-ant-oat'])
 })

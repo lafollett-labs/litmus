@@ -8,6 +8,7 @@ export const CREDENTIAL_VARS = [
   'AWS_SECRET_ACCESS_KEY',
   'AWS_SESSION_TOKEN',
   'AWS_BEARER_TOKEN_BEDROCK', // a Bedrock API key
+  'CLAUDE_CODE_OAUTH_TOKEN', // a Claude subscription, from `claude setup-token`
 ] as const
 
 // A params key that names where a credential would go. Deliberately broad

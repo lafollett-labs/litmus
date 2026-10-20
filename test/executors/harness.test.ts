@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } fro
 import { dirname, join } from 'node:path'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
-import { runHarness, type Query } from '../../src/executors/harness.ts'
+import { credentials, runHarness, type Query } from '../../src/executors/harness.ts'
 import { sessionTools } from '../../src/executors/gate.ts'
 import type { ExecJob } from '../../src/executors/types.ts'
 import { redactor, secretValues } from '../../src/core/redact.ts'
@@ -242,6 +242,57 @@ test('on bedrock, an empty AWS_REGION counts as unset and AWS_DEFAULT_REGION is 
   }
   assert.equal(calls[0]?.env?.['AWS_REGION'], 'eu-west-1')
   assert.equal(calls[0]?.env?.['CLAUDE_CODE_USE_BEDROCK'], '1')
+})
+
+test('on claude-subscription the session gets the token and never ANTHROPIC_API_KEY, which Claude Code would prefer; tokens carry no cost', async () => {
+  const { query, calls } = scripted([result()])
+  process.env['CLAUDE_CODE_OAUTH_TOKEN'] = 'sk-ant-oat-test'
+  let r
+  try {
+    r = await runHarness(job(HARNESS(), {}, { provider: 'claude-subscription', model: 'claude-opus-5-5' }), query)
+  } finally {
+    delete process.env['CLAUDE_CODE_OAUTH_TOKEN']
+  }
+  const env = calls[0]!.env!
+  assert.equal(env['CLAUDE_CODE_OAUTH_TOKEN'], 'sk-ant-oat-test')
+  assert.equal(process.env['ANTHROPIC_API_KEY'], 'sk-ant-test')
+  assert.equal(env['ANTHROPIC_API_KEY'], undefined)
+  assert.notEqual(env['CLAUDE_CONFIG_DIR'], undefined)
+  assert.deepEqual(r.usage, { input_tokens: 115, output_tokens: 20 })
+})
+
+test('on claude-subscription without CLAUDE_CODE_OAUTH_TOKEN nothing runs, and the reason says how to make one', async () => {
+  const sub = { config: { provider: 'claude-subscription', model: 'claude-opus-5-5' } as ConfigDef }
+  assert.match(String(credentials(sub, { ANTHROPIC_API_KEY: 'sk-ant-x' })), /needs CLAUDE_CODE_OAUTH_TOKEN \(make one with `claude setup-token`\)/)
+  assert.deepEqual(credentials(sub, { ANTHROPIC_API_KEY: 'sk-ant-x', CLAUDE_CODE_OAUTH_TOKEN: 'oat' }), { CLAUDE_CODE_OAUTH_TOKEN: 'oat' })
+  const { query, calls } = scripted([result()])
+  const saved = process.env['CLAUDE_CODE_OAUTH_TOKEN']
+  delete process.env['CLAUDE_CODE_OAUTH_TOKEN']
+  try {
+    const r = await runHarness(job(HARNESS(), {}, sub.config), query)
+    assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
+  } finally {
+    if (saved !== undefined) process.env['CLAUDE_CODE_OAUTH_TOKEN'] = saved
+  }
+  assert.equal(calls.length, 0)
+})
+
+test('on claude-subscription, a session where Claude Code chose an API key over the token is void', async () => {
+  const init = (apiKeySource: string) => ({ type: 'system', subtype: 'init', apiKeySource }) as unknown as SDKMessage
+  process.env['CLAUDE_CODE_OAUTH_TOKEN'] = 'sk-ant-oat-test'
+  try {
+    const sub = { provider: 'claude-subscription', model: 'claude-opus-5-5' } as const
+    const keyed = await runHarness(job(HARNESS(), {}, sub), scripted([init('apiKeyHelper'), result()]).query)
+    assert.deepEqual([keyed.exit, keyed.retryable], ['infra_error', false])
+    assert.match(keyed.reason ?? '', /Claude Code chose apiKeyHelper over CLAUDE_CODE_OAUTH_TOKEN/)
+    const plan = await runHarness(job(HARNESS(), {}, sub), scripted([init('none'), result()]).query)
+    assert.equal(plan.exit, 'ok')
+    // An API-key run says its source too, and that is what it asked for.
+    const api = await runHarness(job(HARNESS()), scripted([init('ANTHROPIC_API_KEY'), result()]).query)
+    assert.equal(api.exit, 'ok')
+  } finally {
+    delete process.env['CLAUDE_CODE_OAUTH_TOKEN']
+  }
 })
 
 test('without an API key, or on a provider the harness cannot use, nothing runs', async () => {
