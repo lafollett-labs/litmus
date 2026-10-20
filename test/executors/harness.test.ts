@@ -400,9 +400,16 @@ test('a store inside a component directory, or a component inside the store\'s d
   const evil = { 'agents/evil.md': '---\nname: evil\nisolation: worktree\n---\nx\n' }
   assert.match(await run(evil, 'agents/runs'), /keeps the run store inside its agents directory agents/)
   assert.match(await run(evil, 'agents'), /keeps the run store inside its agents directory agents/)
+  // Every default component directory, in any case.
+  assert.match(await run({ 'Agents/evil.md': '---\nname: evil\nisolation: worktree\n---\nx\n' }, 'Agents/runs'), /keeps the run store inside its agents directory agents/)
+  assert.match(await run({ 'output-styles/s.md': 's' }, 'output-styles/runs'), /inside its output-styles directory/)
+  assert.match(await run({ 'workflows/w.js': '' }, 'workflows/runs'), /inside its workflows directory/)
+  assert.match(await run({ 'themes/t.json': '{}' }, 'themes/runs'), /inside its themes directory/)
   // x/ holds the store, so the gate denies x/, and the manifest loads skills from it.
   const manifest = { '.claude-plugin/plugin.json': '{"name":"x","skills":"./x/skills"}', 'x/skills/s/SKILL.md': '---\nname: s\ndescription: s\n---\ns\n' }
   assert.match(await run(manifest, 'x/runs'), /loads skills from \.\/x\/skills, inside the run store/)
+  const upper = { ...manifest, '.claude-plugin/plugin.json': '{"name":"x","skills":"./X/skills"}' }
+  assert.match(await run(upper, 'x/runs'), /loads skills from \.\/X\/skills, inside the run store/)
   assert.equal(await run({}, '.litmus/runs'), '', 'the layout the docs suggest is fine')
 })
 

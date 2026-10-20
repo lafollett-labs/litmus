@@ -814,9 +814,12 @@ of a plugin, only `runs/` is denied. They are denied rather than
 refused like a suite root inside a plugin, so a plugin repo can keep its runs
 in `.litmus/`. The plugin checks skip what the gate denies of the store,
 since its artifacts are what subjects wrote. So a component directory may not
-overlap it either way: a plugin whose `skills/`, `agents/` or `commands/`
-directory, or a path its manifest names, lies inside the denied area, or
-holds the store, is refused. The gate fails closed: a call it cannot judge (an
+overlap it either way: a plugin whose default component directory
+(`skills/`, `agents/`, `commands/`, `output-styles/`, `themes/`,
+`workflows/`) or manifest component path lies inside the denied area, or
+holds the store, is refused. Paths are compared case-folded. A component at
+the plugin root (`"skills": "./"`) therefore cannot share a plugin with the
+store. The gate fails closed: a call it cannot judge (an
 unreadable path, a path through a file) is a denial with the error as its
 reason. Paths are compared by their on-disk case (`realpath.native`), and names
 that may not exist yet are compared case-folded, so a case variant on a

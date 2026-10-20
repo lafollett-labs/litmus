@@ -455,14 +455,18 @@ export function pluginRunsProcesses(dir: string, allowHooks = false, store: Stor
   return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks, storeRel(dir, denied(store)))
 }
 
-const COMPONENT_DIRS = ['commands', 'agents', 'skills']
+// The default component directories Claude Code loads from a plugin, less
+// hooks/ and monitors/, whose files are checked by name before the walk.
+// Re-check against the binary's own list on each SDK bump.
+const COMPONENT_DIRS = ['commands', 'agents', 'skills', 'output-styles', 'themes', 'workflows']
 
 // A component path and what the gate denies of the store may not overlap
 // either way: a component inside it would load unscanned, and a store inside
 // a component would be loaded as one.
 function storeClash(dir: string, path: string, store: Store, key = path): Refusal | undefined {
-  const component = resolve(dir, path)
-  const at = (paths: string[]) => storeRel(dir, paths).map(r => resolve(dir, r))
+  // Folded: on a case-insensitive volume Claude Code's agents/ opens Agents/.
+  const component = fold(resolve(dir, path))
+  const at = (paths: string[]) => storeRel(dir, paths).map(r => fold(resolve(dir, r)))
   if (at(store.files).some(s => inside(s, component))) return blocks(`plugin ${dir} keeps the run store inside its ${key} directory ${path}`, "keep results outside the plugin's component directories")
   if (at(denied(store)).some(s => inside(component, s))) return blocks(`plugin ${dir} loads ${key} from ${path}, inside the run store`, 'keep components out of the results directory')
   return undefined
