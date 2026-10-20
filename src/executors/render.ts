@@ -34,19 +34,41 @@ function numbered(name: string, path: string): string {
   return `=== ${name} ===\n${lines.map((l, i) => `${String(i + 1).padStart(width)} | ${l}`).join('\n')}\n`
 }
 
-// The last ```json fence wins, because models reason first and answer last;
-// failing that, the whole response if it is one JSON object. Anything else is
-// no object at all, and the graders decide what that means.
+// The last ```json fence is the answer, because models reason first and answer
+// last; with no fence, the whole response if it is one JSON object. An earlier
+// fence is never fallen back to: it is a draft, or an example echoed from the
+// prompt ("pass": true), and a broken final answer is no answer. The fence
+// closes at a ``` that starts a line, at any indent and whatever follows it:
+// JSON cannot hold a raw newline inside a string, so a code block quoted in a
+// finding's fix or a judge's rationale never ends it early. If that slice is
+// not an object, a ``` right after a } closes it instead (`{...}```), first
+// the earliest and then the last; one inside a string leaves the slice
+// unterminated. At most three parses, so the scan stays linear. Anything else
+// is no object at all, and the graders decide what that means.
+const OPENER = /```json[ \t]*\r?\n/g
+// After \n only: JSON may hold a raw U+2028 or U+2029 in a string, and ^ with
+// the m flag would start a line there.
+const CLOSER = /(?<![^\n])[ \t]*```/g
+
 export function extractJson(text: string): Record<string, unknown> | undefined {
-  const fences = [...text.matchAll(/```json\s*\n([\s\S]*?)```/g)]
-  const candidates = fences.length ? [fences[fences.length - 1]![1]!] : [text.trim()]
-  for (const c of candidates) {
-    try {
-      const v: unknown = JSON.parse(c)
-      if (v !== null && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
-    } catch {
-      // not JSON: fall through to undefined
-    }
+  const opens = [...text.matchAll(OPENER)]
+  if (opens.length === 0) return jsonObject(text.trim())
+  const start = opens.at(-1)!.index + opens.at(-1)![0].length
+  CLOSER.lastIndex = start
+  const line = CLOSER.exec(text)
+  const fenced = line ? jsonObject(text.slice(start, line.index)) : undefined
+  if (fenced) return fenced
+  const first = text.indexOf('}```', start)
+  if (first < 0) return undefined
+  const last = text.lastIndexOf('}```')
+  return jsonObject(text.slice(start, first + 1)) ?? (last > first ? jsonObject(text.slice(start, last + 1)) : undefined)
+}
+
+function jsonObject(s: string): Record<string, unknown> | undefined {
+  try {
+    const v: unknown = JSON.parse(s)
+    return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined
+  } catch {
+    return undefined // not JSON
   }
-  return undefined
 }

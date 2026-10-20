@@ -18,6 +18,32 @@ change the config, the suite format or the CLI.
   outside the plugin's component directories". The 0.1.1 note on the store's
   directory now states its exception: it stays readable when the workdir, a
   plugin or the subject root sits inside it.
+- **review-match false passes.**
+  - A finding must point at its bug: one wider than the bug plus the window
+    either side matches nothing. A whole-file range used to match every bug
+    in the file at recall 1.0 and step over the decoy beside it. A finding
+    too wide to point at any bug it is near is a false positive, unless it
+    overlaps a decoy in its file, which makes it a decoy hit.
+  - A seeded case must set `min_recall` above 0. `min_claims_correct` alone
+    is n/a when nothing matched, so an empty review passed.
+  - A clean case must set `max_false_positives` or `max_findings`, or
+    `max_decoy_hits` when it has a decoy. `max_nits` and `max_duplicates`
+    are always 0 there, and so is `max_decoy_hits` with no decoy.
+- **Fenced JSON with a code block inside a string.** A ```json fence now
+  closes at a ``` that starts a line, or else at a `}```` that ends the
+  JSON. A finding's `fix`, an extracted review or a judge rationale holding
+  its own code block used to cut the answer short and grade a correct reply
+  FAIL. Only the last fence is read.
+- **The example review prompts said "before the change"** over the
+  post-change tree. They now say the code is after the change, with the line
+  numbers to cite. The prompts are part of the case hash, so comparisons
+  against runs before this change exclude these three cases.
+- The example prompts ask for the narrowest range, and the example seeded
+  cases set `max_findings`.
+- `litmus validate` warns when a decoy lies within a review-match window of
+  a bug, when a seeded review-match sets no `max_findings` (a grid of nits
+  one window apart finds every bug blind), and when a clean case sets
+  `max_nits` or `max_duplicates`.
 
 ## [0.1.1] - 2026-10-19
 

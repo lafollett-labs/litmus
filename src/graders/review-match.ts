@@ -41,6 +41,10 @@ export function score(truth: TruthFile, findings: Finding[], window: number, wor
   const bs: Span[] = truth.bugs.map(b => ({ file: normPath(b.file), start: b.lines[0], end: b.lines[1] }))
   const ds: Span[] = truth.decoys.map(d => ({ file: normPath(d.file), start: d.lines[0], end: d.lines[1] }))
   const near = (f: Span, t: Span) => f.file === t.file && gap(f, t) <= window
+  // A finding has to point at the bug: one no wider than the bug plus the
+  // window either side. A range over the whole file overlaps every bug in it.
+  const covers = (f: Span, d: Span) => f.file === d.file && f.start <= d.end && d.start <= f.end
+  const points = (f: Span, b: Span) => near(f, b) && f.end - f.start <= b.end - b.start + 2 * window
 
   // The tie-breaks as a cost vector, compared lexicographically:
   //   [total gap, bug i matched (-1) for i in truth order, finding index matched to bug i]
@@ -51,7 +55,7 @@ export function score(truth: TruthFile, findings: Finding[], window: number, wor
   const candidates: Candidate[] = []
   bs.forEach((b, i) =>
     fs.forEach((f, j) => {
-      if (!near(f, b)) return
+      if (!points(f, b)) return
       const cost = new Array<number>(1 + 2 * nb).fill(0)
       cost[0] = gap(f, b)
       cost[1 + i] = -1
@@ -70,7 +74,13 @@ export function score(truth: TruthFile, findings: Finding[], window: number, wor
     if (matchedFindings.has(j)) return
     const decoy = ds.findIndex(d => near(f, d))
     const dup = bs.findIndex((b, i) => matchedBugs.has(i) && near(f, b))
-    if (decoy >= 0) unmatched.push({ finding: j, as: 'decoy_hit', near: truth.decoys[decoy]!.id })
+    // Too wide to point at any bug it is near: a claim that located nothing.
+    // Unless its range overlaps a decoy in its file, which it then flagged:
+    // a decoy hit.
+    const nearBugs = bs.filter(b => near(f, b))
+    const tooWide = nearBugs.length > 0 && !nearBugs.some(b => points(f, b))
+    if (tooWide && !ds.some(d => covers(f, d))) unmatched.push({ finding: j, as: 'false_positive' })
+    else if (decoy >= 0) unmatched.push({ finding: j, as: 'decoy_hit', near: truth.decoys[decoy]!.id })
     else if (dup >= 0) unmatched.push({ finding: j, as: 'duplicate', near: truth.bugs[dup]!.id })
     // A clean case has no nits: every finding on it claims a bug that is not there.
     else if (truth.kind === 'seeded' && (findings[j]!.severity === 'info' || findings[j]!.severity === 'low')) unmatched.push({ finding: j, as: 'nit' })

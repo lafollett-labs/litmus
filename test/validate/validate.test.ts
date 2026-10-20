@@ -28,7 +28,7 @@ async function check(configFile: string, o: Parameters<typeof validate>[2] = {})
   return problems
 }
 
-const REVIEW = 'executor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 1 } }]\n'
+const REVIEW = 'executor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 1, max_findings: 5 } }]\n'
 const FIX = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-broken\n+fixed\n'
 // A seeded case whose one bug is "a.txt says broken": the proof greps for the fix.
 function seeded(name: string, bug: { proof?: string; fix?: string } = {}, files: Record<string, string> = {}): Record<string, string> {
@@ -97,7 +97,7 @@ test('a proof\'s output is redacted before it is reported', async () => {
 test('a symlink in the fixture is an error, and warnings name a rate policy that cannot pass and a bound a clean case never defines', async () => {
   const configFile = project({
     rate: { 'case.yaml': 'name: rate\ntrials: 2\npolicy: rate\nthreshold: 0.9\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, target: response.txt, pattern: x }]\n' },
-    clean: { 'case.yaml': 'name: clean\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 0.5, max_false_positives: 0 } }]\n', 'truth.yaml': 'kind: clean\n', 'fixture/a.txt': 'x\n' },
+    clean: { 'case.yaml': 'name: clean\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 0.5, max_false_positives: 0, max_nits: 0 } }]\n', 'truth.yaml': 'kind: clean\n', 'fixture/a.txt': 'x\n' },
     linked: { 'case.yaml': 'name: linked\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: regex, target: response.txt, pattern: x }]\n', 'fixture/a.txt': 'x\n' },
   })
   const linked = join(configFile, '../suites/s/cases/linked/fixture/escape')
@@ -105,9 +105,28 @@ test('a symlink in the fixture is an error, and warnings name a rate policy that
   assert.equal(r.status, 0)
   const ps = await check(configFile)
   assert.match(only(ps, 's/rate').join('\n'), /^warn: policy rate with threshold 0\.9 needs at least \d+ unbroken passes to return PASS; the case runs 2 trials/)
-  assert.deepEqual(only(ps, 's/clean'), ['warn: review-match sets min_recall, which is never defined on a clean case (it has no bugs), so it never applies'])
+  assert.deepEqual(only(ps, 's/clean'), [
+    'warn: review-match sets min_recall, which is never defined on a clean case (it has no bugs), so it never applies',
+    'warn: review-match sets max_nits, which is always 0 on a clean case (no finding there is a nit or a duplicate), so it never fails',
+  ])
   // Any link in a case is refused when a run hashes the case, so validate reports that and checks no further.
   assert.deepEqual(only(ps, 's/linked'), [`error: ${join(configFile, '../suites/s/cases/linked/fixture/escape')} is a symlink; a hashed tree must hold only files and directories; a run that selects this case is refused`])
+})
+
+test('a seeded review-match with no max_findings is a warning: a grid of findings would find every bug blind', async () => {
+  const ps = await check(project({ open: seeded('open', {}, { 'case.yaml': 'name: open\nexecutor: { kind: model, prompt: hi }\ngraders: [{ kind: review-match, pass: { min_recall: 1 } }]\n' }) }))
+  assert.deepEqual(only(ps, 's/open'), ['warn: review-match sets no max_findings, so a grid of findings 11 lines apart would find every bug without locating one; bound how many findings a review may make'])
+})
+
+test('a decoy within review-match\'s window of a bug is a warning: a finding on the decoy would be credited to the bug', async () => {
+  // The decoy spells its file ./a.txt: scoring normalizes paths, so the check does too.
+  const truth = (decoyLine: number) => `kind: seeded\nbugs:\n  - { id: b1, file: a.txt, lines: [1, 1], severity: high, category: correctness, summary: s, proof: "grep -qx fixed a.txt", fix: fix/b1.patch }\ndecoys:\n  - { id: d1, file: ./a.txt, lines: [${decoyLine}, ${decoyLine}], summary: s }\n`
+  const lines = 'broken\n' + 'x\n'.repeat(20)
+  const fix = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-broken\n+fixed\n x\n'
+  const at = (decoyLine: number) => ({ 'truth.yaml': truth(decoyLine), 'fixture/a.txt': lines, 'fix/b1.patch': fix })
+  const ps = await check(project({ near: seeded('near', {}, at(7)), far: seeded('far', {}, at(8)) }))
+  assert.deepEqual(only(ps, 's/near'), ['warn: decoy d1 lies within review-match\'s window (5 lines) of bug b1, so a finding on the decoy is credited as finding the bug; move them apart or narrow the window'])
+  assert.deepEqual(only(ps, 's/far'), [])
 })
 
 test('a harness case gets the checks a run makes before the SDK loads: hooks need allow_hooks, and a suite may not sit inside a plugin', async () => {
@@ -303,7 +322,7 @@ test('an unreadable proof/ directory is an error for its case alone', { skip: pr
 test('a harness case\'s proof/ may add what a harness would refuse in a fixture: the harness never sees proof/', async () => {
   const harness = (extra: Record<string, string>) => ({
     ...seeded('hp', {}, extra),
-    'case.yaml': `name: hp\nexecutor:\n  kind: harness\n  harness: claude-code\n  prompt: /review\n  setting_sources: [project]\ngraders: [{ kind: review-match, pass: { min_recall: 1 } }]\n`,
+    'case.yaml': `name: hp\nexecutor:\n  kind: harness\n  harness: claude-code\n  prompt: /review\n  setting_sources: [project]\ngraders: [{ kind: review-match, pass: { min_recall: 1, max_findings: 5 } }]\n`,
   })
   assert.deepEqual(await check(project({ hp: harness({ 'proof/.mcp.json': '{}', 'proof/.claude/settings.json': '{"permissions":{}}' }) }), { proofs: false }), [])
   // The same files in the fixture are refused.

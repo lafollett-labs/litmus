@@ -8,6 +8,8 @@ import { inside } from '../core/paths.ts'
 import { redactor, secretValues, type Redactor } from '../core/redact.ts'
 import { harnessPreflight, subjectRootOf } from '../executors/harness.ts'
 import { command } from '../graders/command.ts'
+import { normPath } from '../graders/common.ts'
+import { gap } from '../graders/review-match.ts'
 import type { GradeContext, TrialResult } from '../graders/index.ts'
 import { buildWorkdir, copyTree, git } from '../sandbox/workdir.ts'
 import { minTrialsToPass } from '../stats/verdict.ts'
@@ -113,6 +115,25 @@ async function check(config: Config, cases: LoadedCase[], o: ValidateOptions, ru
         if (g.kind !== 'review-match') continue
         for (const bound of ['min_recall', 'min_claims_correct'] as const) {
           if (g.pass[bound] !== undefined) say('warn', `review-match sets ${bound}, which is never defined on a clean case (it has no bugs), so it never applies`)
+        }
+        for (const bound of ['max_nits', 'max_duplicates'] as const) {
+          if (g.pass[bound] !== undefined) say('warn', `review-match sets ${bound}, which is always 0 on a clean case (no finding there is a nit or a duplicate), so it never fails`)
+        }
+      }
+    }
+    // Bugs are matched before decoys are looked at, so a finding on a decoy
+    // within the window of a bug is credited as finding the bug.
+    if (c.truth?.kind === 'seeded') {
+      const span = (t: { file: string; lines: [number, number] }) => ({ file: normPath(t.file), start: t.lines[0], end: t.lines[1] })
+      for (const g of c.spec.graders) {
+        if (g.kind !== 'review-match') continue
+        // Low and info findings away from a bug are nits, not false positives,
+        // so a grid of them one window apart finds every bug without looking.
+        if (g.pass.max_findings === undefined) say('warn', `review-match sets no max_findings, so a grid of findings ${2 * g.window + 1} lines apart would find every bug without locating one; bound how many findings a review may make`)
+        for (const d of c.truth.decoys) {
+          for (const b of c.truth.bugs) {
+            if (span(d).file === span(b).file && gap(span(d), span(b)) <= g.window) say('warn', `decoy ${d.id} lies within review-match's window (${g.window} lines) of bug ${b.id}, so a finding on the decoy is credited as finding the bug; move them apart or narrow the window`)
+          }
         }
       }
     }

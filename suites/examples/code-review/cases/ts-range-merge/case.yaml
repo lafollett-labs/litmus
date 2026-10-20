@@ -8,5 +8,5 @@ graders:
     artifact: findings.json
     schema: litmus:findings
   - kind: review-match
-    pass: { min_recall: 1.0, max_false_positives: 1 }
+    pass: { min_recall: 1.0, max_false_positives: 1, max_findings: 3 }
 tags: [typescript]

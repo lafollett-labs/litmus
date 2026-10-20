@@ -110,6 +110,44 @@ test('an absolute path is stripped when graded end to end', async () => {
   assert.equal(r.pass, true, r.rationale ?? '')
 })
 
+test('a finding must point at the bug: one wider than the bug plus the window either side matches nothing', () => {
+  const truth = seeded([bug('b', T, [23, 25])], [decoy('d', T, [48, 50])])
+  // The bug is 3 lines; with window 5 a finding may span up to 13.
+  assert.equal(score(truth, [f(T, 18, 'high', 30)], 5).pairs.length, 1)
+  assert.equal(score(truth, [f(T, 18, 'high', 31)], 5).pairs.length, 0)
+  // A whole-file range used to match every bug and dodge the decoy beside it.
+  // Too wide to point at the bug, it matches nothing; covering the decoy, it is a decoy hit.
+  const wide = score(truth, [f(T, 1, 'high', 9999), f(T, 15, 'info', 49)], 5)
+  assert.equal(wide.pairs.length, 0)
+  assert.deepEqual(wide.unmatched.map(u => u.as), ['decoy_hit', 'decoy_hit'])
+  // Too wide over the bug and clear of the decoy: a false positive.
+  assert.deepEqual(score(truth, [f(T, 1, 'high', 40)], 5).unmatched.map(u => u.as), ['false_positive'])
+  // Within the window of the decoy but not over it, even ending the line before: it flagged nothing there either.
+  assert.deepEqual(score(truth, [f(T, 1, 'high', 44)], 5).unmatched.map(u => u.as), ['false_positive'])
+  assert.deepEqual(score(truth, [f(T, 1, 'high', 47)], 5).unmatched.map(u => u.as), ['false_positive'])
+  // Over the lines of a decoy in another file: still a false positive.
+  const other = seeded([bug('b', 'x.go', [23, 25])], [decoy('d', 'y.go', [48, 50])])
+  assert.deepEqual(score(other, [f('x.go', 23, 'high', 25), f('x.go', 1, 'high', 60)], 5).unmatched.map(u => u.as), ['false_positive'])
+  // Too wide, but over no bug: classified as before.
+  assert.deepEqual(score(truth, [f(T, 40, 'high', 60)], 5).unmatched.map(u => u.as), ['decoy_hit'])
+})
+
+test('a wide finding that flags the decoy and reaches a bug is a decoy hit, so max_decoy_hits 0 fails it', async () => {
+  // go-token-expiry's geometry: two precise findings, and one over the decoy that ends 2 lines from a bug.
+  const truth = seeded([bug('a', T, [23, 25]), bug('b', T, [29, 33])], [decoy('d', T, [48, 50])])
+  const fs = [f(T, 23, 'high', 25), f(T, 29, 'high', 33), f(T, 36, 'high', 60)]
+  assert.deepEqual(score(truth, fs, 5).unmatched, [{ finding: 2, as: 'decoy_hit', near: 'd' }])
+  const r = await graded(truth, fs, { min_recall: 1, max_false_positives: 1, max_findings: 4, max_decoy_hits: 0 })
+  assert.equal(r.pass, false)
+})
+
+test('a second report of a wide bug is a duplicate even beside a narrower bug it is too wide for', () => {
+  const truth = seeded([bug('a', T, [10, 30]), bug('b', T, [32, 32])])
+  const s = score(truth, [f(T, 10, 'high', 30), f(T, 10, 'high', 30), f(T, 32)], 5)
+  assert.equal(s.pairs.length, 2)
+  assert.deepEqual(s.unmatched, [{ finding: 1, as: 'duplicate', near: 'a' }])
+})
+
 test('decoy geometry: within the window of a decoy is a decoy hit at any severity; beyond it, a false positive', () => {
   const truth = seeded([bug('b', T, [10, 12])], [decoy('ctc', T, [60, 62])])
   const s = score(truth, [f(T, 66, 'info'), f(T, 70), f('other.go', 61), f(T, 58, 'critical')], 5)
