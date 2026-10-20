@@ -1,6 +1,6 @@
 # Code Review: feat-claude-subscription
 
-**Verdict:** 🚫 BLOCKED (round 1, at `c086564`). HIGH-001 was dismissed as the owner's decision. The other findings are fixed in `7213d6e`, which round 2 reviews.
+**Verdict:** 🚫 BLOCKED (round 1, at `c086564`). HIGH-001 was dismissed as the owner's decision. The other findings are fixed in `7213d6e` (`f5f98bf` after the rebase onto `main`), which round 2 reviews.
 
 | | |
 | - | - |
@@ -53,11 +53,36 @@ PE-Vue confirmed the boundaries:
 | - | - | - |
 | PE-Vue | targeted | `npm run typecheck` exit 0 at `c086564`; targeted tests 78/78 with the token unset; a probe reproduced LOW-002 |
 
-After the fixes, at `7213d6e`:
+After the fixes, at `7213d6e` (`f5f98bf` after the rebase):
 
 - `npm run check` exit 0.
 - `npm test` tests 603, pass 598, fail 0, skipped 5.
 - The harness tests with `CLAUDE_CODE_OAUTH_TOKEN` set: pass 38, fail 0.
+
+## Review Round 2
+
+**Verdict:** 🔁 CHANGES REQUESTED at `034e14b`, after the rebase onto `main` (`ff403f5`) and a new real-binary e2e row. All findings are fixed in the next commit.
+
+| | |
+| - | - |
+| **Reviewer** | PE-Vue |
+| **Reviewed SHA** | `034e14b` |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | SECURITY.md implied `allow_shell` was safe without `allow_network`, and named the wrong read path. Claude Code 2.1.281 keeps `CLAUDE_CODE_OAUTH_TOKEN` out of a shell's env, but `ps -E` shows it, and a shell reaches the network without `allow_network` | Fixed. The paragraph now names the process table, says `allow_network` gates only the web tools, and says never to use `allow_shell` with the token for a suite you don't trust |
+| LOW-001 | Lines the rebase left unwrapped | Fixed |
+| INFO-001 | The rebase resolution in `harness.ts` is correct; the init check still fires before any ungated call | Noted |
+| INFO-002 | `vR()` is remote managed-settings eligibility, not credential choice. Eval-confined mode does not touch the auth source | Noted. On a Team or Enterprise plan the org's managed settings can apply to a trial, as they do for an org API key. An `apiKeyHelper` they supply is caught by the init check |
+| INFO-003 | The e2e row has two independent kill layers: the init check, and the auth-header assertion | Noted |
+| INFO-004 | The review doc cited a pre-rebase SHA | Fixed |
+
+Probes found the token in 0 files, events or request bodies, and found no keychain item left behind.
+
+Receipts after the fixes:
+
+- `npm run check` exit 0.
+- `npm test` tests 626, pass 621, fail 0, skipped 5.
 
 ---
 
