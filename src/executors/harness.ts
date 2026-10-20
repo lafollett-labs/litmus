@@ -9,7 +9,7 @@ import { digest, readRegular, snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
 import { fold, inside } from '../core/paths.ts'
 import { baselinesFile } from '../store/store.ts'
-import { decide, NETWORK_TOOLS, SHELL_TOOLS, sessionTools, type GatePolicy } from './gate.ts'
+import { decide, NETWORK_TOOLS, realpathOf, SHELL_TOOLS, sessionTools, type GatePolicy } from './gate.ts'
 import { bedrockRegion } from '../providers/index.ts'
 import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
@@ -195,7 +195,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
       if (m.type === 'system' && m.subtype === 'init' && job.config.provider === 'claude-subscription' && m.apiKeySource !== 'none') {
         // Managed settings can hand Claude Code an API key, which it ranks
         // above the token: the run would bill a key nobody chose.
-        wrongCredential = m.apiKeySource
+        wrongCredential = m.apiKeySource || 'an unreported credential'
         break
       }
       if (m.type === 'result') {
@@ -248,9 +248,10 @@ const FAILS_AGAIN_TEXT = /authentication|invalid (x-)?api[ -]key|permission|cred
 
 // Tokens from modelUsage, which covers every model call in the session:
 // subagents included. `usage` is the main loop only, and a review skill that
-// fans out to reviewers spends most of its tokens outside it. A subscription
-// is not billed per token, so its trials carry tokens and no cost: the SDK's
-// figure is an API price nobody paid.
+// fans out to reviewers spends most of its tokens outside it. litmus can't
+// see what a plan bills, so subscription trials carry tokens and no cost: the
+// SDK's figure is an API price, which only extra usage past the plan's limit
+// would charge.
 function usageOf(result: Extract<SDKMessage, { type: 'result' }>, billed: boolean): Usage {
   const cost = billed ? { cost_usd: result.total_cost_usd } : {}
   const models = Object.values(result.modelUsage ?? {})
@@ -372,7 +373,9 @@ function roots(c: LoadedCase, suiteRoots: string[]) {
 type Store = { files: string[]; home?: string } // the store and baselines.json; the directory holding them, when denied
 
 function storeRoots(resultsDir: string, keep: string[]): Store {
-  const at = (p: string) => (existsSync(p) ? realpathSync.native(p) : existsSync(dirname(p)) ? join(realpathSync.native(dirname(p)), basename(p)) : resolve(p))
+  // The deepest existing ancestor's realpath, so validate (before the store
+  // exists) judges the store where run (after) will.
+  const at = (p: string) => realpathOf(p) ?? resolve(p)
   const home = at(dirname(resultsDir))
   const needed = keep.map(at).some(k => inside(k, home))
   return { files: [at(resultsDir), at(baselinesFile(resultsDir))], ...(needed ? {} : { home }) }
@@ -486,7 +489,11 @@ function storeClash(dir: string, path: string, store: Store, key = path): Refusa
   const component = fold(resolve(dir, path))
   const at = (paths: string[]) => storeRel(dir, paths).map(r => fold(resolve(dir, r)))
   if (at(store.files).some(s => inside(s, component))) return blocks(`plugin ${dir} keeps the run store inside its ${key} directory ${path}`, "keep results outside the plugin's component directories")
-  if (at(denied(store)).some(s => inside(component, s))) return blocks(`plugin ${dir} loads ${key} from ${path}, inside the run store`, 'keep components out of the results directory')
+  if (at(store.files).some(s => inside(component, s))) return blocks(`plugin ${dir} loads ${key} from ${path}, inside the run store`, 'keep components out of the results directory')
+  const where = store.home ? storeRel(dir, [store.home])[0] : undefined
+  if (where !== undefined && inside(component, fold(resolve(dir, where)))) {
+    return blocks(`plugin ${dir} loads ${key} from ${path}, inside ${where}, the directory holding the run store, which the gate denies`, `move results, or move the component out of ${where}`)
+  }
   return undefined
 }
 
