@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { isMap, isScalar, parseDocument } from 'yaml'
 import { query as sdkQuery, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ExecutorResult, Usage } from '../core/types.ts'
@@ -8,7 +8,8 @@ import { scrubbedEnv } from '../sandbox/env.ts'
 import { digest, readRegular, snapshot, written } from '../sandbox/snapshot.ts'
 import { deadline } from './deadline.ts'
 import { fold, inside } from '../core/paths.ts'
-import { decide, NETWORK_TOOLS, SHELL_TOOLS, type GatePolicy } from './gate.ts'
+import { baselinesFile } from '../store/store.ts'
+import { decide, NETWORK_TOOLS, SHELL_TOOLS, sessionTools, type GatePolicy } from './gate.ts'
 import { bedrockRegion } from '../providers/index.ts'
 import { renderPrompt } from './render.ts'
 import { Transcript } from './transcript.ts'
@@ -42,18 +43,20 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   const creds = credentials(job)
   if (typeof creds === 'string') return refuse(creds)
 
-  const refused = harnessPreflight(job.case, job.workdir.dir, job.suiteRoots)
+  const refused = harnessPreflight(job.case, job.workdir.dir, job.suiteRoots, job.resultsDir)
   if (refused) return refuse(refused)
   const plugins = job.case.plugins
   const project = exec.setting_sources.includes('project')
   const subjectRoot = subjectRootOf(job.case)
   const { real, denyRoots, trapped } = roots(job.case, job.suiteRoots)
+  const store = storeRoots(job.resultsDir)
   const policy: GatePolicy = {
     workdir: realpathSync.native(job.workdir.dir),
     // A subject root inside a deny root is only a version for the harness, so
     // it simply is not readable.
     readRoots: real([...plugins, ...(subjectRoot ? [subjectRoot] : [])]).filter(r => !trapped(r)),
     denyRoots,
+    storeRoots: store,
     // Written mid-session, these would overwrite an artifact litmus writes
     // itself, or be read back as the session's own MCP config.
     protect: ['final_message.txt', ...(project ? ['.mcp.json'] : [])],
@@ -76,6 +79,14 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     return d
   }
 
+  // Every tool call the hook allowed. A call that came back with a result the
+  // hook never allowed ran past the gate: an SDK change, say. That voids the
+  // trial rather than grading it. A call refused before it ran (a tool not in
+  // the session, or one the hook denied) comes back as an error, and is fine.
+  const allowed = new Set<string>()
+  const names = new Map<string, string>()
+  let ungated: string | undefined
+
   const prompt = renderPrompt(job.case.prompt, job.workdir.dir, job.case.changePatch)
   const clock = deadline(job.signal, job.case.settings.timeout_s * 1000)
   const options: Options = {
@@ -84,6 +95,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     // case has not allowed are removed from the model's context as well as
     // refused by the gate.
     permissionMode: 'default',
+    tools: sessionTools(policy),
     disallowedTools: [...(exec.allow_shell ? [] : SHELL_TOOLS), ...(exec.allow_network ? [] : NETWORK_TOOLS)],
     model: 'model' in job.config ? job.config.model : 'fake',
     ...('effort' in job.config && job.config.effort ? { effort: job.config.effort } : {}),
@@ -102,6 +114,14 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
         CLAUDE_CONFIG_DIR: job.workdir.claudeConfig,
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+        // Claude Code reads every @path it expands (in the prompt, in a skill
+        // or command body, in a skill's args) by itself, with no tool call and
+        // no hook, so the gate never sees it. Eval-confined mode turns those
+        // reads off and keeps the rest: the skill listing, nested CLAUDE.md.
+        // It also drops settings' allow rules, which the gate never relied
+        // on. It is not in Claude Code's docs, so harness-e2e.test.ts proves
+        // both halves at every SDK version.
+        CLAUDE_CODE_EVAL_CONFINED: '1',
         ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
         ...creds,
       },
@@ -115,8 +135,9 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
         {
           hooks: [
             async input => {
-              const i = input as { tool_name: string; tool_input: unknown }
+              const i = input as { tool_name: string; tool_input: unknown; tool_use_id?: string }
               const d = gate(i.tool_name, (i.tool_input ?? {}) as Record<string, unknown>)
+              if (i.tool_use_id && d.allow) allowed.add(i.tool_use_id)
               return {
                 hookSpecificOutput: {
                   hookEventName: 'PreToolUse' as const,
@@ -155,17 +176,22 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
             final = block.text
           } else if (block.type === 'tool_use') {
             tx.toolCall(block.id, block.name, block.input)
+            names.set(block.id, block.name)
           }
         }
-      } else if (m.type === 'user' && Array.isArray(m.message.content)) {
+      }
+      if (m.type === 'user' && Array.isArray(m.message.content)) {
         for (const block of m.message.content) {
           if (typeof block === 'object' && block.type === 'tool_result') {
             // Redacted before it is stringified: escaping would hide a value holding " or \.
             const text = typeof block.content === 'string' ? block.content : JSON.stringify(job.redact.json(block.content ?? ''))
             tx.toolResult(block.tool_use_id, text, block.is_error === true)
+            if (block.is_error !== true && !allowed.has(block.tool_use_id)) ungated ??= `${names.get(block.tool_use_id) ?? 'a tool'} (${block.tool_use_id})`
           }
         }
-      } else if (m.type === 'result') {
+        if (ungated) break
+      }
+      if (m.type === 'result') {
         result = m
         resultAfterStop = clock.stopped() !== undefined
       }
@@ -177,6 +203,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
   } finally {
     clock.clear()
   }
+  if (ungated) return done('infra_error', { reason: `the gate never saw ${ungated}, which ran anyway; the trial is void`, retryable: false })
   // The SDK may end the stream quietly, with an error result, or even with a
   // success after an abort: the clock's reason still decides, unless the
   // session had finished cleanly before it stopped.
@@ -318,10 +345,19 @@ function roots(c: LoadedCase, suiteRoots: string[]) {
   return { real, denyRoots, trapped }
 }
 
+// The run store and the baselines file beside it: a trial.json there names
+// every bug an earlier trial matched. Denied by the gate rather than refused
+// like a suite root, since a plugin repo keeping its runs in .litmus/ is the
+// layout the docs suggest. A path not made yet is judged where it will be.
+function storeRoots(resultsDir: string): string[] {
+  const at = (p: string) => (existsSync(p) ? realpathSync.native(p) : existsSync(dirname(p)) ? join(realpathSync.native(dirname(p)), basename(p)) : resolve(p))
+  return [at(resultsDir), at(baselinesFile(resultsDir))]
+}
+
 // Everything a harness case must pass before the SDK loads a thing, on the
 // workdir it would run in; `litmus validate` runs the same checks. Returns
 // why the case is refused, and what would fix it, or undefined.
-export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: string[]): string | undefined {
+export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: string[], resultsDir?: string): string | undefined {
   const exec = c.spec.executor
   if (exec.kind !== 'harness') return undefined
   const project = exec.setting_sources.includes('project')
@@ -329,7 +365,8 @@ export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: str
   // case has to say it accepts that (allow_hooks) before any of them load. The
   // scan runs either way: what allow_hooks waives is only those process
   // signals, never the gate's own checks (isolation, links, unparseable keys).
-  const found = [...c.plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks)), project ? fixtureRunsProcesses(workdir, exec.allow_hooks) : undefined].find(x => x !== undefined)
+  const store = resultsDir ? storeRoots(resultsDir) : []
+  const found = [...c.plugins.map(p => pluginRunsProcesses(p, exec.allow_hooks, store)), project ? fixtureRunsProcesses(workdir, exec.allow_hooks) : undefined].find(x => x !== undefined)
   if (found) return `${found.reason}; ${found.fix}`
   if (project) {
     const bad = fixtureSettings(workdir)
@@ -349,7 +386,7 @@ export function harnessPreflight(c: LoadedCase, workdir: string, suiteRoots: str
   return undefined
 }
 
-export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | undefined {
+export function pluginRunsProcesses(dir: string, allowHooks = false, store: string[] = []): Refusal | undefined {
   // The walk lstats everything below the root; the root itself is checked here.
   if (lstatSync(dir).isSymbolicLink()) return blocks(`plugin ${dir} is a symlink`, 'name the directory it points at')
   if (!allowHooks) for (const f of PROCESS_FILES) if (existsSync(join(dir, f))) return runs(`plugin ${dir} has ${f}`)
@@ -385,10 +422,20 @@ export function pluginRunsProcesses(dir: string, allowHooks = false): Refusal | 
       if (!paths) return blocks(`plugin ${dir}'s plugin.json ${key} is not a path or a list of paths`, 'give it paths inside the plugin')
       const outside = paths.find(p => !inside(resolve(dir, p), resolve(dir)))
       if (outside !== undefined) return blocks(`plugin ${dir}'s plugin.json points ${key} at ${outside}, outside the plugin`, 'keep every component inside the plugin directory')
+      const stored = paths.find(p => storeRel(dir, store).some(s => inside(resolve(dir, p), resolve(dir, s))))
+      if (stored !== undefined) return blocks(`plugin ${dir}'s plugin.json points ${key} at ${stored}, inside the run store`, 'keep components out of the results directory')
     }
   }
   // A plugin's .git is walked too: its manifest can point a component there.
-  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks)
+  // A run store inside it is not: the gate denies it, Claude Code never loads
+  // from it, and its artifacts are what subjects wrote.
+  return treeRunsProcesses(dir, `plugin ${dir}`, () => true, false, allowHooks, storeRel(dir, store))
+}
+
+// The store roots that lie inside dir, relative to it.
+function storeRel(dir: string, store: string[]): string[] {
+  const real = existsSync(dir) ? realpathSync.native(dir) : resolve(dir)
+  return store.filter(s => inside(s, real)).map(s => relative(real, s).split(sep).join('/'))
 }
 
 // Under project settings Claude Code discovers .claude/skills, agents and
@@ -399,12 +446,13 @@ function fixtureRunsProcesses(dir: string, allowHooks: boolean): Refusal | undef
   return treeRunsProcesses(dir, 'the fixture', rel => rel.split('/').some(seg => fold(seg) === '.claude'), true, allowHooks)
 }
 
-function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean, skipGit: boolean, allowHooks: boolean): Refusal | undefined {
+function treeRunsProcesses(root: string, who: string, inScope: (rel: string) => boolean, skipGit: boolean, allowHooks: boolean, skip: string[] = []): Refusal | undefined {
   const visit = (d: string): Refusal | undefined => {
     for (const name of readdirSync(d).sort()) {
       if (skipGit && fold(name) === '.git') continue
       const path = join(d, name)
       const rel = relative(root, path).split(sep).join('/')
+      if (skip.some(s => rel === s || rel.startsWith(`${s}/`))) continue
       const st = lstatSync(path)
       if (st.isSymbolicLink()) return blocks(`${who}: ${rel} is a symlink, which could point a component at a file this check never reads`, 'replace the link with the files it points at')
       // A FIFO or device named like a component would block whatever reads it.

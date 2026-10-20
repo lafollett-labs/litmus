@@ -6,6 +6,7 @@ export type GatePolicy = {
   workdir: string // realpath'd by the caller once
   readRoots: string[] // plugin and subject roots: readable, never writable
   denyRoots: string[] // suite roots: never readable, even inside a read root
+  storeRoots?: string[] // the run store and its baselines: denied like a suite root, with their own reason
   protect?: string[] // workdir-relative names never written, beside .git (final_message.txt, .mcp.json)
   protectSegments?: string[] // names that may not appear at any depth of a written path (.claude under project settings)
   allowShell: boolean
@@ -32,10 +33,18 @@ const ALWAYS = new Set(['TodoWrite', 'Skill'])
 // only in this session, so `isolation` (a git worktree mid-session, or a remote
 // agent outside the local gate) is refused.
 const SUBAGENT = new Set(['Agent', 'Task'])
-export const SHELL_TOOLS = ['Bash', 'BashOutput', 'KillShell', 'KillBash']
+// TaskOutput and TaskStop are what BashOutput and KillShell became.
+export const SHELL_TOOLS = ['Bash', 'BashOutput', 'KillShell', 'KillBash', 'TaskOutput', 'TaskStop']
 export const NETWORK_TOOLS = ['WebFetch', 'WebSearch']
 const SHELL = new Set(SHELL_TOOLS)
 const NETWORK = new Set(NETWORK_TOOLS)
+
+// The built-in tools a session is given at all, which is what the gate can
+// allow: every other tool Claude Code ships is left out of the session, so a
+// path inside Claude Code that skips the hook has nothing to reach.
+export function sessionTools(p: Pick<GatePolicy, 'allowShell' | 'allowNetwork'>): string[] {
+  return [...Object.keys(READ), ...Object.keys(WRITE), ...ALWAYS, ...SUBAGENT, ...(p.allowShell ? SHELL_TOOLS : []), ...(p.allowNetwork ? NETWORK_TOOLS : [])]
+}
 
 // Default-deny (docs/ARCHITECTURE.md § Executor). A tool this function does
 // not name is refused: a new tool Claude Code ships next month has to be
@@ -94,7 +103,9 @@ function judge(tool: string, input: Record<string, unknown>, p: GatePolicy): Dec
     if (!roots.some(r => inside(real, r))) {
       return deny(`${tool} may only ${writes ? 'write inside the workdir' : 'read the workdir or its plugin and subject roots'}: ${raw}`)
     }
-    if (p.denyRoots.some(r => inside(real, r) || (RECURSIVE.has(tool) && inside(r, real)))) return deny(`${tool} may not reach a suite root: ${raw}`)
+    const reach = (rs: string[] | undefined) => (rs ?? []).some(r => inside(real, r) || (RECURSIVE.has(tool) && inside(r, real)))
+    if (reach(p.denyRoots)) return deny(`${tool} may not reach a suite root: ${raw}`)
+    if (reach(p.storeRoots)) return deny(`${tool} may not reach the run store: ${raw}`)
     // Folded: a protected name may not exist yet, so realpath cannot supply its
     // on-disk case, and on a case-insensitive volume .CLAUDE is .claude.
     const guarded = writes ? protectedPaths.find(g => inside(fold(real), fold(g))) : undefined

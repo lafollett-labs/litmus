@@ -8,20 +8,22 @@ import { walk } from '../sandbox/snapshot.ts'
 // that has to count lines itself gets them wrong, and review-match then
 // scores a correct finding as a miss.
 export function renderPrompt(template: string, workdir: string, changePatch?: string): string {
-  return template.replace(/\{\{\s*(fixture|diff|file:([^}]+?))\s*\}\}/g, (_all, what: string, path?: string) => {
-    if (what === 'fixture') return [...walk(workdir)].map(f => numbered(relative(workdir, f).split(sep).join('/'), f)).join('\n')
-    if (what === 'diff') return changePatch ? readFileSync(changePatch, 'utf8') : ''
-    const abs = resolve(workdir, path!.trim())
-    // A template may only name files inside the workdir; "../truth.yaml" is
-    // exactly the leak the sandbox exists to prevent. Either mistake is the
-    // case author's, so it is a config error, not a crash.
-    if (abs !== workdir && !abs.startsWith(workdir + sep)) throw new ConfigError(`{{file:${path}}} points outside the workdir`)
-    try {
-      return numbered(path!.trim(), abs)
-    } catch (e) {
-      throw new ConfigError(`{{file:${path}}}: ${(e as Error).message}`)
-    }
-  })
+  return template.replace(/\{\{\s*(fixture|diff|file:([^}]+?))\s*\}\}/g, (_all, what: string, path?: string) => render(what, workdir, changePatch, path))
+}
+
+function render(what: string, workdir: string, changePatch: string | undefined, path: string | undefined): string {
+  if (what === 'fixture') return [...walk(workdir)].map(f => numbered(relative(workdir, f).split(sep).join('/'), f)).join('\n')
+  if (what === 'diff') return changePatch ? readFileSync(changePatch, 'utf8') : ''
+  const abs = resolve(workdir, path!.trim())
+  // A template may only name files inside the workdir; "../truth.yaml" is
+  // exactly the leak the sandbox exists to prevent. Either mistake is the
+  // case author's, so it is a config error, not a crash.
+  if (abs !== workdir && !abs.startsWith(workdir + sep)) throw new ConfigError(`{{file:${path}}} points outside the workdir`)
+  try {
+    return numbered(path!.trim(), abs)
+  } catch (e) {
+    throw new ConfigError(`{{file:${path}}}: ${(e as Error).message}`)
+  }
 }
 
 function numbered(name: string, path: string): string {

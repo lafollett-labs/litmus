@@ -13,6 +13,7 @@ export type ExecJob = {
   attempt: number
   workdir: Workdir
   suiteRoots: string[] // every configured suite root: the gate never lets a subject reach one
+  resultsDir: string // the run store: earlier trials' grading is the ground truth by another name, so it is denied too
   out: { artifacts: string; transcript: string } // owned by the store; the executor writes here
   pricing: ConfigFile['pricing']
   emit: (e: RunEvent) => void

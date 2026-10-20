@@ -5,6 +5,28 @@ All notable changes to litmus. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may
 change the config, the suite format or the CLI.
 
+## [Unreleased]
+
+### Security
+
+- **A subject could read outside its workdir through Skill arguments.**
+  Claude Code expands an `@path` mention in a skill's arguments by reading the
+  path itself, without asking the PreToolUse gate. With skills Claude Code
+  bundles, a harness subject could list the case directory, read
+  `truth.yaml`, or read any file the operator can. The same read happened
+  for an `@` mention in a plugin's skill or command body, in a body fed by
+  the skill's args (`Review @$ARGUMENTS`), and in a file rendered into a
+  harness prompt. The trial env now turns those reads off, and a mention
+  reaches the model as text. The session is given only the tools the gate
+  can allow.
+- **The run store is denied.** A plugin or subject root that held the
+  results directory let a subject read earlier trials' `trial.json`, which
+  names every matched bug. The store and `baselines.json` are now deny roots.
+- **An ungated tool call voids the trial.** A tool call that returns a result
+  the gate never judged ends the trial as an infra error. A new test runs the
+  real Claude Code binary against a local fake API, so an Agent SDK change
+  that skips the gate fails CI. The SDK is now pinned to an exact version.
+
 ## [0.1.0] - 2026-10-16
 
 The first release: a runner for LLM and agent evals that runs a suite, one
@@ -68,4 +90,5 @@ models.
   graders; `code-review` has a Go case with two seeded bugs and a decoy, a
   TypeScript seeded case, and a TypeScript clean case.
 
+[Unreleased]: https://github.com/lafollett-labs/litmus/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/lafollett-labs/litmus/releases/tag/v0.1.0

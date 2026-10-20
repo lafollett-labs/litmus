@@ -321,6 +321,7 @@ async function trial(job: Job, x: Ctx): Promise<TrialRecord> {
             attempt,
             workdir,
             suiteRoots: config.roots,
+            resultsDir: config.resultsDir,
             out: x.store.attemptDir(job.ref, attempt),
             pricing: config.pricing,
             emit: x.emit,

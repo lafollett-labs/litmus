@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { ConfigDef } from '../../src/suite/schema.ts'
 import { runHarness, type Query } from '../../src/executors/harness.ts'
+import { sessionTools } from '../../src/executors/gate.ts'
 import type { ExecJob } from '../../src/executors/types.ts'
 import { redactor, secretValues } from '../../src/core/redact.ts'
 import { buildWorkdir } from '../../src/sandbox/workdir.ts'
@@ -40,6 +41,7 @@ function job(yaml: string, files: Record<string, string> = {}, config: ConfigDef
     attempt: 1,
     workdir: buildWorkdir(c, { run: '2026-09-24T12-00-00Z-a1b2', key: 's/c@opus#1', attempt: 1 }, base),
     suiteRoots: [],
+    resultsDir: join(out, 'runs'),
     out: { artifacts: join(out, 'artifacts'), transcript: join(out, 'transcript.jsonl') },
     pricing: {},
     emit: () => {},
@@ -61,14 +63,24 @@ const result = (over: Record<string, unknown> = {}) =>
   }) as unknown as SDKMessage
 
 // A scripted stand-in for the SDK's query(): records the options it was given
-// and replays messages, optionally running a callback mid-stream.
-function scripted(messages: SDKMessage[], during?: (o: Options) => Promise<void>): { query: Query; calls: Options[] } {
+// and replays messages, optionally running a callback mid-stream. Like the
+// SDK, it asks the PreToolUse hook about each tool call before replaying it,
+// unless told the hook is skipped.
+function scripted(messages: SDKMessage[], during?: (o: Options) => Promise<void>, opts: { skipHook?: boolean } = {}): { query: Query; calls: Options[] } {
   const calls: Options[] = []
   const query: Query = ({ options }) => {
     calls.push(options)
     return (async function* () {
       if (during) await during(options)
-      for (const m of messages) yield m
+      for (const m of messages) {
+        const content = (m as { type: string; message?: { content?: unknown } }).type === 'assistant' ? (m as { message: { content: unknown } }).message.content : undefined
+        if (!opts.skipHook && Array.isArray(content)) {
+          for (const b of content as { type: string; id: string; name: string; input: unknown }[]) {
+            if (b.type === 'tool_use') await options.hooks!.PreToolUse![0]!.hooks[0]!({ hook_event_name: 'PreToolUse', tool_name: b.name, tool_input: b.input, tool_use_id: b.id } as never, b.id, { signal: new AbortController().signal })
+          }
+        }
+        yield m
+      }
     })()
   }
   return { query, calls }
@@ -89,6 +101,8 @@ test('the session is pinned: explicit empty settings, strict MCP, a private conf
   const env = o.env!
   assert.equal(env['CLAUDE_CONFIG_DIR'], j.workdir.claudeConfig)
   assert.equal(env['CLAUDE_CODE_DISABLE_AUTO_MEMORY'], '1')
+  // Claude Code would otherwise read every @path it expands, past the gate.
+  assert.equal(env['CLAUDE_CODE_EVAL_CONFINED'], '1')
   assert.equal(env['HOME'], j.workdir.home)
   assert.equal(env['ANTHROPIC_API_KEY'], 'sk-ant-test')
   assert.equal(env['OPENROUTER_API_KEY'], undefined)
@@ -137,7 +151,7 @@ test('messages map onto the transcript, and the result onto usage, cost, final m
 })
 
 test('a key the subject prints or writes is redacted in the transcript, the live steps and every artifact', async () => {
-  const j = job(HARNESS())
+  const j = job(HARNESS('  allow_shell: true\n'))
   const steps: string[] = []
   j.emit = e => {
     if (e.type === 'trial.step') steps.push(e.step.summary)
@@ -168,6 +182,7 @@ test('a structured tool result is redacted before it is stringified, and a file 
   }
   const { query } = scripted(
     [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Read', input: { file_path: 'a.go' } }] }, parent_tool_use_id: null } as unknown as SDKMessage,
       { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: [{ type: 'text', text: 'got k"e\\y' }] }] }, parent_tool_use_id: null } as unknown as SDKMessage,
       result(),
     ],
@@ -284,9 +299,74 @@ test('the session sets permissionMode default and removes the tool classes the c
   const { query, calls } = scripted([result()])
   await runHarness(job(HARNESS()), query)
   assert.equal(calls[0]!.permissionMode, 'default')
-  assert.deepEqual(calls[0]!.disallowedTools, ['Bash', 'BashOutput', 'KillShell', 'KillBash', 'WebFetch', 'WebSearch'])
+  assert.deepEqual(calls[0]!.disallowedTools, ['Bash', 'BashOutput', 'KillShell', 'KillBash', 'TaskOutput', 'TaskStop', 'WebFetch', 'WebSearch'])
   await runHarness(job(HARNESS('  allow_shell: true\n')), query)
   assert.deepEqual(calls[1]!.disallowedTools, ['WebFetch', 'WebSearch'])
+})
+
+test('the session is given exactly the tools the gate can allow, so nothing else Claude Code ships is in reach', async () => {
+  const { query, calls } = scripted([result()])
+  await runHarness(job(HARNESS()), query)
+  await runHarness(job(HARNESS('  allow_shell: true\n')), query)
+  assert.deepEqual(calls[0]!.tools, sessionTools({ allowShell: false, allowNetwork: false }))
+  assert.ok(!(calls[0]!.tools as string[]).includes('Bash') && (calls[1]!.tools as string[]).includes('Bash'))
+})
+
+test('a tool call that ran without the gate seeing it voids the trial; one refused before it ran does not', async () => {
+  const call = (id: string, name: string) => ({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input: { file_path: 'a.go' } }] }, parent_tool_use_id: null }) as unknown as SDKMessage
+  const back = (id: string, is_error: boolean) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', is_error }] }, parent_tool_use_id: null }) as unknown as SDKMessage
+  const ungated = await runHarness(job(HARNESS()), scripted([call('tu1', 'Read'), back('tu1', false), result()], undefined, { skipHook: true }).query)
+  assert.deepEqual([ungated.exit, ungated.retryable], ['infra_error', false])
+  assert.match(ungated.reason ?? '', /the gate never saw Read \(tu1\), which ran anyway/)
+  const refused = await runHarness(job(HARNESS()), scripted([call('tu2', 'NoSuchTool'), back('tu2', true), result()], undefined, { skipHook: true }).query)
+  assert.equal(refused.exit, 'ok')
+  const gated = await runHarness(job(HARNESS()), scripted([call('tu3', 'Read'), back('tu3', false), result()]).query)
+  assert.equal(gated.exit, 'ok')
+})
+
+test('the run store and its baselines are never readable, even inside a plugin root that holds them', async () => {
+  const plugin = pluginTree({ '.claude-plugin/plugin.json': '{"name":"p"}', 'skills/r/SKILL.md': '---\nname: r\ndescription: r\n---\nr\n', '.litmus/runs/2026-10-19T00-00-00Z-a1b2/trials/s/c/opus/1/trial.json': '{"graders":[]}', '.litmus/baselines.json': '{}' })
+  const verdicts: string[] = []
+  const { query } = scripted([result()], async o => {
+    const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
+    for (const [tool_name, tool_input] of [
+      ['Read', { file_path: join(plugin, 'skills/r/SKILL.md') }],
+      ['Read', { file_path: join(plugin, '.litmus/runs/2026-10-19T00-00-00Z-a1b2/trials/s/c/opus/1/trial.json') }],
+      ['Glob', { pattern: '**/trial.json', path: plugin }],
+      ['Read', { file_path: join(plugin, '.litmus/baselines.json') }],
+    ] as const) {
+      const out = (await hook({ tool_name, tool_input } as never, undefined, { signal: new AbortController().signal })) as { hookSpecificOutput: { permissionDecision: string } }
+      verdicts.push(out.hookSpecificOutput.permissionDecision)
+    }
+  })
+  const j = job(HARNESS(`  plugins: [${plugin}]\n`))
+  j.resultsDir = join(plugin, '.litmus/runs')
+  await runHarness(j, query)
+  assert.deepEqual(verdicts, ['allow', 'deny', 'deny', 'deny'])
+})
+
+const SKILL = (body: string) => `---\nname: s\ndescription: s\n---\n${body}\n`
+const plug = (body: string, extra: Record<string, string> = {}) => pluginTree({ '.claude-plugin/plugin.json': '{"name":"rev"}', 'skills/s/SKILL.md': SKILL(body), ...extra })
+
+test('a hook denial that Claude Code ran anyway voids the trial: only allowed calls count as gated', async () => {
+  const call = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu9', name: 'Read', input: { file_path: '/etc/hosts' } }] }, parent_tool_use_id: null } as unknown as SDKMessage
+  const back = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu9', content: 'root', is_error: false }] }, parent_tool_use_id: null } as unknown as SDKMessage
+  const r = await runHarness(job(HARNESS()), scripted([call, back, result()]).query)
+  assert.deepEqual([r.exit, r.retryable], ['infra_error', false])
+  assert.match(r.reason ?? '', /the gate never saw Read \(tu9\)/)
+})
+
+test('a run store inside a plugin is neither scanned nor a home for components: a subject\'s artifact there cannot refuse the plugin', async () => {
+  const store = '.litmus/runs/2026-10-19T00-00-00Z-a1b2/trials/s/c/opus/1/artifacts/notes.md'
+  const p = plug('x', { [store]: '---\nisolation: worktree\n---\nsee @/etc/hosts\n' })
+  const { query } = scripted([result()])
+  const j = job(HARNESS(`  plugins: [${p}]\n`))
+  j.resultsDir = join(p, '.litmus/runs')
+  assert.equal((await runHarness(j, query)).exit, 'ok')
+  const k = job(HARNESS(`  plugins: [${p}]\n`))
+  assert.match((await runHarness(k, query)).reason ?? '', /declares isolation/, 'the same file outside the store is refused')
+  writeFileSync(join(p, '.claude-plugin/plugin.json'), '{"name":"rev","skills":".litmus/runs"}')
+  assert.match((await runHarness(j, query)).reason ?? '', /points skills at \.litmus\/runs, inside the run store/)
 })
 
 test('the harness prompt is rendered with the model prompt\'s placeholders', async () => {

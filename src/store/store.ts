@@ -246,7 +246,7 @@ export function latestVerdicts(resultsDir: string): Map<string, Map<string, Verd
 // ── baselines ────────────────────────────────────────────────────────────────
 
 // Beside the runs directory: .litmus/baselines.json for .litmus/runs.
-const baselinesFile = (resultsDir: string) => join(dirname(resultsDir), 'baselines.json')
+export const baselinesFile = (resultsDir: string) => join(dirname(resultsDir), 'baselines.json')
 
 export function baselines(resultsDir: string): Record<string, string> {
   const f = baselinesFile(resultsDir)

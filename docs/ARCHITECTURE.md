@@ -693,8 +693,11 @@ scrubbed environment and these settings:
   `$schema`: permissions, env, hooks and helper commands would otherwise run
   or approve things outside the gate. Managed (policy) settings on the host
   still load; the SDK gives no way to turn them off.
-- **Permissions.** `permissionMode: 'default'` is set explicitly, and
-  `disallowedTools` lists every tool class the case has not allowed.
+- **Permissions.** `permissionMode: 'default'` is set explicitly. `tools`
+  gives the session only the built-in tools the gate below can allow, with
+  the shell and network tools only when the case allows them; every other
+  tool Claude Code ships is not in the session at all. `disallowedTools` also
+  lists the shell and network tools the case has not allowed.
 - `CLAUDE_CONFIG_DIR` is the attempt's fresh `claude/` directory, and
   `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`,
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` and
@@ -757,17 +760,39 @@ scrubbed environment and these settings:
 Every tool call passes through a default-deny gate. The gate is a PreToolUse
 hook, not only `canUseTool`: Claude Code approves read-only tools, and tools
 that settings allow, without ever asking `canUseTool`, while a PreToolUse hook
-fires on every call, subagents' included.
+fires on every call, subagents' included. The harness checks that this holds:
+a tool call that comes back with a result the hook never allowed ends the
+trial as a non-retried `infra_error` ("the gate never saw …"). A call Claude
+Code refused before running it, such as a tool not in the session or one the
+hook denied, comes back as an error and is not counted. `test/executors/harness-e2e.test.ts` runs the real
+Claude Code binary against a local fake Messages API ($0) to prove the gate
+holds, and an Agent SDK bump has to pass it.
 
 | Tool | Allowed when |
 | - | - |
 | Read, Glob, Grep, LS | The realpath is inside the workdir, or inside a plugin or subject root (read-only), and not inside any suite root. A Glob or Grep is also refused when a suite root lies anywhere below its base, since it would descend into it |
 | Write, Edit, MultiEdit, NotebookEdit | The realpath is inside the workdir, and not under `<workdir>/.git/` or `final_message.txt`. Under `setting_sources: [project]`, also not `.mcp.json`, and not under a `.claude/` directory at any depth: Claude Code discovers `.claude/` skills, agents and commands between a touched file and the cwd, so the session would load them as its own config |
 | Agent, Task (subagents) | With no `isolation`. Their tool calls pass through the same gate; a worktree or remote agent would not |
-| TodoWrite, Skill | Always |
-| Bash, BashOutput, KillShell, KillBash | `allow_shell: true` |
+| TodoWrite | Always |
+| Skill | Always. Claude Code reads no `@` mention its args build (see below) |
+| Bash, TaskOutput, TaskStop, BashOutput, KillShell, KillBash | `allow_shell: true` |
 | WebFetch, WebSearch, `mcp__*` | `allow_network: true` (`mcp__*` also needs `allow_hooks: true`) |
 | Anything else | Never |
+
+Claude Code would read every `@path` mention it expands, by itself and with
+no tool call the hook could judge. That covers mentions in the prompt, in a
+rendered fixture or diff, in a skill or command body, and in a skill's args,
+including the args a body places in `@$ARGUMENTS`. The trial env sets
+`CLAUDE_CODE_EVAL_CONFINED=1`, which turns those reads off: the mention
+reaches the model as plain text, and a subject that wants the file calls
+Read. The skill listing and nested CLAUDE.md still load, so a subject
+whose prompt does not name its skill can still find it. The mode also
+drops the allow rules in settings, which the gate never relied on.
+`CLAUDE_CODE_DISABLE_ATTACHMENTS` would also stop the reads, but it hides
+the skill listing too. Claude Code documents neither variable, so
+`harness-e2e.test.ts` checks both halves on the real binary: a separate
+canary for each of those places, and every plugin skill listed. Matching Claude Code's mention grammar was tried first and lost:
+it also expands after CJK punctuation, and it parses quotes differently.
 
 Every refusal is written to the transcript. The trial's artifacts are:
 
@@ -779,7 +804,13 @@ also inside a plugin or subject root. A private suite kept in the plugin repo
 it evaluates therefore stays out of reach.
 
 The case's own directory, its suite and its suite root are always deny roots,
-whatever the runner passes. The gate fails closed: a call it cannot judge (an
+whatever the runner passes. So are the run store (`results`) and the
+`baselines.json` beside it, since an earlier trial's `trial.json` names every
+bug it matched ("may not reach the run store"). They are denied rather than
+refused like a suite root inside a plugin, so a plugin repo can keep its runs
+in `.litmus/`. The plugin checks skip a store inside the plugin, since its
+artifacts are what subjects wrote, and a manifest may not point a component
+into it. The gate fails closed: a call it cannot judge (an
 unreadable path, a path through a file) is a denial with the error as its
 reason. Paths are compared by their on-disk case (`realpath.native`), and names
 that may not exist yet are compared case-folded, so a case variant on a

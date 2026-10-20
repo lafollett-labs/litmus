@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { decide, type GatePolicy } from '../../src/executors/gate.ts'
+import { decide, sessionTools, type GatePolicy } from '../../src/executors/gate.ts'
 import { tree } from '../helpers/tmp.ts'
 
 const root = realpathSync(tree({ 'work/src/a.ts': 'x', 'plugin/skills/review/SKILL.md': 'y', 'case/truth.yaml': 'secret' }))
@@ -58,6 +58,24 @@ test('subagents and bookkeeping tools are allowed; a tool the gate does not know
   const d = decide('SomeNewTool', {}, base)
   assert.equal(d.allow, false)
   assert.match(!d.allow ? d.reason : '', /not a tool litmus allows/)
+})
+
+test('the run store is denied with its own reason, even inside a read root', () => {
+  const p = { ...base, storeRoots: [join(root, 'plugin/skills')] }
+  const d = decide('Read', { file_path: join(root, 'plugin/skills/review/SKILL.md') }, p)
+  assert.match(!d.allow ? d.reason : '', /may not reach the run store/)
+  const g = decide('Grep', { pattern: 'x', path: join(root, 'plugin') }, p)
+  assert.match(!g.allow ? g.reason : '', /may not reach the run store/)
+})
+
+test('the session is given only the built-in tools the gate can allow, shell and network only when the case allows them', () => {
+  const none = sessionTools({ allowShell: false, allowNetwork: false })
+  assert.deepEqual(none.sort(), ['Agent', 'Edit', 'Glob', 'Grep', 'LS', 'MultiEdit', 'NotebookEdit', 'Read', 'Skill', 'Task', 'TodoWrite', 'Write'])
+  for (const t of none) {
+    const d = decide(t, {}, base)
+    assert.ok(d.allow || !/not a tool litmus allows/.test(d.reason), t)
+  }
+  assert.deepEqual(sessionTools({ allowShell: true, allowNetwork: true }).filter(t => !none.includes(t)).sort(), ['Bash', 'BashOutput', 'KillBash', 'KillShell', 'TaskOutput', 'TaskStop', 'WebFetch', 'WebSearch'])
 })
 
 test('a pattern is judged from the tool\'s own search path', () => {
