@@ -212,11 +212,12 @@ function loadCase(suite: SuiteFile, dir: string): LoadedCase {
     if (g.kind === 'review-match' && !loaded.truth) throw new ConfigError(`${file}: a review-match grader needs a truth.yaml beside it`)
     // A clean-case review-match must measure noise. Only these bounds can fail
     // there: it has no bugs to recall or confirm, a finding on it is never a
-    // nit, and a duplicate needs a matched bug.
+    // nit, a duplicate needs a matched bug, and a decoy hit needs a decoy.
     if (g.kind === 'review-match' && loaded.truth?.kind === 'clean') {
-      const usable = Object.keys(g.pass).filter(b => CLEAN_BOUNDS.has(b))
+      const decoys = loaded.truth.decoys.length > 0
+      const usable = Object.keys(g.pass).filter(b => CLEAN_BOUNDS.has(b) && (b !== 'max_decoy_hits' || decoys))
       if (usable.length === 0) {
-        throw new ConfigError(`${file}: review-match sets no pass bound that applies to a clean case (set max_false_positives, max_decoy_hits or max_findings)`)
+        throw new ConfigError(`${file}: review-match sets no pass bound that applies to a clean case (set max_false_positives or max_findings${decoys ? ', or max_decoy_hits' : '; max_decoy_hits needs a decoy'})`)
       }
     }
     if (g.kind === 'json-schema' && g.schema.startsWith('litmus:') && !BUILTIN_SCHEMAS.has(g.schema)) {

@@ -358,13 +358,17 @@ test('a review-match with no pass bound that can apply to its truth is refused a
     })
   const seededTruth = 'kind: seeded\nbugs: [{ id: b, file: a.go, lines: [1, 1], severity: high, category: c, summary: s, proof: p, fix: fix/b.patch }]\n'
   const load = (root: string) => loadProject(join(root, 'litmus.config.yaml'))
-  assert.throws(() => load(at('kind: clean\n', '{ min_recall: 1 }')), /no pass bound that applies to a clean case \(set max_false_positives, max_decoy_hits or max_findings\)/)
+  assert.throws(() => load(at('kind: clean\n', '{ min_recall: 1 }')), /no pass bound that applies to a clean case \(set max_false_positives or max_findings; max_decoy_hits needs a decoy\)/)
   assert.throws(() => load(at('kind: clean\n', '{}')), /no pass bound/)
   // A clean case has no nits and no duplicates, so these bounds can never fail.
   assert.throws(() => load(at('kind: clean\n', '{ max_nits: 0 }')), /no pass bound/)
   assert.throws(() => load(at('kind: clean\n', '{ max_duplicates: 0 }')), /no pass bound/)
   assert.doesNotThrow(() => load(at('kind: clean\n', '{ min_recall: 1, max_false_positives: 0 }')))
-  assert.doesNotThrow(() => load(at('kind: clean\n', '{ max_decoy_hits: 0 }')))
+  // With no decoy, decoy_hits is always 0: the bound can never fail.
+  assert.throws(() => load(at('kind: clean\n', '{ max_decoy_hits: 0 }')), /max_decoy_hits needs a decoy/)
+  const decoyed = 'kind: clean\ndecoys: [{ id: d, file: a.go, lines: [1, 1], summary: s }]\n'
+  assert.doesNotThrow(() => load(at(decoyed, '{ max_decoy_hits: 0 }')))
+  assert.throws(() => load(at(decoyed, '{}')), /or max_decoy_hits\)/)
   assert.doesNotThrow(() => load(at('kind: clean\n', '{ max_findings: 0 }')))
   const seeded = at(seededTruth, '{}')
   mkdirSync(join(seeded, 'suites/s/cases/c/fix'), { recursive: true })
