@@ -118,6 +118,28 @@ Receipts at `a566cfb`:
 
 INFO-005 confirms that MEDIUM-004, LOW-005 and LOW-006 are resolved, and that every earlier finding is still resolved.
 
+## Gate 2 (PR #20)
+
+**Verdict:** 🔁 CHANGES REQUESTED at `def6f59`, after the rebase onto `main`. All findings are fixed in `dc00813`, `01dadd4` and `2bf011c`.
+
+| | |
+| - | - |
+| **Reviewer** | PE-Vue, a fresh reviewer standing in for Copilot |
+| **Reviewed SHA** | `def6f59` |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| MEDIUM-001 | A clean case with no decoys passed any review when `max_decoy_hits` was its only bound: `decoy_hits` is always 0 there | Fixed. `max_decoy_hits` counts as a clean-case bound only when the truth has a decoy, and the refusal says so. Tests: no decoy throws; with a decoy it loads. Two mutants killed |
+| MEDIUM-002 | An inline-closed fence (`{...}```` ) followed by any later `}` or code block was no answer, so honest replies and judge yeses FAILed | Fixed. When the line-closer slice is not an object, the earliest and then the last `}```` close the fence: at most three parses, still linear. Tests: prose with braces, a later code block, a `}```` inside a string, and `parseVerdict` with prose after. Four mutants killed |
+| LOW-001 | A stray CHANGELOG bullet, and unwrapped doc and comment lines | Fixed |
+| INFO-001 | The CHANGELOG rebase resolution is correct | Noted |
+| INFO-002 | Gate 1 findings are still resolved after the rebase | Noted |
+
+Receipts at `2bf011c`:
+
+- `npm run check` exit 0.
+- `npm test` tests 619, pass 614, fail 0, skipped 5.
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
