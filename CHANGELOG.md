@@ -7,6 +7,8 @@ change the config, the suite format or the CLI.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-19
+
 ### Security
 
 - **A subject could read outside its workdir through Skill arguments.**
@@ -21,7 +23,8 @@ change the config, the suite format or the CLI.
   can allow.
 - **The run store is denied.** A plugin or subject root that held the
   results directory let a subject read earlier trials' `trial.json`, which
-  names every matched bug. The store and `baselines.json` are now deny roots.
+  names every matched bug. The store, `baselines.json`, and the directory
+  holding them (`.litmus/`, with any other config's store) are now denied.
 - **An ungated tool call voids the trial.** A tool call that returns a result
   the gate never judged ends the trial as an infra error. A new test runs the
   real Claude Code binary against a local fake API, so an Agent SDK change
@@ -90,5 +93,6 @@ models.
   graders; `code-review` has a Go case with two seeded bugs and a decoy, a
   TypeScript seeded case, and a TypeScript clean case.
 
-[Unreleased]: https://github.com/lafollett-labs/litmus/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/lafollett-labs/litmus/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/lafollett-labs/litmus/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lafollett-labs/litmus/releases/tag/v0.1.0
