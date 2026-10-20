@@ -22,6 +22,9 @@ export type Query = (params: { prompt: string; options: Options }) => AsyncItera
 // `harness`). The subject is whatever the case loads into it: plugins, a
 // fixture CLAUDE.md or AGENTS.md, the prompt. Everything else about the
 // session is pinned here so two runs differ only in the model.
+// An init on a subscription run that names no credential source.
+const UNREPORTED = 'unreported'
+
 export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknown as Query): Promise<ExecutorResult> {
   const exec = job.case.spec.executor
   if (exec.kind !== 'harness') throw new Error(`runHarness given a ${exec.kind} case`)
@@ -195,7 +198,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
       if (m.type === 'system' && m.subtype === 'init' && job.config.provider === 'claude-subscription' && m.apiKeySource !== 'none') {
         // Managed settings can hand Claude Code an API key, which it ranks
         // above the token: the run would bill a key nobody chose.
-        wrongCredential = m.apiKeySource || 'an unreported credential'
+        wrongCredential = m.apiKeySource || UNREPORTED
         break
       }
       if (m.type === 'result') {
@@ -211,6 +214,7 @@ export async function runHarness(job: ExecJob, query: Query = sdkQuery as unknow
     clock.clear()
   }
   if (ungated) return done('infra_error', { reason: `the gate never saw ${ungated}, which ran anyway; the trial is void`, retryable: false })
+  if (wrongCredential === UNREPORTED) return done('infra_error', { reason: "Claude Code's init named no credential source, so the token is unconfirmed (an SDK change?); the trial would not run on your plan", retryable: false })
   if (wrongCredential) return done('infra_error', { reason: `Claude Code chose ${wrongCredential} over CLAUDE_CODE_OAUTH_TOKEN (managed settings?); the trial would not run on your plan`, retryable: false })
   // The SDK may end the stream quietly, with an error result, or even with a
   // success after an abort: the clock's reason still decides, unless the

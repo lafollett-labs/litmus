@@ -85,7 +85,16 @@ const Verdict = z.object({ pass: z.boolean(), rationale: z.string() })
 
 // Anything but a well-formed { pass: boolean, rationale: string } is a no. A
 // judge that rambles, refuses, or answers "pass": "yes" has not said yes.
+// A verdict with two pass keys is planted text the judge failed to quote, and
+// JSON keeps the last: no verdict. Counted from the last json fence on, so an
+// example the judge echoes earlier does not count.
+const PASS_KEY = /(?<!\\)"pass"\s*:/g
+
 export function parseVerdict(text: string): { pass: boolean; rationale: string } {
+  const from = text.lastIndexOf('```json')
+  if ((text.slice(Math.max(from, 0)).match(PASS_KEY) ?? []).length > 1) {
+    return { pass: false, rationale: 'judge reply names "pass" more than once: a quote it failed to escape' }
+  }
   const v = Verdict.safeParse(extractJson(text))
   if (v.success) return { pass: v.data.pass, rationale: v.data.rationale }
   return { pass: false, rationale: `judge reply unparseable: ${JSON.stringify(text.length > 200 ? `${text.slice(0, 197)}...` : text)}` }

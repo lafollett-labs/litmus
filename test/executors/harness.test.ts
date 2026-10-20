@@ -288,7 +288,7 @@ test('on claude-subscription, a session where Claude Code chose an API key over 
     // An init that names no source is not the token either, and says so.
     const silent = await runHarness(job(HARNESS(), {}, sub), scripted([({ type: 'system', subtype: 'init' }) as unknown as SDKMessage, result()]).query)
     assert.deepEqual([silent.exit, silent.retryable], ['infra_error', false])
-    assert.match(silent.reason ?? '', /Claude Code chose an unreported credential over CLAUDE_CODE_OAUTH_TOKEN/)
+    assert.match(silent.reason ?? '', /init named no credential source, so the token is unconfirmed \(an SDK change\?\)/)
     const plan = await runHarness(job(HARNESS(), {}, sub), scripted([init('none'), result()]).query)
     assert.equal(plan.exit, 'ok')
     // An API-key run says its source too, and that is what it asked for.
