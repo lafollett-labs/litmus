@@ -7,6 +7,16 @@ change the config, the suite format or the CLI.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A store kept inside a plugin's component directory skipped the plugin
+  scan.** With `results` inside `skills/`, `agents/` or `commands/` (or the
+  directory holding it containing one), the files Claude Code loads from
+  there went unscanned. Such a layout is now refused with "keep results
+  outside the plugin's component directories". The 0.1.1 note on the store's
+  directory now states its exception: it stays readable when the workdir, a
+  plugin or the subject root sits inside it.
+
 ## [0.1.1] - 2026-10-19
 
 ### Security
