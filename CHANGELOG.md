@@ -23,8 +23,9 @@ change the config, the suite format or the CLI.
   can allow.
 - **The run store is denied.** A plugin or subject root that held the
   results directory let a subject read earlier trials' `trial.json`, which
-  names every matched bug. The store, `baselines.json`, and the directory
-  holding them (`.litmus/`, with any other config's store) are now denied.
+  names every matched bug. The store, `baselines.json` and the directory
+  holding them (`.litmus/` by default, which also covers another config's
+  store kept there) are now denied.
 - **An ungated tool call voids the trial.** A tool call that returns a result
   the gate never judged ends the trial as an infra error. A new test runs the
   real Claude Code binary against a local fake API, so an Agent SDK change
