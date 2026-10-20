@@ -47,6 +47,13 @@ test('a json fence closes at the ``` that ends valid JSON, so a code block insid
   assert.equal(extractJson('```json\n{"a":1}\n'), undefined)
   // A closer on the JSON's own last line still closes it.
   assert.deepEqual(extractJson('```json\n{"a":1}```'), { a: 1 })
+  // ...whatever follows it: prose with braces, or a later code block whose ``` starts a line.
+  assert.deepEqual(extractJson('```json\n{"a":1}```\nDone {ok}'), { a: 1 })
+  assert.deepEqual(extractJson('```json\n{"a":1}``` see {x}'), { a: 1 })
+  assert.deepEqual(extractJson('```json\n{"findings":[]}```\n\nNotes:\n```ts\nconst x = 1\n```\n'), { findings: [] })
+  // The earliest }``` can sit inside a string; then the last one closes it.
+  assert.deepEqual(extractJson('```json\n{"r":"a}```b"}```'), { r: 'a}```b' })
+  assert.equal(parseVerdict('```json\n{"pass": true, "rationale": "ok"}```\nThe fix {x} is correct.').pass, true)
   // Prose after the fence may hold braces of its own.
   assert.deepEqual(extractJson('```json\n{"a":1}\n```\nDone {ok}'), { a: 1 })
   // A closer with prose after it, or indented deep in a list, still closes the fence.
