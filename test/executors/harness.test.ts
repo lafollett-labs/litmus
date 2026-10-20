@@ -376,15 +376,64 @@ test('a store kept at the top of a plugin denies only itself: the plugin around 
 
 test('a run store inside a plugin is neither scanned nor a home for components: a subject\'s artifact there cannot refuse the plugin', async () => {
   const store = '.litmus/runs/2026-10-19T00-00-00Z-a1b2/trials/s/c/opus/1/artifacts/notes.md'
-  const p = plug('x', { [store]: '---\nisolation: worktree\n---\nsee @/etc/hosts\n' })
+  const p = plug('x', { [store]: '---\nisolation: worktree\n---\nsee @/etc/hosts\n', '.litmus/old-runs/r/notes.md': '---\nisolation: worktree\n---\n' })
   const { query } = scripted([result()])
   const j = job(HARNESS(`  plugins: [${p}]\n`))
   j.resultsDir = join(p, '.litmus/runs')
+  // An old store beside it, which the gate also denies, is not scanned either.
   assert.equal((await runHarness(j, query)).exit, 'ok')
   const k = job(HARNESS(`  plugins: [${p}]\n`))
   assert.match((await runHarness(k, query)).reason ?? '', /declares isolation/, 'the same file outside the store is refused')
   writeFileSync(join(p, '.claude-plugin/plugin.json'), '{"name":"rev","skills":".litmus/runs"}')
-  assert.match((await runHarness(j, query)).reason ?? '', /points skills at \.litmus\/runs, inside the run store/)
+  assert.match((await runHarness(j, query)).reason ?? '', /keeps the run store inside its skills directory \.litmus\/runs/)
+})
+
+test('a store inside a component directory, or a component inside the store\'s directory, refuses the plugin', async () => {
+  const { query } = scripted([result()])
+  const run = async (files: Record<string, string>, results: string) => {
+    const p = plug('x', files)
+    const j = job(HARNESS(`  plugins: [${p}]\n`))
+    j.resultsDir = join(p, results)
+    return (await runHarness(j, query)).reason ?? ''
+  }
+  // The walk would skip agents/runs, yet Claude Code loads every agent in agents/.
+  const evil = { 'agents/evil.md': '---\nname: evil\nisolation: worktree\n---\nx\n' }
+  assert.match(await run(evil, 'agents/runs'), /keeps the run store inside its agents directory agents/)
+  assert.match(await run(evil, 'agents'), /keeps the run store inside its agents directory agents/)
+  // Every default component directory, in any case.
+  assert.match(await run({ 'Agents/evil.md': '---\nname: evil\nisolation: worktree\n---\nx\n' }, 'Agents/runs'), /keeps the run store inside its agents directory agents/)
+  assert.match(await run({ 'output-styles/s.md': 's' }, 'output-styles/runs'), /inside its output-styles directory/)
+  assert.match(await run({ 'workflows/w.js': '' }, 'workflows/runs'), /inside its workflows directory/)
+  assert.match(await run({ 'themes/t.json': '{}' }, 'themes/runs'), /inside its themes directory/)
+  // x/ holds the store, so the gate denies x/, and the manifest loads skills from it.
+  const manifest = { '.claude-plugin/plugin.json': '{"name":"x","skills":"./x/skills"}', 'x/skills/s/SKILL.md': '---\nname: s\ndescription: s\n---\ns\n' }
+  assert.match(await run(manifest, 'x/runs'), /loads skills from \.\/x\/skills, inside the run store/)
+  const upper = { ...manifest, '.claude-plugin/plugin.json': '{"name":"x","skills":"./X/skills"}' }
+  assert.match(await run(upper, 'x/runs'), /loads skills from \.\/X\/skills, inside the run store/)
+  assert.equal(await run({}, '.litmus/runs'), '', 'the layout the docs suggest is fine')
+})
+
+test('the store\'s directory is not denied when the workdir or the subject root sits inside it', async () => {
+  const repo = realpathSync(tree({ 'subj/SKILL.md': 's', 'runs/r/trial.json': '{}' }))
+  const subject = join(repo, 'subj')
+  const verdicts: string[] = []
+  const reads = (paths: () => string[]) =>
+    scripted([result()], async o => {
+      const hook = o.hooks!.PreToolUse![0]!.hooks[0]!
+      for (const file_path of paths()) {
+        const out = (await hook({ tool_name: 'Read', tool_input: { file_path } } as never, undefined, { signal: new AbortController().signal })) as { hookSpecificOutput: { permissionDecision: string } }
+        verdicts.push(out.hookSpecificOutput.permissionDecision)
+      }
+    }).query
+  const j = job(HARNESS().replace('name: c\n', `name: c\nsubject: ${subject}\n`))
+  j.resultsDir = join(repo, 'runs')
+  await runHarness(j, reads(() => [join(subject, 'SKILL.md'), join(repo, 'runs/r/trial.json')]))
+  assert.deepEqual(verdicts.splice(0), ['allow', 'deny'])
+  // The store's directory holds the workdir itself.
+  const k = job(HARNESS())
+  k.resultsDir = join(dirname(realpathSync(k.workdir.dir)), 'runs')
+  await runHarness(k, reads(() => ['a.go']))
+  assert.deepEqual(verdicts, ['allow'])
 })
 
 test('the harness prompt is rendered with the model prompt\'s placeholders', async () => {

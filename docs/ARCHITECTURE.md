@@ -812,9 +812,14 @@ store or one left behind by a rename. It is not denied when the workdir, a
 plugin or the subject root sits inside it: with `results: ./runs` at the top
 of a plugin, only `runs/` is denied. They are denied rather than
 refused like a suite root inside a plugin, so a plugin repo can keep its runs
-in `.litmus/`. The plugin checks skip a store inside the plugin, since its
-artifacts are what subjects wrote, and a manifest may not point a component
-into it. The gate fails closed: a call it cannot judge (an
+in `.litmus/`. The plugin checks skip what the gate denies of the store,
+since its artifacts are what subjects wrote. So a component directory may not
+overlap it either way: a plugin whose default component directory
+(`skills/`, `agents/`, `commands/`, `output-styles/`, `themes/`,
+`workflows/`) or manifest component path lies inside the denied area, or
+holds the store, is refused. Paths are compared case-folded. A component at
+the plugin root (`"skills": "./"`) therefore cannot share a plugin with the
+store. The gate fails closed: a call it cannot judge (an
 unreadable path, a path through a file) is a denial with the error as its
 reason. Paths are compared by their on-disk case (`realpath.native`), and names
 that may not exist yet are compared case-folded, so a case variant on a
