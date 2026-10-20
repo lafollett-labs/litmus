@@ -93,6 +93,30 @@ Receipts at `026f78d`:
 - Mutant (the switch renamed): 3 tests fail, both mention e2e tests and the env unit test.
 - Mutant (Skill dropped from the allowed set): 3 tests fail.
 
+## Review Round 3
+
+**Verdict:** 🚫 BLOCKED at `003c47c`. All findings are fixed in `2324c3d`, which round 4 reviews.
+
+| | |
+| - | - |
+| **Reviewer** | PE-Vue |
+| **Reviewed SHA** | `003c47c` |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| HIGH-201 | `CLAUDE_CODE_DISABLE_ATTACHMENTS` also hid every skill from the listing and dropped nested CLAUDE.md, so a prompt that does not name its skill can never fire it | Fixed with a narrower switch, not a rebuilt listing. Claude Code's attachment builder runs the mention steps (`at_mentioned_files`, `mcp_resources`) only when `CLAUDE_CODE_EVAL_CONFINED` is unset. Under that mode the reviewer's d1 probe shows SKILL-DESC, AGENT-DESC, CLAUDEMD and NESTED-CLAUDEMD all true. d5 shows every vector blocked. d2 shows no re-enable, including plugin settings and skill frontmatter setting `CLAUDE_CODE_EVAL_CONFINED` itself. d3 and d6 show background reports and hook context intact. Shell and network behave the same as before |
+| LOW-201 | Two e2e rows could never leak, `{{diff}}` was untested, and one BODY-MARKER covered three skills | Fixed. Each place has its own canary outside every root: body, `${CLAUDE_PLUGIN_ROOT}/../x`, args, CJK quoted args, prompt, fixture and `{{diff}}`. Each skill has its own body and description marker, and the first main-loop request must list every skill. Control without the switch: all seven canaries leak. Control with the old switch: the listing check fails |
+| INFO-201 | No way to turn the switch back on | Re-run against the new variable with the same result |
+| INFO-202 | Nothing a subject relies on is lost apart from HIGH-201 | Re-confirmed under eval-confined |
+| INFO-203 | Round-2 continuity | Resolved |
+
+Receipts at `2324c3d`:
+
+- `npm run check` exit 0.
+- `npm test` tests 607, pass 602, fail 0, skipped 5.
+- `node --test test/executors/harness-e2e.test.ts` tests 3, pass 3, fail 0, skipped 0.
+- `validate` reports 11 cases: 0 invalid, 1 warning.
+
 ---
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
