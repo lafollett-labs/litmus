@@ -1,6 +1,6 @@
 # Code Review: fix-gate-skill-mentions
 
-**Verdict:** 🚫 BLOCKED (round 1, at `31474ef`). The fixes for every finding are in `de8e1d6` and `9d2c8e5`, which round 2 reviews.
+**Verdict:** ✅ APPROVED (round 4, at `87ab845`). Rounds 1–3 were BLOCKED; every blocking finding is resolved.
 
 | | |
 | - | - |
@@ -116,6 +116,26 @@ Receipts at `2324c3d`:
 - `npm test` tests 607, pass 602, fail 0, skipped 5.
 - `node --test test/executors/harness-e2e.test.ts` tests 3, pass 3, fail 0, skipped 0.
 - `validate` reports 11 cases: 0 invalid, 1 warning.
+
+## Review Round 4
+
+**Verdict:** ✅ APPROVED at `87ab845`.
+
+| | |
+| - | - |
+| **Reviewer** | PE-Vue |
+| **Reviewed SHA** | `87ab845` |
+
+| PE | Test budget | Evidence |
+| - | - | - |
+| PE-Vue | targeted | typecheck exit 0; e2e 3/3; harness.test 40/40; both switch mutants reproduced; probes f1, f2, d1–d3 and d6, with confined mode on and unset |
+
+| ID | Finding | Disposition |
+| - | - | - |
+| LOW-301 | CLAUDE.md `@imports` of outside paths are refused by Claude Code itself, not by the flag, and no e2e row watches that | Non-blocking. Carried to the next PR that touches the harness: an e2e row under `setting_sources: [project]` with root and nested CLAUDE.md importing an outside canary |
+| INFO-301 | Eval-confined mode changes nothing a legitimate subject does or sees | Noted. File tools, subagents, shell, background Bash, plugin commands and `allowed-tools` skills behave the same; the first request matches apart from `metadata.user_id` |
+| INFO-302 | No mention path outside the flag's coverage, and no way to switch it off | Noted |
+| INFO-303 | The e2e controls prove what they claim | Noted |
 
 ---
 
